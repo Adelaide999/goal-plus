@@ -1100,7 +1100,14 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
 
     candidate_payloads: list[dict[str, Any]] = []
     for candidate in candidates:
-        scored = [iteration for iteration in candidate.iterations if iteration.score is not None]
+        scored = [
+            iteration
+            for iteration in candidate.iterations
+            if iteration.process_passed is True
+            and iteration.score is not None
+            and not iteration.touched_denied_files
+            and not iteration.changed_outside_allowed
+        ]
         best = None
         if scored:
             reverse = frozen.spec.metric_direction == "maximize"
@@ -1150,6 +1157,12 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
                         "summary": iteration.summary,
                         "failure_class": iteration.failure_class,
                         "git_head": iteration.git_head,
+                        "disposition": iteration.disposition,
+                        "restored_to_iteration": iteration.restored_to_iteration,
+                        "restored_to_git_head": iteration.restored_to_git_head,
+                        "workspace_git_head_after_settlement": (
+                            iteration.workspace_git_head_after_settlement
+                        ),
                         "created_at": iteration.created_at,
                         "changed_files": iteration.changed_files,
                     }
@@ -1248,7 +1261,10 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
             scored = [
                 iteration.score
                 for iteration in attributed_iterations
-                if iteration.score is not None
+                if iteration.process_passed is True
+                and iteration.score is not None
+                and not iteration.touched_denied_files
+                and not iteration.changed_outside_allowed
             ]
             dispatch_score = None
             if scored:

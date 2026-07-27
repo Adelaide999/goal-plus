@@ -769,12 +769,20 @@ def goal_plus_monitor_snapshot(
                 ),
                 "verifier_count": len(candidate.iterations),
                 "last_score": last_iteration.score if last_iteration else None,
+                "last_disposition": (
+                    last_iteration.disposition if last_iteration else None
+                ),
                 "last_verifier_at": last_iteration.created_at if last_iteration else None,
                 "last_git_head": last_iteration.git_head if last_iteration else None,
                 "best_iteration": best_iteration.iteration if best_iteration else None,
                 "best_iteration_score": best_iteration.score if best_iteration else None,
                 "best_iteration_at": best_iteration.created_at if best_iteration else None,
                 "best_iteration_git_head": best_iteration.git_head if best_iteration else None,
+                "workspace_git_head_after_settlement": (
+                    last_iteration.workspace_git_head_after_settlement
+                    if last_iteration
+                    else None
+                ),
                 "changed_files": candidate.detected_changed_files,
                 "touched_denied_files": candidate.touched_denied_files,
                 "changed_outside_allowed": candidate.changed_outside_allowed,

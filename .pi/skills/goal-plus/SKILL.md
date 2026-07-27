@@ -282,6 +282,9 @@ history 由运行时拥有，不是本地 plan 文件。worker 必须先调用
 `context.iterations`、`context.results` 和继承的 `context.results_tsv` 作为恢复来源。
 每次 verifier 调用都提供简洁 `hypothesis`；运行时校验继承的工作区根目录
 `results.tsv`，为每份返回报告追加且只追加一条记录，并提交账本。worker 绝不直接编辑它。
+process verifier 同时返回 candidate-local `disposition`：严格改善为 `keep`，同分或退化
+为 `discard`，无有效排名证据为 `failure`。runtime 保留实际被测 commit，并在
+`discard`/`failure` 后恢复 candidate best；worker 不得自行 reset verifier-backed 状态。
 如果 worker 提供 handoff，后续 iteration history 会包含最新结构化 `research_summary`；
 应使用其中任务特定的结果和问题，避免重复失败变体。
 

@@ -66,6 +66,7 @@ class Budget(SearchModel):
 
 
 WorkspaceBackend = Literal["copy", "git_worktree"]
+IterationDisposition = Literal["keep", "discard", "failure"]
 VerifierInvalidationReason = Literal[
     "verifier_contract_invalid",
     "verifier_coverage_inadequate",
@@ -496,6 +497,10 @@ class ScoreReport(SearchModel):
     touched_denied_files: bool = False
     changed_outside_allowed: bool = False
     hardcoding_suspected: bool = False
+    disposition: IterationDisposition | None = None
+    best_iteration: int | None = Field(default=None, ge=1)
+    best_git_head: str | None = None
+    workspace_git_head_after_settlement: str | None = None
 
 
 class PromotionEvidence(SearchModel):
@@ -525,6 +530,10 @@ class IterationRecord(SearchModel):
     artifact_hash: str | None = None
     metrics: dict[str, Any] = Field(default_factory=dict)
     log_paths: list[str] = Field(default_factory=list)
+    disposition: IterationDisposition | None = None
+    restored_to_iteration: int | None = Field(default=None, ge=1)
+    restored_to_git_head: str | None = None
+    workspace_git_head_after_settlement: str | None = None
     created_at: str
 
 

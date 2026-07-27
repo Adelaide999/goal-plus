@@ -168,6 +168,10 @@ artifact hash. Changing the selected artifact invalidates that evidence.
     results, selection, or promotion.
 14. **Never reuse cross-run scores.** Successor runs may inherit bounded
     hypotheses and artifacts as research context, but must re-verify them.
+15. **Settle each candidate to its local best.** Every process verifier keeps
+    the exact tested attempt commit. Only a strict metric improvement is kept;
+    equal, regressed, or invalid attempts remain in history while runtime
+    restores the candidate artifact before appending the iteration ledger row.
 
 If no verifier-backed revision is eligible, or all ranked revisions fail parent
 final verification, selection records a recoverable `selection_blocked` reason.

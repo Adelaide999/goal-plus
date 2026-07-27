@@ -436,8 +436,11 @@ c3d4e5f	0.651	fail	switch to rectangular grid (regressed)
 ```
 
 The `commit` column names the code snapshot tested by the verifier. The
-subsequent ledger commit is stored as `ledger_git_head` in `candidate.json`, so
-the workspace `HEAD` normally points one commit past the tested code snapshot.
+subsequent ledger commit is stored as `ledger_git_head` in `candidate.json`.
+For `keep`, workspace `HEAD` normally points one ledger commit past the tested
+snapshot. For `discard`/`failure`, history is attempt -> optional restoration
+-> ledger: the attempt remains readable by hash while workspace code is the
+candidate-local best artifact.
 
 ## Live Monitoring
 

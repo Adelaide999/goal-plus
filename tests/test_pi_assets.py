@@ -188,6 +188,8 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     assert "failed_approach" in text
     assert "把分配的候选思路当作假设" in text
     assert "把任何有希望的方向" in text
+    assert "不要自行 reset" in text
+    assert "disposition" in text
     assert "固定产物数量" in text
     assert "理论或结构限制" in text
     assert "10-15 distinct verifier-recorded artifacts" not in text

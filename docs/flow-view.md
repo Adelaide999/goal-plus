@@ -109,6 +109,14 @@ candidate's ledger. A call that raises before producing a report adds no row.
 The file is runtime metadata and is excluded from edit-surface and promotion
 diffs. Workers inspect this continuous design history but never edit it.
 
+Process verification also settles the candidate workspace. The returned
+`disposition` is `keep` only for a strict candidate-local improvement,
+`discard` for an equal or regressed valid score, and `failure` when no eligible
+ranking evidence exists. Every attempt commit remains reachable. For
+`discard`/`failure`, runtime creates a compensating restoration commit when the
+artifact differs, then appends the ledger row; the next worker turn therefore
+starts from candidate-local best code without a manual reset.
+
 Each worker returns a compact `.tmp/handoff.json`. The runtime projects it into
 candidate history and also builds a bounded, current-run rollup across all
 candidates, so a useful feature does not disappear merely because its candidate

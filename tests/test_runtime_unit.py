@@ -857,7 +857,8 @@ def test_worker_policy_documents_host_launch_contract(tmp_path: Path) -> None:
         "search_run_verifier" in instruction for instruction in tasks[0].instructions
     )
     assert any(
-        "已使用复制的 baseline 初始化本地 git 仓库" in instruction
+        "runtime 拥有 verifier-backed iteration 的提交和回滚" in instruction
+        and "不要自行 reset" in instruction
         for instruction in tasks[0].instructions
     )
     assert any(
@@ -2767,7 +2768,14 @@ def test_run_verifier_reports_and_cleans_verifier_workspace_side_effect(
     assert result.metrics["infrastructure_failure"] is True
     assert result.metrics["candidate_action"] == "stop_and_report"
     assert not (workspace / ".goal-plus-verifiers/generated.bin").exists()
-    assert (workspace / "initial_program.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert report.disposition == "failure"
+    assert (workspace / "initial_program.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+    attempt = runtime.list_iterations(run_id, candidate_id)[0]["git_head"]
+    assert subprocess.check_output(
+        ["git", "show", f"{attempt}:initial_program.py"],
+        cwd=workspace,
+        text=True,
+    ) == "VALUE = 1\n"
 
 
 def test_run_verifier_classifies_legacy_generated_verifier_file_as_infrastructure(
@@ -2787,9 +2795,14 @@ def test_run_verifier_classifies_legacy_generated_verifier_file_as_infrastructur
     assert result.failure_class == "VerifierWorkspaceSideEffect"
     assert result.metrics["infrastructure_failure"] is True
     assert result.metrics["candidate_action"] == "stop_and_report"
-    assert runtime._git_status(workspace) == [
-        "?? .goal-plus-verifiers/generated.bin"
-    ]
+    assert report.disposition == "failure"
+    assert runtime._git_status(workspace) == []
+    attempt = runtime.list_iterations(run_id, candidate_id)[0]["git_head"]
+    assert subprocess.check_output(
+        ["git", "show", f"{attempt}:.goal-plus-verifiers/generated.bin"],
+        cwd=workspace,
+        text=True,
+    ) == "legacy side effect"
 
 
 def test_run_verifier_records_failure_class_on_timeout(
@@ -3623,7 +3636,7 @@ def test_legacy_tmp_results_tsv_migrates_and_backfills_missing_iterations(
     assert len(migrated_record.results_ledger) == 2
 
 
-def test_select_checks_out_best_git_commit_before_final_verify(
+def test_select_restores_best_git_commit_before_final_verify(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = make_project(tmp_path)

@@ -98,6 +98,7 @@ Selected Git Head 和 Artifact Hash，之后才生成可被 Git 应用的 Patch�
 |---|---|
 | 端到端职责和 parallel-loop 流程 | [Flow](docs/flow-view.md) |
 | 架构、状态与不变量 | [Design](docs/design.md) |
+| Candidate-local 最优代码回滚设计 | [Candidate Rollback](docs/candidate-local-best-rollback.md) |
 | 当前 MCP 与 Pi 本地工具 | [API](docs/api.md) |
 | 宿主能力对比 | [Agent Host Adapters](docs/agent-host-adapters.md) |
 | 运行时与宿主日志 | [Debugging](docs/debugging-runtime.md) |
