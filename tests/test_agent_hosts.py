@@ -48,7 +48,7 @@ def test_opencode_adapter_builds_existing_task_payload() -> None:
         "prompt": (
             "agent_session_id=agent_0001; "
             "candidate_id=cand_0001; "
-            "idea: goal: try a new branch"
+            "思路：goal: try a new branch"
         ),
     }
 
@@ -70,7 +70,7 @@ def test_codex_adapter_builds_foreground_spawn_payload() -> None:
     assert payload["fork_turns"] == "none"
     assert payload["task_name"] == "search_agent_0001"
     assert "agent_session_id=agent-0001" in payload["message"]
-    assert "assigned_worker_budget=host default" in payload["message"]
+    assert "assigned_worker_budget=host 默认值" in payload["message"]
 
 
 @pytest.mark.codex
@@ -90,7 +90,7 @@ def test_codex_launch_maps_candidate_contract_to_builtin_default_role() -> None:
     # inherited parent model. The project search role would reload config after
     # inheritance and can clear a runtime-only model before tier validation.
     assert payload["agent_type"] == "default"
-    assert "candidate worker, not the search orchestrator" in message
+    assert "候选 worker，不是搜索编排器" in message
     assert "search_get_agent_context" in message
     assert "search_run_verifier" in message
     assert "search_plan_next" in message
@@ -98,7 +98,7 @@ def test_codex_launch_maps_candidate_contract_to_builtin_default_role() -> None:
     assert "search_select" in message
     assert "search_report" in message
     assert "search_promote" in message
-    assert "Do not call any `goal_plus_*` tool" in message
+    assert "不要调用任何 `goal_plus_*` 工具" in message
 
 
 @pytest.mark.codex
@@ -142,8 +142,8 @@ def test_codex_launch_and_continue_embed_full_worker_prompt() -> None:
 
     assert worker_prompt in launch["message"]
     assert worker_prompt in continued["message"]
-    assert "candidate worker, not the search orchestrator" in launch["message"]
-    assert "candidate worker, not the search orchestrator" in continued["message"]
+    assert "候选 worker，不是搜索编排器" in launch["message"]
+    assert "候选 worker，不是搜索编排器" in continued["message"]
 
 
 @pytest.mark.codex
@@ -193,8 +193,8 @@ def test_codex_adapter_builds_watchdog_budget_payload() -> None:
         "closeout_tool": "send_message",
         "closeout_target": "search_agent_0001",
         "closeout_message": (
-            "Worker deadline is approaching. Stop starting new work, run one final "
-            "search_run_verifier if needed, write .tmp/handoff.json, and return a concise summary."
+            "Worker 的截止时间临近。停止启动新工作；如有需要，最后运行一次 "
+            "search_run_verifier，写入 .tmp/handoff.json，并返回简洁摘要。"
         ),
         "final_wait_timeout_ms": 45000,
         "on_exceed": "interrupt",
@@ -353,8 +353,8 @@ def test_pi_rpc_adapter_builds_cross_process_native_session_continuation() -> No
         "started_at": "2026-07-19T00:00:00Z",
     }
     assert "continue_existing_agent_session=true" in payload["prompt"]
-    assert "A new host dispatch starts with this launch message" in payload["prompt"]
-    assert "previous dispatch and is no longer active" in payload["prompt"]
+    assert "这条 launch 消息开始一次新的 host 派发" in payload["prompt"]
+    assert "属于上一次派发，已不再生效" in payload["prompt"]
 
 
 def test_claude_adapter_builds_foreground_agent_payload() -> None:

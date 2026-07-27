@@ -71,8 +71,8 @@ def test_invalidate_run_and_successor_expose_contract_fields(tmp_path: Path) -> 
         "enum"
     ]
     description = " ".join(tools["search_invalidate_run"].description.split())
-    assert "atomically blocks new planning" in description
-    assert "interrupt the host pool" in description
+    assert "原子地阻止新规划" in description
+    assert "中断 host pool" in description
 
 
 def test_start_agent_session_returns_launch_payload(tmp_path: Path) -> None:
@@ -147,19 +147,19 @@ def test_freeze_spec_exposes_complete_nested_search_spec_schema(tmp_path: Path) 
     assert "worker_budget" in strategy["properties"]
 
     budget = spec_schema["properties"]["budget"]["properties"]
-    assert "entire frozen search run and all planning rounds" in budget[
+    assert "整个冻结 Search run 和所有规划轮次" in budget[
         "max_candidates"
     ]["description"]
-    assert "not a per-round limit" in budget["max_candidates"]["description"]
-    assert "one planned batch" in budget["max_parallel"]["description"]
-    assert "not the total candidate count" in budget["max_parallel"]["description"]
+    assert "不是单轮限制" in budget["max_candidates"]["description"]
+    assert "一个规划 batch" in budget["max_parallel"]["description"]
+    assert "不控制候选总数" in budget["max_parallel"]["description"]
 
     freeze_description = " ".join(tools["search_freeze_spec"].description.split())
-    assert "immutable total candidate cap" in freeze_description
-    assert "per-batch planning cap" in freeze_description
-    assert "disposable source copy" in freeze_description
+    assert "不可变的候选总上限" in freeze_description
+    assert "每个 batch 的规划上限" in freeze_description
+    assert "一次性源码副本" in freeze_description
     assert "GOAL_PLUS_VERIFIER_TMPDIR" in freeze_description
-    assert "fixed `/tmp` paths are unsafe" in freeze_description
+    assert "固定 `/tmp` 路径不安全" in freeze_description
 
     verifier_description = " ".join(
         tools["search_run_verifier"].description.split()
@@ -177,11 +177,11 @@ def test_plan_next_exposes_per_round_budget_semantics(tmp_path: Path) -> None:
 
     assert requested_k["default"] == 4
     assert requested_k["exclusiveMinimum"] == 0
-    assert "planning round only" in requested_k["description"]
-    assert "remaining total candidate budget" in requested_k["description"]
-    assert "not a whole-run budget" in requested_k["description"]
-    assert "minimum of `requested_k`" in plan_tool.description
-    assert "remaining `budget.max_candidates`" in plan_tool.description
+    assert "仅为本规划轮次" in requested_k["description"]
+    assert "剩余候选总预算" in requested_k["description"]
+    assert "不是整个 run 的预算" in requested_k["description"]
+    assert "`requested_k`、剩余" in plan_tool.description
+    assert "`budget.max_candidates`" in plan_tool.description
 
 
 def test_spec_draft_exposes_partial_nested_search_spec_schema(tmp_path: Path) -> None:
@@ -205,10 +205,10 @@ def test_spec_draft_exposes_partial_nested_search_spec_schema(tmp_path: Path) ->
         for option in draft_budget_schema["anyOf"]
         if option.get("type") == "object"
     )["properties"]
-    assert "entire frozen search run and all planning rounds" in draft_budget[
+    assert "整个冻结 Search run 和所有规划轮次" in draft_budget[
         "max_candidates"
     ]["description"]
-    assert "one planned batch" in draft_budget["max_parallel"]["description"]
+    assert "一个规划 batch" in draft_budget["max_parallel"]["description"]
 
 
 def test_goal_plus_gate_exposes_hook_friendly_schema(tmp_path: Path) -> None:
@@ -241,7 +241,7 @@ def test_agent_observability_exposes_read_only_schema(tmp_path: Path) -> None:
 
     assert set(schema["required"]) == {"agent_session_id"}
     description = " ".join(tools["search_get_agent_observability"].description.split())
-    assert "read-only" in description
+    assert "只读" in description
     assert "reasoning" in description
 
 

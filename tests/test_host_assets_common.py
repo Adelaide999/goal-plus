@@ -26,13 +26,13 @@ def assert_common_budget_planning_claims(text: str) -> None:
     add host-specific budget-planning assertions.
     """
     normalized = " ".join(text.split())
-    assert "Search Run Budget Planning" in text
-    assert "recommend 4" in text
+    assert "SearchSpec 与预算" in text
+    assert "建议 4" in text
     assert (
-        "Different candidate ids do not by themselves provide search diversity"
+        "不同 candidate id 本身不提供"
         in normalized
     )
-    assert "theoretical or structural limits" in normalized
+    assert "理论或结构限制" in normalized or "资源瓶颈" in normalized
 
 
 def assert_common_goal_plus_skill_text(text: str) -> None:
@@ -52,12 +52,17 @@ def assert_common_goal_plus_skill_text(text: str) -> None:
     assert "Search Mode" in text
     assert '"recommended_phase": "goal"' in text
     assert "goal_mode" in text
-    assert "Do not send fields named `mode` or `reason`" in text
-    assert "Search is an autonomous upgrade" in text
-    assert "without asking the user" in text
-    assert "Do not create a SearchSpec in Goal Mode" in text
+    assert "不要发送" in text
+    assert "`mode`" in text
+    assert "`reason`" in text
+    assert "Search 是自主升级" in text
+    assert "不要要求用户" in text
+    assert (
+        "Goal Mode 下不要创建 SearchSpec" in text
+        or "不要在 Goal Mode 创建 SearchSpec" in text
+    )
     assert "search_freeze_spec" in text
-    assert "final raw-goal audit" in text
+    assert "原始目标审计" in text
     assert "mode=autonomous" in text
     assert "mode=probe" in text
     assert ".goal-plus-verifiers/" in text
@@ -76,20 +81,20 @@ def test_host_goal_plus_skill_records_modes_and_mcp_tools(host_dir: str) -> None
         assert "/goal-plus edit" in text
         assert "/goal-plus mode=autonomous" in text
         assert "/goal-plus mode=probe" in text
-        assert "canonical final line in `raw_goal`" in text
-        assert "A candidate lease ending never completes" in text
-        assert "stores no separate task deadline" in text
-        assert "treat the latest user message as" in text
-        assert "scope, deliverables, or success criteria" in text
+        assert "`raw_goal` 的规范末行" in text
+        assert "候选 lease 结束绝不会完成" in text
+        assert "不单独存储任务 deadline" in text
+        assert "把最新用户消息视为" in text
+        assert "范围、交付物或成功标准" in text
         assert "goal_plus_update_goal" in text
-        assert "clarify before revising or resuming" in text
-        assert "merely because the Goal Plus record is active" in text
+        assert "在修订或恢复前先澄清" in text
+        assert "不要仅因 Goal Plus 记录处于 active" in text
         assert "goal_plus_prepare_final_check" in text
         assert "goal_plus_submit_final_check" in text
         assert "spawn_agent" in text
         assert 'fork_turns="none"' in text
-        assert "never submit" in text
+        assert "绝不能代表审查员提交结论" in text
     else:  # claude
         normalized = " ".join(text.split())
-        assert "canonical guidance" in text
-        assert "worker lease ending is not goal completion" in normalized
+        assert "规范中文指引" in text
+        assert "worker lease 结束不是目标完成" in normalized

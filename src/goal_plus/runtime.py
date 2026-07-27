@@ -1074,9 +1074,8 @@ class FileSearchRuntime:
             "resume_candidate_id": candidate_id,
             "previous_agent_session_ids": previous_session_ids,
             "resume_instruction": (
-                "This is a new worker session for an existing candidate. "
-                "Call search_get_agent_context first and use its history and "
-                "iterations as the authoritative resume context."
+                "这是现有候选的新 worker session。首先调用 search_get_agent_context，"
+                "并将其中的 history 和 iterations 作为权威恢复上下文。"
             ),
         }
         return self._create_agent_session(
@@ -2280,8 +2279,8 @@ class FileSearchRuntime:
             "continuation": adapter.capabilities.continuation,
             "pool": adapter.capabilities.pool.as_dict(),
             "reason": (
-                f"The main agent launches {strategy.worker_host} workers through the host-pool "
-                "contract using launch payloads from search_start_agent_session."
+                f"主 agent 使用 search_start_agent_session 返回的 launch payload，"
+                f"通过 host-pool 契约启动 {strategy.worker_host} worker。"
             ),
         }
 
@@ -2450,11 +2449,10 @@ class FileSearchRuntime:
         worker_budget_override: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         worker_agent_type = self._candidate_worker_agent_type(frozen, candidate_record)
-        short_intent = "continue same autonomous candidate loop"
+        short_intent = "继续同一条自主候选循环"
         directive_text = (
-            "Continue the same autonomous search loop from the latest committed "
-            "evidence. Refresh runtime context, choose the next evidence-backed "
-            "hypothesis yourself, and verify every material change."
+            "根据最新提交的证据继续同一条自主搜索循环。刷新运行时上下文，"
+            "自行选择下一个有证据支持的假设，并验证每项实质变更。"
         )
 
         adapter = get_agent_host_adapter(session.host)
@@ -2494,11 +2492,10 @@ class FileSearchRuntime:
         if prompt_path.exists():
             return prompt_path.read_text(encoding="utf-8")
         return (
-            "First call search_get_agent_context. Work in the candidate workspace only. "
-            "Before final response call search_run_verifier. Use runtime history; "
-            "do not rely on transcript. If the verifier reports "
-            "VerifierWorkspaceSideEffect or candidate_action=stop_and_report, "
-            "report the infrastructure blocker and return without retrying."
+            "首先调用 search_get_agent_context。只能在候选工作区中工作。"
+            "最终回复前调用 search_run_verifier。使用运行时历史，不要依赖 transcript。"
+            "如果 verifier 报告 VerifierWorkspaceSideEffect 或 "
+            "candidate_action=stop_and_report，报告基础设施阻塞原因并直接返回，不要重试。"
         )
 
     def _next_plan_id(self, run: RunRecord) -> str:
@@ -2533,7 +2530,7 @@ class FileSearchRuntime:
             hypothesis = (
                 frozen.spec.root_hypotheses[hypothesis_index]
                 if hypothesis_index < len(frozen.spec.root_hypotheses)
-                else f"Independent candidate {planned_candidate_id}"
+                else f"独立候选 {planned_candidate_id}"
             )
             work_orders.append(
                 CandidateWorkOrder(
@@ -2554,8 +2551,8 @@ class FileSearchRuntime:
             requires_agent_proposals=False,
             work_orders=work_orders,
             strategy_trace={
-                "selection_rule": "independent source branches",
-                "reason": "Each candidate starts from the frozen source workspace.",
+                "selection_rule": "独立源码分支",
+                "reason": "每个候选都从冻结的源码工作区开始。",
             },
             created_at=utc_timestamp(),
         )
@@ -2577,8 +2574,8 @@ class FileSearchRuntime:
             remaining_budget=remaining,
             requires_agent_proposals=True,
             strategy_trace={
-                "selection_rule": "agent-guided initial candidates",
-                "reason": "The main agent defines the initial candidate set exactly once.",
+                "selection_rule": "agent 引导的初始候选",
+                "reason": "主 agent 只定义一次初始候选集合。",
             },
             created_at=utc_timestamp(),
         )
@@ -2624,25 +2621,25 @@ class FileSearchRuntime:
         )
 
         instructions = [
-            "Work only inside this candidate workspace.",
-            "Use this workspace's .tmp/ directory for notes and scratch drafts.",
-            "Do not use /tmp, home directories, or paths outside the candidate workspace for candidate work.",
-            "Modify only files listed in allowed_files; never touch denied_files or frozen verifier artifacts.",
-            "Do not delete, move, or clean files; destructive commands such as rm, mv, rmdir, unlink, trash, and find -delete are forbidden.",
-            "A local git repository has already been initialized with the copied baseline; use git status, git diff, git add, git commit, git reset, git restore, and git checkout only inside this workspace.",
-            "All scoring must go through goal-plus_search_run_verifier; do not run the process_verifiers command directly via bash, and do not write your own scorer.",
-            "Pass context.agent_session_id to search_run_verifier and include a concise hypothesis describing the tested design so the runtime can record iteration provenance and rationale.",
-            "Each run_verifier call records an iteration. Work within the configured host budget. Complete and verify a candidate early, stop starting new optimization iterations before the limit, and leave enough time to return a concise summary.",
-            "search_run_verifier automatically commits changed candidate artifact files before running the verifier; use git status, git diff, and git log to inspect iteration provenance.",
-            "Inspect the inherited iteration log at workspace/results.tsv before planning another variant. The runtime owns and commits this append-only ledger, validates that existing rows are unchanged, and adds exactly one row for every returned verifier report; never rewrite, truncate, delete, or manually append it.",
+            "只能在此候选工作区内工作。",
+            "使用此工作区的 .tmp/ 目录存放笔记和临时草稿。",
+            "不要使用 /tmp、home 目录或候选工作区之外的路径处理候选工作。",
+            "只能修改 allowed_files 中列出的文件；绝不能触碰 denied_files 或冻结的 verifier 产物。",
+            "不要删除、移动或清理文件；禁止 rm、mv、rmdir、unlink、trash 和 find -delete 等破坏性命令。",
+            "已使用复制的 baseline 初始化本地 git 仓库；只能在此工作区内使用 git status、git diff、git add、git commit、git reset、git restore 和 git checkout。",
+            "所有评分都必须通过 goal-plus_search_run_verifier；不要通过 bash 直接运行 process_verifiers 命令，也不要自行编写评分器。",
+            "把 context.agent_session_id 传给 search_run_verifier，并提供简洁的 hypothesis 说明所测试设计，使运行时能记录 iteration provenance 和理由。",
+            "每次 run_verifier 调用都会记录一个 iteration。在配置的 host 预算内工作。尽早完成并验证候选，在达到限制前停止启动新的优化 iteration，并留出足够时间返回简洁摘要。",
+            "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
+            "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
         ]
         if plan.worker_policy.get("subagent_type"):
             instructions.append(
-                f"Use subagent_type={plan.worker_policy['subagent_type']!r} for the managed agent session."
+                f"对受管 agent session 使用 subagent_type={plan.worker_policy['subagent_type']!r}。"
             )
         instructions.extend(proposal.instructions)
 
-        hypothesis = proposal.hypothesis or proposal.intent or f"Candidate {candidate_id}"
+        hypothesis = proposal.hypothesis or proposal.intent or f"候选 {candidate_id}"
         return CandidateTask(
             run_id=run.run_id,
             candidate_id=candidate_id,
@@ -3955,8 +3952,7 @@ class FileSearchRuntime:
             "verifier_assessments": verifier_assessments[:15],
             "pitfalls": round_robin(pitfall_groups, 30),
             "description": (
-                "Bounded current-run research rollup across all candidates, including "
-                "discoveries from candidates outside the visible ranking frontier."
+                "当前 run 中所有候选的有界研究汇总，包括可见排名 frontier 之外候选的发现。"
             ),
         }
 
@@ -4024,8 +4020,8 @@ class FileSearchRuntime:
             "pitfalls": pitfalls,
             "score_reusable": False,
             "description": (
-                "Policy-controlled inherited research context. Source scores are historical "
-                "only and every imported artifact or feature must be re-verified."
+                "由 policy 控制的继承研究上下文。来源分数仅作历史记录，"
+                "每个导入产物或特性都必须重新验证。"
             ),
         }
 

@@ -1,182 +1,142 @@
 ---
 name: search
-description: Internal Search Mode engine for /goal-plus with foreground Claude Code agents and the goal-plus MCP server.
+description: 使用前台 Claude Code Agent 和 goal-plus MCP server 的 /goal-plus 内部 Search Mode 引擎。
 ---
 
-# Search Mode Runtime for Claude Code
+# Claude Code 的 Search Mode 运行时
 
-Use this skill after `/goal-plus` has upgraded a goal to Search Mode, or for
-explicit low-level debugging of an already measurable SearchSpec. The normal
-user-facing entrypoint is `/goal-plus`.
+在 `/goal-plus` 已把目标升级到 Search Mode 后使用此 skill，或用它底层调试已可度量的
+SearchSpec。普通用户入口是 `/goal-plus`。使用 `goal-plus` MCP server 暴露的逻辑
+`search_*` 工具；Claude Code 可能显示 server 前缀，按最后的逻辑工具名匹配。
 
-Use the logical `search_*` tools exposed by the `goal-plus` MCP server.
-Claude Code may display MCP tools with a server prefix; match by the final
-logical tool name.
+## Verifier 冻结契约
 
-## Verifier Freeze Contract
+调用 `search_freeze_spec` 前，从 `source_path` 运行拟定的 `ranking_signal`，确认其最后一个
+非空 stdout 行是 JSON，且包含有限数值类型的 `spec.metric_name`，例如
+`{"combined_score": 123.0}`。只在必要时创建自定义 verifier，并在 Spec Discovery 期间
+写入源码拥有的 `.goal-plus-verifiers/` 等路径，绝不能放在 `.gp/` 或 `.search/`。
+freeze 工具暴露完整嵌套 `SearchSpec` schema；`expected_outputs` 只接受产物路径/glob，
+不解析 stdout。运行时会重复预检，并在候选启动前拒绝无效 freeze。
 
-Before `search_freeze_spec`, run the proposed `ranking_signal` from
-`source_path` and confirm its final non-empty stdout line is JSON with a finite
-numeric `spec.metric_name`, for example `{"combined_score": 123.0}`. The
-command may be inline or call an existing repository tool. Create a custom
-verifier file only when needed and materialize it during Spec Discovery before
-freezing, in a source-owned path such as `.goal-plus-verifiers/`, never `.gp/`
-or `.search/`. The freeze tool exposes the complete nested `SearchSpec` schema.
-`expected_outputs` accepts artifact path/glob strings only and does not parse
-stdout. The runtime repeats this preflight and rejects an invalid freeze before
-any candidate starts.
+预检在一次性源码副本中运行，并把候选工作区视为只读。verifier 必须将编译器和临时输出
+放入 `GOAL_PLUS_VERIFIER_TMPDIR`/`TMPDIR` 或
+`tempfile.TemporaryDirectory()`。绝不能使用固定 `/tmp` 路径。任何工作区变更都会触发
+`VerifierWorkspaceSideEffect`；启动候选前应修复 verifier 并冻结新 spec。
 
-The freeze preflight runs in a disposable source copy and treats the candidate
-workspace as read-only. Verifiers must put compiler products and temporary
-outputs in `GOAL_PLUS_VERIFIER_TMPDIR`/`TMPDIR` or a
-`tempfile.TemporaryDirectory()`. Never use one fixed `/tmp` pathname: a Search
-batch may verify several isolated candidates concurrently. Any workspace change
-raises `VerifierWorkspaceSideEffect`; repair the verifier and freeze a new spec
-before starting candidates.
+运行时验证仍返回 `VerifierWorkspaceSideEffect`、`metrics.infrastructure_failure=true`
+或 `metrics.candidate_action=stop_and_report` 时，worker 必须立即停止，不能清理生成文件、
+编辑冻结 verifier、绕过失败 reset 或重试。父级使 run 失效、停止每个 live worker、
+修复并重新冻结，再创建后继 run。绝不能选择或提升失效 run。
 
-If runtime verification still returns `VerifierWorkspaceSideEffect`,
-`metrics.infrastructure_failure=true`, or
-`metrics.candidate_action=stop_and_report`, the worker must stop immediately.
-It must not delete generated verifier files, edit frozen assets, reset around the
-failure, or retry. The parent must not redispatch that candidate or spend another
-batch on the same `frozen_spec_id`; repair the source-owned verifier, freeze a
-new spec, and create a new run. In a concurrent batch, host lifecycle controls
-remain responsible for closing out siblings that have not already returned.
+## SearchSpec 与预算
 
-## Search Run Budget Planning
+`budget.max_candidates` 是所有轮次中不同候选工作区总数的不可变上限；
+`budget.max_parallel` 是一个规划 batch 的最大宽度，不是候选总数。大致轮次容量为
+`ceil(max_candidates / max_parallel)`；两者相等通常只允许一个完整 batch。
 
-Choose the whole-run candidate budget before `search_freeze_spec`; it is frozen
-and cannot grow inside that run. `budget.max_candidates` is the total number of
-distinct candidate workspaces across all rounds. `budget.max_parallel` is only
-the maximum width of one planned batch. Therefore the planned round capacity is
-approximately `ceil(max_candidates / max_parallel)`. If the two values are
-equal, the run normally has only one full batch.
+调用 `search_freeze_spec` 前选择整个 run 预算，冻结后不能增长。存在外层时间、attempt
+或 token 预算时：
 
-When the user or outer harness supplies a wall-clock, attempt, or token budget:
+1. 为主 agent 最终验证、选择、报告和提升预留时间。
+2. 选择 host 能支持的 `max_parallel`；没有更好资源信号时建议 4。
+3. 根据 Claude worker tier、已观测 worker 时长和 verifier 开销估算 batch 时长。
+4. 设置 `rounds = floor((remaining_seconds - final_reserve_seconds) / estimated_batch_seconds)`，
+   再设置 `max_candidates = rounds * max_parallel`。
 
-1. Reserve time for main-agent final verification, selection, reporting, and
-   promotion.
-2. Choose a batch width `max_parallel` that the host can support. When no better
-   resource signal exists, recommend 4; this is a planning recommendation, not
-   a runtime default.
-3. Estimate one batch duration from the selected worker tier, prior observed
-   worker durations, and launch/verifier overhead. Under real concurrency use
-   the slowest worker duration, not the sum of all workers.
-4. Estimate `rounds = floor((remaining_seconds - final_reserve_seconds) /
-   estimated_batch_seconds)`, subject to explicit attempt/token caps, then set
-   `max_candidates = rounds * max_parallel`. Keep at least one candidate only
-   when enough time remains to produce and verify useful work.
+例如剩余 7200 秒、预留 900 秒、每 batch 1260 秒可运行 5 轮；`max_parallel=3` 时设置
+`max_candidates=15`。每个 batch 完成后刷新剩余时间和 history。`requested_k` 只请求当前轮次，
+不能把默认值 4 当作整个 run 预算。仍能容纳有用 batch 时不要调用 `search_select`。
 
-For example, 7200 seconds remaining, 900 seconds reserved, and 1260 seconds per
-batch gives 5 rounds; with `max_parallel=3`, set `max_candidates=15`.
+worker tier：
 
-After every completed batch, refresh remaining time and history before calling
-`search_plan_next` again. `requested_k` is only the request for that round; use
-at most `max_parallel` and the remaining total candidate budget. Do not treat
-its default value 4 as the whole-run budget. Do not call `search_select` while
-another useful batch fits the remaining budget. Select only when the candidate
-cap is exhausted, another batch no longer fits before the final reserve, an
-explicit attempt/token cap is reached, or a declared early-stop condition holds.
+- `search-candidate-agent-flash`：4 turns，用于 smoke test 和低成本探查
+- `search-candidate-agent`：8 turns，用于普通候选工作
+- `search-candidate-agent-deep`：16 turns，用于较大源码树、较慢 verifier 或跨文件推理
 
-Before starting another candidate, assess whether recent attempts cluster
-around the same underlying mechanism or bottleneck. Different candidate ids do
-not by themselves provide search diversity. When work has concentrated in one
-family, step back and analyze the current bottleneck, then prefer a materially
-different high-potential direction when the evidence supports one. This is
-advisory: it does not require `macro_restart` or impose an action quota.
+先前 worker 达到 `maxTurns` 且未记录任何 verifier iteration 时，为同一候选提高 tier。
+history 由运行时拥有，不是 `plan.md` 文件。主 agent 从 `search_list_history` 读取结果；
+worker 从 `search_get_agent_context` 读取 `context.history` 和 `context.iterations`。
+不要要求 worker 从聊天 transcript 推断历史。
 
-After substantial attempts without meaningful progress, do not keep applying
-nearby mutations by default. Reassess the objective's applicable theoretical or
-structural limits, such as lower or upper bounds, critical paths, resource
-bottlenecks, saturation evidence, or infeasibility constraints. Use that
-analysis to identify a credible breakthrough and decide whether to deepen or
-redirect; the analysis does not force any particular action.
+新候选启动前检查近期尝试是否聚集于同一机制或瓶颈。不同 candidate id 本身不提供多样性。
+现有候选仍有希望且受益于累积上下文时，优先同候选 continuation 或更大 tier 的状态级恢复，
+而不是近似重复候选。可用候选容量不代表必须启动更多工作。大量尝试仍无进展后，重新评估
+上下界、关键路径、资源瓶颈、饱和证据或不可行约束。
 
-When an existing candidate remains promising and further progress benefits from
-its accumulated workspace understanding, prefer same-candidate continuation or
-state-level redispatch with a larger worker tier over launching near-duplicate
-candidates. Parallel candidates in the same feature family are useful only when
-they test materially distinct hypotheses. Available candidate capacity is not
-an obligation to launch more work.
+## 工作流
 
-## Main Workflow
+1. 读取足够上下文，确定 objective、metric、source path、编辑范围、process/promotion
+   verifier 和预算。`metric_name` 应清晰且领域特定；`metric_direction` 决定改进方向。
+2. 校验契约后调用：
 
-1. Call `search_freeze_spec` for the Goal Plus spec draft, or `search_create`
-   when a frozen spec already exists.
-2. Call `search_plan_next`.
-3. Call `search_start_batch`.
-4. For each new candidate, call `search_start_agent_session`.
-5. Launch a foreground Agent using the returned launch payload:
-   - agent type: `launch.agent_type`
-   - message: `launch.message`
-   - background: false
-6. Keep workers in the foreground. If `launch.budget_control.mode == "host_turn_limit"`,
-   verify that `launch.agent_type` names a Claude agent definition with a matching
-   `maxTurns` frontmatter value before launch.
-7. If the Agent result includes an agent id or reusable agent name, call `search_bind_agent_handle` with:
-   - `host: "claude-code"`
-   - `external_id`
-   - `task_name` only when the client exposes a stable name instead of an id
-8. If a worker reaches `maxTurns` before useful verifier evidence, call
-   `search_redispatch_candidate(run_id, candidate_id, directive?,
-   worker_agent_type="search-candidate-agent-deep",
-   worker_budget={"max_turns": 16, "on_exceed": "interrupt"})` and launch the
-   returned foreground Agent payload for the same candidate workspace.
-9. Run final `search_run_verifier(hypothesis="main final verification")` from
-   the main agent before selecting. Every returned report appends exactly one
-   validated row to the runtime-owned inherited workspace-root `results.tsv`
-   and commits it.
-10. Use `search_select` and `search_promote` when appropriate. For Goal Plus,
-    return without reporting; its parent skill calls `search_report` exactly
-    once after the Goal Plus record is terminal. Standalone Search calls
-    `search_report` only after promotion.
+   ```text
+   search_freeze_spec(spec=<spec>, verifier_artifact_paths=[...])
+   search_create(frozen_spec_id="<id>")
+   ```
 
-## Worker Budget Control
+   后续 cycle 保持相同 verifier 和编辑契约时，可复用现有 `frozen_spec_id`。
+3. 规划并创建候选工作区：
 
-Claude Code worker runtime is controlled through foreground agent definitions.
-Use `launch.agent_type` exactly as returned by the runtime:
+   ```text
+   search_plan_next(run_id="<run_id>", requested_k=<k>)
+   search_start_batch(run_id="<run_id>", plan_id="<plan_id>", proposals=<可选>)
+   ```
 
-- `search-candidate-agent-flash` has `maxTurns: 4`
-- `search-candidate-agent` has `maxTurns: 8`
-- `search-candidate-agent-deep` has `maxTurns: 16`
+   `agent_guided` 要求根据 `plan.official_history` 和 `plan.proposal_contract` 编写准确数量的
+   proposal；固定 work order 的 strategy 不传 proposal。
+4. 对每个候选调用 `search_start_agent_session`，然后使用返回 payload 启动前台 Agent：
 
-`budget_control.max_turns` documents the expected bound. The enforcement comes
-from the selected Claude Code agent's `maxTurns` frontmatter. The runtime maps
-known budgets 4, 8, and 16 to the matching agent types when `worker_agent_type`
-is omitted.
+   ```text
+   Agent(
+     description=launch.description,
+     prompt=launch.message,
+     subagent_type=launch.agent_type,
+     background=false
+   )
+   ```
 
-Choose the initial tier before freezing the spec:
+   原样使用 launch 字段，不要追加或硬编码 `run_id`/工作区路径。Agent 返回后，使用
+   `search_bind_agent_handle` 绑定终态 handle 和 summary，并自行运行不带
+   `agent_session_id` 的 `search_run_verifier` 确认最终分数。
+5. 要继续同一个 native agent，先调用 `search_continue_agent_session`，再使用
+   `SendMessage(agent=<绑定 id>, message=launch.message)`。如果 `SendMessage` 不可用，
+   或原 agent 达到 `maxTurns` 且无法继续，则通过
+   `search_redispatch_candidate` 对同一候选执行状态级恢复，并启动新前台 Agent。
+6. 候选预算仍有剩余且确需新候选时，再规划下一 batch。每个 Agent 都是前台调用；
+   此运行时没有 MCP wait loop、后台 subagent supervisor 或 abort API。
+7. 对每个返回候选执行主流程最终 verifier，读取 `search_list_history`，全部 worker drain 后
+   再调用 `search_select`。只能使用 `search_promote` 提升，不能手动复制文件。
+8. 该 Search 属于 Goal Plus 时，不生成报告就交还控制；Goal Plus skill 会在父记录达到终态后
+   调用且只调用一次 `search_report`。独立 Search 只在提升后报告。
 
-- Use `search-candidate-agent-flash` only for smoke tests or very cheap probes.
-- Use `search-candidate-agent` for normal candidate work.
-- Use `search-candidate-agent-deep` when the source tree is large, the verifier is
-  slow, the edit requires cross-file reasoning, or a previous flash worker
-  reached `maxTurns` before recording any verifier iteration or usable score.
+## Worker 契约
 
-If a worker returns no useful verifier evidence because the tier was too small,
-prefer a higher tier for later planned work or a replacement search run. Do not
-repeat the same underpowered tier unless the user explicitly wants a cheap
-probe.
+worker 只收到 `agent_session_id` 和候选思路。它首先调用
+`search_get_agent_context(agent_session_id)`，将返回的 `run_id`、`candidate_id`、
+`workspace`、允许/禁止文件、budget、history、iterations、results 和 `results_tsv`
+视为权威依据。唯一必需 MCP 调用是 `search_get_agent_context` 和 `search_run_verifier`。
 
-## Runtime History And Resume
+worker 只在候选工作区中运行 autoresearch 循环：编辑允许文件，调用
+`search_run_verifier(..., agent_session_id=..., hypothesis="<简洁假设>")`，读取
+ScoreReport，并保留改进或恢复旧 commit。运行时拥有 `results.tsv`，会验证已有记录并为每份
+报告追加且只追加一条记录；worker 绝不能创建、重写、截断、删除或手动追加它。
 
-History is runtime-owned, not a `plan.md` file. The main agent reads prior
-candidate results through `search_list_history`; workers recover state through
-`search_get_agent_context`, which returns `context.history` and
-`context.iterations`.
+如果结果包含 `VerifierWorkspaceSideEffect` 或 `candidate_action=stop_and_report`，worker
+立即返回，不能清理或重试。结束时 checkout 最佳工作区状态，并返回包含标识、最佳 metric、
+commit、改动文件和方案简述的摘要。不存在 MCP finalize 调用。
 
-For hosts or tool surfaces that cannot re-enter the same foreground agent, use
-state-level resume: call `search_redispatch_candidate` to start a new
-foreground Agent for the same candidate workspace, optionally overriding
-`worker_agent_type` and `worker_budget.max_turns`. The returned prompt tells
-the worker to treat `search_get_agent_context` as the authoritative resume
-context. Do not ask the worker to infer prior attempts from chat transcript.
+## Host 规则
 
-## Continuation
+- Claude Agent 使用 `background: false` 的前台启动。
+- `max_parallel` 只用于规划；运行时不监管 Agent lifecycle。
+- 没有 Task/Agent 级受支持 timeout；turn 上限由 agent frontmatter 决定。
+- `search_continue_agent_session` 只继续相同 runtime `agent_session_id`，不能用来创建新方向。
+- `search_redispatch_candidate` 是同一候选工作区使用新 `agent_session_id` 的状态级恢复。
+- 停止运行中的 Agent 属于 Claude Code/用户中断；不存在 MCP abort。
+- 候选触碰 denied file 或编辑范围外文件时，仍运行 verifier，让运行时标记失败。
 
-If `search_continue_agent_session` returns a `SendMessage` payload and the
-current Claude Code tool surface actually exposes a usable `SendMessage` tool,
-send the message to the specified agent in the foreground. If no handle is
-bound, `SendMessage` is unavailable, or the host cannot prove same-agent
-continuation, call `search_redispatch_candidate` and rely on MCP
-history/iterations for resume.
+## 失败处理
+
+MCP 工具不可用时报告 server 未连接；freeze 失败时修复 spec/产物；候选工作区缺失时读取
+status/report，不手动重建；verifier 失败保留在报告中，不编辑 verifier；没有通过候选时
+报告分数与 failure class。用户要求停止时不再启动 Agent，由 Claude Code 中断运行项。

@@ -123,7 +123,7 @@ def test_goal_plus_monitor_snapshot_summarizes_run_subagents_and_pi_metrics(
             "requested_k": 2,
             "planned_k": 2,
             "started_candidate_ids": [first.candidate_id, second.candidate_id],
-            "selection_rule": "independent source branches",
+            "selection_rule": "独立源码分支",
             "state": {},
         },
     }

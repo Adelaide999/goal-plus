@@ -64,8 +64,8 @@ def run_search_case(
                 task.candidate_id,
                 {
                     "goal": (
-                        "Read QUESTION.md, solve the benchmark item, edit answer.json "
-                        "with only the final answer, then call search_run_verifier."
+                        "读取 QUESTION.md，解答 benchmark 题目，编辑 answer.json 且只写最终答案，"
+                        "然后调用 search_run_verifier。"
                     )
                 },
             )

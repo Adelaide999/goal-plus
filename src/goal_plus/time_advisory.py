@@ -203,24 +203,23 @@ def _message(
     low_sample: bool,
 ) -> str:
     lines = [
-        "Time advisory (informational only): available time "
-        f"{_format_duration(remaining_seconds)} is below the observed average "
-        f"verifier-submission time {_format_duration(average_seconds)}.",
-        "Observed candidate timings:",
+        "时间提示（仅供参考）：可用时间 "
+        f"{_format_duration(remaining_seconds)} 低于观测到的 verifier 提交平均耗时 "
+        f"{_format_duration(average_seconds)}。",
+        "观测到的候选耗时：",
     ]
     for timing in timings:
         lines.append(
             f"- {timing['candidate_id']}: "
-            f"{_format_duration(float(timing['elapsed_seconds']))} elapsed / "
-            f"{timing['verifier_count']} subagent verifier submission(s) = "
-            f"{_format_duration(float(timing['average_seconds']))} average"
+            f"已用 {_format_duration(float(timing['elapsed_seconds']))} / "
+            f"{timing['verifier_count']} 次 subagent verifier 提交 = "
+            f"平均 {_format_duration(float(timing['average_seconds']))}"
         )
     if low_sample:
-        lines.append("The estimate has only one submission sample; treat it as low confidence.")
+        lines.append("该估算只有一个提交样本，应视为低置信度。")
     lines.append(
-        "Please account for the remaining time. Decide whether to continue the current work "
-        "or run one final search_run_verifier and return the best available result; no action "
-        "is forced."
+        "请考虑剩余时间。自行决定继续当前工作，还是最后运行一次 search_run_verifier "
+        "并返回当前最佳结果；不强制采取任何动作。"
     )
     return "\n".join(lines)
 

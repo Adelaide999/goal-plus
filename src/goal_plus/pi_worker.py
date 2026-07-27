@@ -190,9 +190,9 @@ def _workspace_progress_handoff(
     if not summary:
         changed_files = workspace_state["changed_files"]
         summary = (
-            "Workspace has unverified changes in: " + ", ".join(changed_files)
+            "工作区存在尚未验证的变更：" + ", ".join(changed_files)
             if changed_files
-            else "No verifier-backed progress recorded."
+            else "尚未记录 verifier 支持的进展。"
         )
     return {
         "status": "runner_failed" if runner_failed else "timed_out" if timed_out else "completed",
@@ -841,15 +841,14 @@ def run_pi_rpc_worker(
                         {
                             "type": "steer",
                             "message": (
-                                "Final-check deadline is approaching. Stop new analysis and submit the "
-                                "structured goal_plus_submit_final_check verdict now."
+                                "最终检查截止时间临近。停止新的分析，并立即通过 "
+                                "goal_plus_submit_final_check 提交结构化结论。"
                                 if launch.get("role") == "final-checker"
                                 else (
-                                    "Worker deadline is approaching. Stop starting new analysis, edits, "
-                                    "or optimization iterations. If the workspace changed since the latest "
-                                    "recorded verifier, run one final search_run_verifier now; otherwise "
-                                    "return a concise summary immediately. Do not start another optimization "
-                                    "iteration."
+                                    "Worker 截止时间临近。停止启动新的分析、编辑或优化 iteration。"
+                                    "如果自最近一次记录的 verifier 后工作区发生了变化，立即最后运行一次 "
+                                    "search_run_verifier；否则立即返回简洁摘要。不要再启动新的优化 "
+                                    "iteration。"
                                 )
                             ),
                         },

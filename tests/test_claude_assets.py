@@ -55,13 +55,13 @@ def test_claude_skill_uses_foreground_agent_and_generic_bind() -> None:
     assert "SendMessage" in text
     assert "background: false" in text
     assert "background subagent" not in text.lower()
-    assert "## Verifier Freeze Contract" in text
-    assert 'numeric `spec.metric_name`' in text
+    assert "## Verifier 冻结契约" in text
+    assert '有限数值类型的 `spec.metric_name`' in text
     assert ".goal-plus-verifiers/" in text
-    assert "`expected_outputs` accepts" in text
+    assert "`expected_outputs` 只接受" in text
     assert "GOAL_PLUS_VERIFIER_TMPDIR" in text
     assert "VerifierWorkspaceSideEffect" in text
-    assert "fixed `/tmp`" in text
+    assert "固定 `/tmp`" in text
 
 
 def test_claude_search_skill_documents_whole_run_budget_planning() -> None:
@@ -71,14 +71,14 @@ def test_claude_search_skill_documents_whole_run_budget_planning() -> None:
     normalized = " ".join(text.split())
 
     assert_common_budget_planning_claims(text)
-    assert "total number of distinct candidate workspaces across all rounds" in normalized
+    assert "所有轮次中不同候选工作区总数的不可变上限" in normalized
     assert "`ceil(max_candidates / max_parallel)`" in text
     assert "`max_candidates = rounds * max_parallel`" in text
-    assert "set `max_candidates=15`" in text
-    assert "default value 4 as the whole-run budget" in normalized
-    assert "Do not call `search_select` while" in normalized
-    assert "same-candidate continuation" in normalized
-    assert "not an obligation to launch more work" in normalized
+    assert "`max_candidates=15`" in text
+    assert "默认值 4 当作整个 run 预算" in normalized
+    assert "不要调用 `search_select`" in normalized
+    assert "同候选 continuation" in normalized
+    assert "不代表必须启动更多工作" in normalized
 
 
 def test_claude_worker_agent_calls_context_and_verifier() -> None:
@@ -91,15 +91,15 @@ def test_claude_worker_agent_calls_context_and_verifier() -> None:
     assert "mcp__goal-plus__*" in text
     assert "search_get_agent_context" in text
     assert "search_run_verifier" in text
-    assert "workspace root" in text
-    assert "exactly one validated row" in text
+    assert "工作区根目录" in text
+    assert "且只追加一条已验证记录" in text
     assert "hypothesis=" in text
     assert "candidate_action=stop_and_report" in text
-    assert "return immediately" in text
-    assert "assigned candidate idea as a hypothesis" in text
-    assert "any promising direction" in text
-    assert "fixed artifact count" in text
-    assert "theoretical or structural limits" in text
+    assert "立即返回" in text
+    assert "把分配的候选思路当作假设" in text
+    assert "有希望的方向" in text
+    assert "固定产物数量" in text
+    assert "理论或结构限制" in text
 
 
 def test_claude_worker_agent_turn_budget_variants_exist() -> None:
@@ -116,10 +116,10 @@ def test_claude_worker_agent_turn_budget_variants_exist() -> None:
     assert "maxTurns: 16" in deep
     assert "candidate_action=stop_and_report" in flash
     assert "candidate_action=stop_and_report" in deep
-    assert "assigned candidate idea as a hypothesis" in flash
-    assert "assigned candidate idea as a hypothesis" in deep
-    assert "theoretical or structural limits" in flash
-    assert "theoretical or structural limits" in deep
+    assert "把分配的候选思路当作假设" in flash
+    assert "把分配的候选思路当作假设" in deep
+    assert "理论或结构限制" in flash
+    assert "理论或结构限制" in deep
 
 
 def test_claude_search_skill_documents_tier_escalation_and_resume() -> None:
@@ -132,14 +132,14 @@ def test_claude_search_skill_documents_tier_escalation_and_resume() -> None:
 
     assert "search-candidate-agent-flash" in text
     assert "search-candidate-agent-deep" in text
-    assert "reached `maxTurns` before recording any verifier iteration" in text
-    assert "History is runtime-owned, not a `plan.md` file" in text
-    assert "state-level resume" in text
+    assert "达到 `maxTurns` 且未记录任何 verifier iteration" in text
+    assert "history 由运行时拥有，不是 `plan.md` 文件" in text
+    assert "状态级恢复" in text
     assert "context.history" in text
     assert "context.iterations" in text
     assert "search_redispatch_candidate" in text
-    assert "SendMessage` is unavailable" in text
-    assert "do not rely on chat transcript" in agent
+    assert "`SendMessage` 不可用" in text
+    assert "不要依赖聊天 transcript" in agent
 
 
 def test_claude_docs_record_log_inspection_paths() -> None:
@@ -170,9 +170,9 @@ def test_claude_goal_plus_skill_documents_multiple_search_tasks() -> None:
         encoding="utf-8"
     )
 
-    assert "same `goal_plus_id`" in text
-    assert "`search_tasks` is append-only" in text
-    assert "`linked_search` is the current" in text
-    assert "do not call `search_report` yet" in text
-    assert "Only after the Goal Plus record is terminal" in text
-    assert "Never generate an" in text
+    assert "同一个 `goal_plus_id`" in text
+    assert "`search_tasks` 仅追加" in text
+    assert "`linked_search` 是当前任务兼容视图" in text
+    assert "此时不要调用 `search_report`" in text
+    assert "只有 Goal Plus 记录达到终态后" in text
+    assert "绝不能生成中间 Goal Plus 报告" in text

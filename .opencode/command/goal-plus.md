@@ -1,16 +1,16 @@
 ---
-description: Run a goal with optional Agentic Search upgrade
+description: 运行目标，并可选择升级到 Agentic Search
 agent: goal-plus-orchestrator
 subtask: false
 ---
-Use the `goal-plus` skill to run this objective.
+使用 `goal-plus` skill 运行此目标。
 
-Before taking action:
-1. Load the `goal-plus` skill with the skill tool.
-2. Treat @.opencode/skills/goal-plus/SKILL.md as the required workflow reference.
-3. Start by calling `goal_plus_create` for the raw objective.
-4. If the task upgrades to Search Mode, call the internal `search` skill and follow its workflow.
-5. If the `goal-plus` skill or goal-plus MCP tools are unavailable, stop and report the missing dependency.
+采取行动前：
+1. 使用 skill 工具加载 `goal-plus` skill。
+2. 将 @.opencode/skills/goal-plus/SKILL.md 作为必需工作流参考。
+3. 首先为原始目标调用 `goal_plus_create`。
+4. 如果任务升级到 Search Mode，调用内部 `search` skill 并遵循其工作流。
+5. 如果 `goal-plus` skill 或 goal-plus MCP 工具不可用，停止并报告缺失依赖。
 
-Goal:
+目标：
 $ARGUMENTS

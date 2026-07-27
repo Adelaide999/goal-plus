@@ -50,18 +50,16 @@ class Budget(SearchModel):
     max_candidates: int = Field(
         gt=0,
         description=(
-            "Hard cap on total distinct candidate workspaces across the entire "
-            "frozen search run and all planning rounds. This is not a per-round "
-            "limit and cannot be increased after freeze. Setting it equal to "
-            "max_parallel normally permits only one full batch."
+            "整个冻结 Search run 和所有规划轮次中不同候选工作区总数的硬上限。"
+            "这不是单轮限制，冻结后不能增加。将其设为与 max_parallel 相同通常只允许"
+            "一个完整 batch。"
         ),
     )
     max_parallel: int = Field(
         gt=0,
         description=(
-            "Maximum candidates that search_plan_next may place in one planned "
-            "batch. This controls batch width or recommended concurrency, not "
-            "the total candidate count."
+            "search_plan_next 在一个规划 batch 中最多可放置的候选数。"
+            "它控制 batch 宽度或建议并发度，不控制候选总数。"
         ),
     )
     max_tokens: int | None = Field(default=None, gt=0)
@@ -179,16 +177,14 @@ class VerifierCommand(SearchModel):
         default=None,
         min_length=1,
         description=(
-            "Optional host-wide exclusive resource name. Verifier commands "
-            "with the same value execute serially across candidates and runs."
+            "可选的 host 级独占资源名。值相同的 verifier 命令会跨候选和 run 串行执行。"
         ),
     )
     feedback_policy: FeedbackPolicy = FeedbackPolicy.VISIBLE_TO_WORKERS
     expected_outputs: list[str] = Field(
         default_factory=list,
         description=(
-            "Expected artifact path or glob strings in the candidate workspace; "
-            "this field does not parse verifier stdout metrics."
+            "候选工作区中预期的产物路径或 glob；此字段不解析 verifier stdout metric。"
         ),
     )
 

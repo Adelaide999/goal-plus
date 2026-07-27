@@ -1,173 +1,141 @@
 ---
 name: goal-plus
 description: >
-  Run a natural-language goal with an optional upgrade to Agentic Search when
-  the task has a measurable verifier, bounded edit surface, and useful
-  multi-candidate search space.
-argument-hint: Objective, source path, optional optimization/scenario hints.
+  运行自然语言目标；当任务具有可度量 verifier、有界编辑范围和有用的多候选搜索空间时，
+  可选择升级到 Agentic Search。
+argument-hint: 目标、源码路径，以及可选的优化/场景提示。
 ---
 
 # Goal Plus Skill
 
-Goal Plus is a thin goal-shaped layer over the Search MCP runtime. It records
-the raw goal, triages whether search is justified, discovers a frozen spec when
-needed, and then delegates Search Mode to the internal `search` skill.
+Goal Plus 是 Search MCP 运行时上方的轻量 goal 层。它记录原始目标，triage 是否值得 Search，
+在需要时发现冻结 spec，然后把 Search Mode 委托给内部 `search` skill。
 
-## Tool Names In OpenCode
+## OpenCode 中的工具名
 
-The MCP server is configured as `goal-plus`, so tools appear with this
-prefix:
+MCP server 配置名为 `goal-plus`，因此工具使用以下前缀：
 
-| Runtime tool | OpenCode tool name |
+| 运行时工具 | OpenCode 工具名 |
 |---|---|
 | `goal_plus_create` | `goal-plus_goal_plus_create` |
 | `goal_plus_status` | `goal-plus_goal_plus_status` |
 | `goal_plus_record_triage` | `goal-plus_goal_plus_record_triage` |
 | `goal_plus_save_spec_draft` | `goal-plus_goal_plus_save_spec_draft` |
-| `goal_plus_confirm_frozen_verifier` | `goal-plus_goal_plus_confirm_frozen_verifier` (legacy optional audit evidence) |
+| `goal_plus_confirm_frozen_verifier` | `goal-plus_goal_plus_confirm_frozen_verifier`（旧版可选审计证据） |
 | `goal_plus_link_search_run` | `goal-plus_goal_plus_link_search_run` |
 | `goal_plus_record_search_result` | `goal-plus_goal_plus_record_search_result` |
 | `goal_plus_set_status` | `goal-plus_goal_plus_set_status` |
 | `goal_plus_gate` | `goal-plus_goal_plus_gate` |
 
-Use the internal `search` skill for Search Mode tools such as
-`search_freeze_spec`, `search_create`, `search_plan_next`,
-`search_start_batch`, `search_start_agent_session`, `search_select`,
-`search_report`, and `search_promote`.
+Search Mode 工具使用内部 `search` skill，例如 `search_freeze_spec`、`search_create`、
+`search_plan_next`、`search_start_batch`、`search_start_agent_session`、`search_select`、
+`search_report` 和 `search_promote`。
 
-If any required MCP tool is unavailable, stop and report that the goal-plus
-MCP server is not connected. Do not simulate `.gp` state in chat.
+任何必需 MCP 工具不可用时，停止并报告 goal-plus MCP server 未连接。不要在聊天中模拟
+`.gp` 状态。
 
-## Workflow
+## 工作流
 
-### Step 1: Create Goal
+### 步骤 1：创建目标
 
-Call:
+调用：
 
 ```text
-goal-plus_goal_plus_create(raw_goal="<user objective>", source_path="<optional>")
+goal-plus_goal_plus_create(raw_goal="<用户目标>", source_path="<可选>")
 ```
 
-The raw goal may begin with `mode=autonomous` (default) for substantial,
-renewable candidate exploration or `mode=probe` for short feasibility,
-potential, and blocker probes. The runtime replaces the prefix with one
-canonical final line in `raw_goal`; this is exploration guidance, not the
-Goal/Spec Discovery/Search phase or a Search strategy mode. The model still
-decides from evidence whether the task stays goal-like or upgrades to Search
-Mode.
+原始目标可以用 `mode=autonomous`（默认）开头，表示充足且可续期的候选探索；也可用
+`mode=probe` 表示短期可行性、潜力和阻塞因素探查。运行时会把该前缀替换为 `raw_goal`
+中的一行规范中文提示；它只是探索指引，不是 Goal/Spec Discovery/Search phase 或 Search
+strategy mode。模型仍根据证据决定任务保留 goal 形态还是升级到 Search Mode。
 
-### Step 2: Triage
+### 步骤 2：Triage
 
-Read enough context to decide whether search adds value. Then call
-`goal-plus_goal_plus_record_triage`.
+读取足够上下文以判断 Search 是否有价值，然后调用
+`goal-plus_goal_plus_record_triage`。
 
-Use Search Mode only when most of these are true:
+大部分以下条件成立时才使用 Search Mode：
 
-- a numeric or comparable metric exists
-- an automated correctness gate exists
-- the edit surface can be bounded
-- at least two credible implementation approaches exist
-- baseline behavior can be measured
-- candidate budget is worth spending
+- 存在数值或可比较 metric
+- 存在自动正确性门禁
+- 编辑范围可以限定
+- 至少有两种可信实现方案
+- baseline 行为可度量
+- 候选预算值得投入
 
-Recommended triage mapping:
+建议映射：
 
-- Goal Mode: `is_optimization=false`, `recommended_phase="goal"`,
-  `confidence="high"`.
-- Spec Discovery Mode: `is_optimization=true`,
-  `recommended_phase="spec_discovery"`, and list missing baseline/metric/gate
-  fields.
-- Search Mode: `is_optimization=true`, `recommended_phase="search"`,
-  `confidence="high"`.
+- Goal Mode：`is_optimization=false`、`recommended_phase="goal"`、
+  `confidence="high"`。
+- Spec Discovery Mode：`is_optimization=true`、
+  `recommended_phase="spec_discovery"`，并列出缺失的 baseline/metric/gate 字段。
+- Search Mode：`is_optimization=true`、`recommended_phase="search"`、
+  `confidence="high"`。
 
-### Step 3: Goal Mode
+### 步骤 3：Goal Mode
 
-Goal Mode is for ordinary implementation, investigation, docs, review, and
-qualitative tasks.
+Goal Mode 用于普通实现、调查、文档、审查和定性任务。不要在 Goal Mode 创建 SearchSpec。
+在当前工作区工作，以合适命令或审查证据验证，然后调用
+`goal-plus_goal_plus_set_status(status="complete", evidence=[...])`。
 
-Do not create a SearchSpec in Goal Mode. Work in the current workspace, verify
-with appropriate commands or review evidence, then call
-`goal-plus_goal_plus_set_status(status="complete", evidence=[...])`.
-
-Before final response, call:
+最终回复前调用：
 
 ```text
 goal-plus_goal_plus_gate(goal_plus_id="<id>", event="stop", context={})
 ```
 
-If the gate blocks, continue with its `continuation_prompt`.
+如果 gate 阻止，按其 `continuation_prompt` 继续。对顶层 agent，每条仍 active 的记录都会
+阻止 Stop，并重新提供完整原始目标和时间上下文。继续工作或记录真实终态；候选 worker
+lease 结束绝不会完成父级目标。
 
-For a top-level agent, every still-active record blocks Stop and re-presents
-the full raw goal plus timing context. Continue or record a truthful terminal
-status; a candidate worker lease ending never completes the parent goal.
+### 步骤 4：Spec Discovery Mode
 
-### Step 4: Spec Discovery Mode
+Discovery 将模糊优化请求转为 SearchSpec draft。需要产出：
 
-Discovery turns a fuzzy optimization request into a SearchSpec draft. Produce:
+- baseline 命令和结果
+- metric 名称、方向和聚合方式
+- 正确性门禁命令或 verifier 产物
+- 允许和禁止的编辑范围
+- 要冻结的 verifier 产物路径
+- 候选预算和 worker 配置
+- 提升规则
+- 尚未解决的问题
 
-- baseline command and baseline result
-- metric name, direction, and aggregation
-- correctness gate command or verifier artifact
-- allowed and denied edit surface
-- verifier artifact paths to freeze
-- candidate budget and worker profile
-- promotion rule
-- unresolved questions, if any
+ranking verifier 必须输出一个最终 JSON 对象，其中包含有限数值类型的
+`spec.metric_name`，例如 `{"combined_score": 123.0}`。命令可以内联，也可以调用
+现有仓库工具。只在必要时创建自定义 verifier 文件；在 Spec Discovery 期间且冻结前，
+将其写入源码拥有的 `.goal-plus-verifiers/` 等路径，绝不能放在 `.gp/` 或 `.search/`。
+它必须保持候选工作区只读，并将编译器和临时输出放入唯一的
+`GOAL_PLUS_VERIFIER_TMPDIR`/`TMPDIR`（或 Python `tempfile`）；并发候选验证时固定
+`/tmp` 路径不安全。冻结会在消耗候选预算前拒绝工作区副作用。freeze 工具暴露完整嵌套
+`SearchSpec` schema；`expected_outputs` 只列出产物路径/glob，不解析 stdout。
 
-The ranking verifier must emit a final JSON object with a finite numeric
-`spec.metric_name`, for example `{"combined_score": 123.0}`. Its command may
-be inline or call an existing repository tool. Create a custom verifier file
-only when needed; materialize it during Spec Discovery before freezing, in a
-source-owned path such as `.goal-plus-verifiers/`, never `.gp/` or `.search/`.
-It must keep the candidate workspace read-only and put compiler products and
-temporary outputs in the unique `GOAL_PLUS_VERIFIER_TMPDIR`/`TMPDIR` (or a
-Python `tempfile.TemporaryDirectory()`); fixed `/tmp` paths are unsafe when
-Search candidates verify concurrently. Freeze rejects workspace side effects
-before candidate budget is spent.
-Spec Discovery may use host inspection and write tools for this work. The
-freeze tool exposes the complete nested `SearchSpec` schema.
-`expected_outputs` lists artifact paths/globs and is not a stdout parser.
-`search_freeze_spec` repeats this preflight before candidate workers can start.
+对 AscendC Direct Invoke 场景，记录 `scenario="ascendc_direct_invoke"`，完整读取
+`examples/ascendc-direct-search/SPEC_DISCOVERY.md`，遵循其 request schema 和源码模板。
+针对准确固定的 Git commit，使用 `knowledge.sources.json` 运行
+`materialize_knowledge.py` 生成任务局部 `_skills/`，绝不能复制 live Skill 目录。
+主 agent 生成 Golden、cases、verifier、baseline 和 SearchSpec。冻结前，使用 JSON Schema
+validator 按 `examples/ascendc-direct-search/request.schema.json` 校验
+`_task/operator_request.json`；解析 JSON 或手动字段清单不够。不要要求用户准备任务目录
+或编写 verifier。只支持 Direct Invoke，不调用外部 AscendC Agent、plugin 或编排工作流。
 
-For an AscendC Direct Invoke operator goal described by semantics, approximate
-shapes/dtypes, and reference hints, record
-`scenario="ascendc_direct_invoke"` and read
-`examples/ascendc-direct-search/SPEC_DISCOVERY.md` completely. Follow its
-request schema and source template. Run its `materialize_knowledge.py` with
-`knowledge.sources.json` against exact pinned Git commits to generate the
-task-local `_skills/`; never copy a live Skill directory. Treat the curated AKG
-AscendC tree as primary knowledge and use only the declared CANNBot supplements
-for uncovered operator families. The main agent generates the Golden, cases,
-verifier, baseline, and SearchSpec. Before `search_freeze_spec`, use a JSON
-Schema validator to validate the generated `_task/operator_request.json`
-against `examples/ascendc-direct-search/request.schema.json`; JSON parsing or a
-manual field checklist is insufficient, and validation failure blocks
-freezing. Never require the user to run a task preparer, supply a task
-directory, or write a verifier. Support Direct Invoke only; the generated
-knowledge is read-only and cannot launch source Agent or Plugin workflows.
+调用 `goal-plus_goal_plus_save_spec_draft`。只有 `confidence="high"` 且
+`open_questions=[]` 时才继续 Search Mode；否则补齐缺失内容或继续 Goal Mode。
 
-This scenario is self-contained. Do not invoke an external AscendC Agent,
-plugin, or orchestration workflow.
+#### 自主 Search 升级
 
-Call `goal-plus_goal_plus_save_spec_draft`. Continue to Search Mode only
-when `confidence="high"` and `open_questions=[]`. Otherwise ask for the missing
-piece or continue in Goal Mode.
+draft 达到高置信度且无 open question 后，自动进入 Search Mode gate。不要要求用户批准
+verifier、metric、编辑范围、提升规则或 mode 变化。用户提示有用但可选；agent 必须发现
+缺失细节并依据证据决策。
 
-#### Autonomous Search Upgrade
+`identified_at` 和 `origin` 仅作为 provenance。旧版
+`goal-plus_goal_plus_confirm_frozen_verifier` 工具和
+`user_confirmed_frozen_verifier` 字段可兼容读取，但不是 Search 准入要求，绝不能暂停
+`/goal-plus`。
 
-When the draft is high-confidence with no open questions, continue to the
-Search Mode gate automatically. Do not ask the user to approve the verifier,
-metric, edit surface, promotion rule, or mode change. User hints are useful but
-optional; the agent must discover missing details and decide from evidence.
+### 步骤 5：Search Mode
 
-Keep `identified_at` and `origin` as provenance only. The legacy
-`goal-plus_goal_plus_confirm_frozen_verifier` tool and
-`user_confirmed_frozen_verifier` field remain compatible with older runs, but
-they are not Search admission requirements and must never pause `/goal-plus`.
-
-### Step 5: Search Mode
-
-Before calling any `search_*` tool that creates or runs search state, call:
+调用任何创建或运行 Search 状态的 `search_*` 工具前，调用：
 
 ```text
 goal-plus_goal_plus_gate(
@@ -177,48 +145,34 @@ goal-plus_goal_plus_gate(
 )
 ```
 
-If allowed, call the internal `search` skill and follow its workflow exactly:
+允许后，调用内部 `search` skill，并严格遵循：
 
 ```text
 search_freeze_spec -> search_create -> search_plan_next -> search_start_batch
--> search_start_agent_session -> host foreground workers -> search_run_verifier
+-> search_start_agent_session -> host 前台 worker -> search_run_verifier
 -> search_select -> search_promote
 ```
 
-After `search_create`, call `goal-plus_goal_plus_link_search_run`.
-After selection and promotion, call `goal-plus_goal_plus_record_search_result`.
-This reserves the canonical report paths without creating report files. Do not
-call `goal-plus_search_report` while Goal Plus is still active.
+`search_create` 后调用 `goal-plus_goal_plus_link_search_run`。选择并提升后调用
+`goal-plus_goal_plus_record_search_result`。它只预留规范报告路径，不创建报告文件。
+Goal Plus 仍 active 时不要调用 `goal-plus_search_report`。
 
-One Goal Plus record is the complete user task. If the raw-goal audit needs
-another verifier-backed search, create and link another `run_id` under the same
-`goal_plus_id`. `search_tasks` is the append-only task history, one run over
-one frozen spec per item; `linked_search` is only the current-task
-compatibility view. Each search task may contain multiple search rounds.
+一条 Goal Plus 记录就是完整用户任务。如果原始目标审计需要另一次有 verifier 支持的 Search，
+在同一个 `goal_plus_id` 下创建并链接新 `run_id`。`search_tasks` 是仅追加任务历史，
+每项对应一个冻结 spec 上的一个 run；`linked_search` 只是当前任务兼容视图。
 
-### Step 6: Final Raw-Goal Audit
+### 步骤 6：最终原始目标审计
 
-Search completion proves only the frozen spec. The final raw-goal audit checks
-whether the original user objective is actually satisfied after promotion and
-any integration work.
+Search 完成只证明冻结 spec。最终审计检查原始用户目标在提升和集成工作后是否确实满足。
+满足时调用 `goal-plus_goal_plus_set_status(status="complete", evidence=[...])`；
+未满足时在 Goal Mode 继续集成，或用明确证据把目标标记为 blocked。
 
-If yes, call `goal-plus_goal_plus_set_status(status="complete",
-evidence=[...])`. If not, continue in Goal Mode with the remaining integration
-work or mark the goal blocked with clear evidence.
+只有 Goal Plus 记录达到终态后，才对每个成功记录的 `run_id` 调用且只调用一次
+`goal-plus_search_report`，并返回两条最终报告路径。绝不能生成中间 Goal Plus 报告。
 
-Only after the Goal Plus record is terminal, call `goal-plus_search_report`
-exactly once for every successfully recorded `run_id` and return both final
-report paths. Never generate an intermediate Goal Plus report.
+## Hook 兼容性
 
-## Hook Compatibility
-
-When a host has hooks, wire `goal_plus_gate` to:
-
-- `pre_tool_use` before `search_*` tools
-- `stop` or `subagent_stop` before the agent ends
-
-The checked-in OpenCode assets do not include such hooks. In OpenCode, call the
-same gate manually at those checkpoints. This is instruction-driven and can be
-skipped by a non-compliant agent; it is not enforced by OpenCode itself. The
-gate controls phase order; the host still owns foreground worker launch,
-interruptions, and return values.
+host 有 hook 时，将 `goal_plus_gate` 接到 `search_*` 前的 `pre_tool_use`，以及 agent
+结束前的 `stop` 或 `subagent_stop`。仓库中的 OpenCode 资产不包含这些 hook，
+因此要在相应 checkpoint 手动调用 gate。这由指令驱动，OpenCode 本身不会强制执行；
+gate 只控制 phase 顺序，host 仍负责前台 worker 启动、中断和返回值。
