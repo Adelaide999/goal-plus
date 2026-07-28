@@ -707,7 +707,12 @@ def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
     record = goal_runtime.create_goal("Run one sustained AutoResearch worker")
     goal_runtime.activate_session(
         record.goal_plus_id,
-        {"host": "codex", "session_id": "session-codex"},
+        {"host": "codex", "session_id": "parent-session"},
+    )
+    goal_runtime.link_search_run(
+        record.goal_plus_id,
+        search_runtime._load_run(run_id).frozen_spec_id,
+        run_id,
     )
     agent_identity = "019f-native-autoresearch-worker"
     session = search_runtime._load_agent_session_by_id(agent_session_id)
@@ -751,7 +756,7 @@ def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
         search_root,
         {
             "hook_event_name": "SubagentStop",
-            "session_id": "session-codex",
+            "session_id": "child-session",
             "agent_id": agent_identity,
             "agent_type": "default",
         },
@@ -793,7 +798,7 @@ def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
         search_root,
         {
             "hook_event_name": "SubagentStop",
-            "session_id": "session-codex",
+            "session_id": "child-session",
             "agent_id": agent_identity,
             "agent_type": "default",
         },

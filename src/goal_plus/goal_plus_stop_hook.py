@@ -800,6 +800,7 @@ def _search_candidate_stop_context(
     return {
         "goal_plus_subagent_role": "search_candidate",
         "search_candidate_agent_session_id": agent_session_id,
+        "search_candidate_run_id": session.run_id,
         "search_candidate_id": session.candidate_id,
         "search_candidate_verifier_runs": verifier_runs,
         "search_candidate_verifier_complete": verifier_runs > 0,
@@ -940,6 +941,15 @@ def _select_session_goal_id(search_root: Path, session_id: str | None) -> str | 
             record.active_session is not None
             and record.active_session.session_id == session_id
         ):
+            return record.goal_plus_id
+    return None
+
+
+def _select_search_goal_id(search_root: Path, run_id: Any) -> str | None:
+    if not isinstance(run_id, str) or not run_id:
+        return None
+    for record in _active_records(search_root):
+        if any(task.run_id == run_id for task in record.search_tasks):
             return record.goal_plus_id
     return None
 
@@ -1186,7 +1196,15 @@ def _handle_stop_event(
     *,
     event: str,
 ) -> None:
+    candidate_context = None
+    if event == "subagent_stop" and not _is_final_checker_context(hook_input):
+        candidate_context = _search_candidate_stop_context(search_root, hook_input)
     goal_id = _select_hook_goal_id(search_root, hook_input)
+    if goal_id is None and candidate_context is not None:
+        goal_id = _select_search_goal_id(
+            search_root,
+            candidate_context.get("search_candidate_run_id"),
+        )
     if goal_id is None:
         current_session_id = _session_id(hook_input)
         active = _active_records(search_root)
@@ -1216,7 +1234,6 @@ def _handle_stop_event(
                 checker_metadata={"hook_event": "SubagentStop"},
             )
     elif event == "subagent_stop":
-        candidate_context = _search_candidate_stop_context(search_root, hook_input)
         if candidate_context is not None:
             gate_context = {**hook_input, **candidate_context}
             agent_session_id = candidate_context.get(
