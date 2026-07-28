@@ -221,11 +221,35 @@ def create_mcp(
     def search_get_agent_context(agent_session_id: str) -> dict[str, Any]:
         """Subagent 的首次调用，返回权威 id 和工作区。
 
-        返回 run_id、candidate_id、workspace、candidate_task、history 和 subagent
-        自己的 iterations。由 subagent 调用，不由主 agent 调用。subagent 必须把 prompt
-        提供的 id 只当作标签，并将此响应作为事实来源。
+        返回 run_id、candidate_id、workspace、candidate_task 和 subagent 自己的
+        iterations/results。由 subagent 调用，不由主 agent 调用。subagent 必须把
+        prompt 提供的 id 只当作标签，并将此响应作为事实来源。
         """
         return tools.search_get_agent_context(agent_session_id)
+
+    @mcp.tool()
+    def search_get_global_plan(
+        agent_session_id: str,
+    ) -> list[dict[str, Any]]:
+        """返回当前 run 的窄 Global Plan 视图。
+
+        每项只包含 candidate_id、iteration、一句话 description、score、
+        keep/discard/failure disposition 和 verifier attempt commit。worker 每轮修改前
+        读取一次；需要代码级证据时可自行通过 commit 做只读 Git 比较。
+        """
+        return tools.search_get_global_plan(agent_session_id)
+
+    @mcp.tool()
+    def search_submit_iteration_plan(
+        agent_session_id: str,
+        description: Annotated[str, Field(min_length=1, max_length=240)],
+    ) -> dict[str, Any]:
+        """在修改代码前提交本轮不可变的一句话计划。
+
+        workspace 必须仍是 candidate-local settled HEAD 且 Git-clean。同一 iteration
+        重复提交相同描述是幂等的，不同描述不能覆盖。
+        """
+        return tools.search_submit_iteration_plan(agent_session_id, description)
 
     @mcp.tool()
     def search_run_verifier(
@@ -237,10 +261,10 @@ def create_mcp(
     ) -> dict[str, Any]:
         """Subagent 带 `agent_session_id` 自评分；主流程最终验证不带它。
 
-        subagent 传入自己的 `agent_session_id` 和描述所测设计的简洁 `hypothesis`。
-        运行时记录 iteration provenance，在继承的 `workspace/results.tsv` 中追加且只追加
-        一条已验证记录，然后提交这份运行时拥有的账本。OpenCode Task 完成后，主 agent
-        不带 `agent_session_id` 调用以确认最终分数。带
+        subagent 传入自己的 `agent_session_id`；运行时要求本轮已有不可变 plan，并以
+        plan description 作为 iteration hypothesis。随后在继承的
+        `workspace/results.tsv` 中追加且只追加一条已验证记录并提交账本。主 agent
+        不带 `agent_session_id` 的内部复验不要求 plan。带
         `candidate_action="stop_and_report"` 的 `VerifierWorkspaceSideEffect` 是冻结
         verifier 的基础设施失败：worker 不能清理 verifier 输出或重试。
         """

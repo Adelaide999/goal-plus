@@ -78,6 +78,7 @@ def _codex_search_worker(
     plan = runtime.plan_next(run_id, requested_k=1)
     task = runtime.start_batch(run_id, plan.plan_id)[0]
     session = runtime.start_agent_session(run_id, task.candidate_id, {"goal": "test"})
+    runtime.submit_iteration_plan(session.agent_session_id, "Hook-owned worker evidence")
     old_start = datetime.now(timezone.utc) - timedelta(seconds=90)
     runtime._write_agent_session(
         session.model_copy(
@@ -768,6 +769,17 @@ def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
     assert "不要返回父级" in blocked["reason"]
     assert "不要休眠或忙等" in blocked["reason"]
     assert "每完成一次额外 verifier iteration 后" in blocked["reason"]
+    protocol = [
+        "search_get_agent_context",
+        "search_get_global_plan",
+        "search_submit_iteration_plan",
+        "实现",
+        "search_run_verifier",
+    ]
+    assert all(step in blocked["reason"] for step in protocol)
+    assert [blocked["reason"].index(step) for step in protocol] == sorted(
+        blocked["reason"].index(step) for step in protocol
+    )
 
     evidence_path = (
         search_root

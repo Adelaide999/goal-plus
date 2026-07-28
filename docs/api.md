@@ -79,7 +79,9 @@ feature ledger, and scoped pitfalls. It marks predecessor scores non-reusable.
 | `search_redispatch_candidate` | main | create a fresh session in the same candidate workspace |
 | `search_bind_agent_handle` | main/host driver | attach a Codex or Pi native handle |
 | `search_continue_agent_session` | main | return native same-worker continuation fields when supported |
-| `search_get_agent_context` | candidate worker | load authoritative ids, workspace, history, iterations, and resume data |
+| `search_get_agent_context` | candidate worker | load authoritative ids, workspace, candidate-local iterations/results, and resume data |
+| `search_get_global_plan` | candidate worker | project all plan-backed attempts in the current run as description, score, disposition, and attempt commit |
+| `search_submit_iteration_plan` | candidate worker | atomically create the next immutable one-line plan while its workspace is settled and Git-clean; the final write shares the run lock with invalidation and is rejected outside active iteration states |
 | `search_get_agent_observability` | main/monitor | read normalized model, timing, terminal, usage, context, artifact, and handoff evidence for one session |
 
 `search_start_agent_session` does not launch or supervise a worker. The caller
@@ -130,7 +132,7 @@ and `confidence`. Missing scope defaults to candidate-local. A worker's
 
 | Tool | Purpose |
 |---|---|
-| `search_run_verifier` | commit and verify the exact attempt, return candidate-local `keep`/`discard`/`failure`, restore best code after non-improvements, then append exactly one inherited `workspace/results.tsv` row; workers pass `agent_session_id` plus a concise `hypothesis`, while parent final verification omits the session id |
+| `search_run_verifier` | commit and verify the exact attempt, return candidate-local `keep`/`discard`/`failure`, restore best code after non-improvements, then append exactly one inherited `workspace/results.tsv` row; worker calls pass `agent_session_id` and consume the submitted plan description as their hypothesis, while parent verification omits the session id and does not require a plan |
 | `search_select` | restore ranked commits and select the first final-verifier passing state |
 | `search_report` | generate final `report.md` and self-contained `report.html`; linked Goal Plus records must already be terminal |
 | `search_promote` | export the selected commit as a patch; normal Goal Plus flow has no report to refresh yet |

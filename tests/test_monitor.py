@@ -100,6 +100,7 @@ def test_goal_plus_monitor_snapshot_summarizes_run_subagents_and_pi_metrics(
             },
         },
     )
+    runtime.submit_iteration_plan(session.agent_session_id, "Monitor worker evidence")
     runtime.run_verifier(run_id, first.candidate_id, agent_session_id=session.agent_session_id)
 
     snapshot = goal_plus_monitor_snapshot(
@@ -213,6 +214,7 @@ def test_goal_plus_monitor_snapshot_keeps_session_and_candidate_verifier_counts_
     task = runtime.start_batch(run_id, plan.plan_id)[0]
     first = runtime.start_agent_session(run_id, task.candidate_id)
     second = runtime.redispatch_candidate(run_id, task.candidate_id)
+    runtime.submit_iteration_plan(second.agent_session_id, "Count redispatched evidence")
     runtime.run_verifier(
         run_id,
         task.candidate_id,

@@ -32,6 +32,8 @@ def test_create_mcp_registers_search_runtime_tools(tmp_path: Path) -> None:
         "search_bind_agent_handle",
         "search_continue_agent_session",
         "search_get_agent_context",
+        "search_get_global_plan",
+        "search_submit_iteration_plan",
         "search_get_agent_observability",
         "search_run_verifier",
         "search_list_iterations",
@@ -121,6 +123,12 @@ def test_run_verifier_exposes_optional_agent_session_id(tmp_path: Path) -> None:
 
     assert "agent_session_id" in schema["properties"]
     assert "hypothesis" in schema["properties"]
+    assert tools["search_get_global_plan"].parameters["required"] == [
+        "agent_session_id"
+    ]
+    submit_schema = tools["search_submit_iteration_plan"].parameters
+    assert set(submit_schema["required"]) == {"agent_session_id", "description"}
+    assert submit_schema["properties"]["description"]["maxLength"] == 240
 
 
 def test_freeze_spec_exposes_complete_nested_search_spec_schema(tmp_path: Path) -> None:
@@ -326,6 +334,12 @@ def test_create_mcp_constructs_runtime_with_configured_root(
             return {}
 
         def search_get_agent_context(self, *args, **kwargs):
+            return {}
+
+        def search_get_global_plan(self, *args, **kwargs):
+            return []
+
+        def search_submit_iteration_plan(self, *args, **kwargs):
             return {}
 
         def search_run_verifier(self, *args, **kwargs):

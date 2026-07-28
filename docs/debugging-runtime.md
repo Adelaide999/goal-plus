@@ -328,6 +328,7 @@ guard events, stop continuation messages, and `.gp/goal-plus/...`.
     ├── candidates/<candidate_id>/
     │   ├── candidate.json                        # CandidateRecord: status, score_report, iterations[], results_ledger[]
     │   ├── task.json                             # CandidateTask snapshot
+    │   ├── plans/iteration-<n>.json              # immutable worker plan, outside candidate Git rollback
     │   └── logs/iteration-<n>-<verifier>-<id>.log # durable stdout/stderr per call
     ├── workspace/<candidate_id>/                 # the agent's editable workspace
     │   ├── .git/                                 # agent and runtime ledger Git history
@@ -411,8 +412,9 @@ is unchanged and Git-clean; deletion, rewriting, truncation, or a worker append
 raises `ResultsLedgerMutation`. The ledger survives same-candidate redispatch,
 is inherited by derived child workspaces, and is seeded from the selected/best
 source candidate for a successor run. It is runtime metadata, so it is excluded
-from edit-surface checks and promotion patches. Workers pass a concise
-`hypothesis` to `search_run_verifier` and must not edit this file directly.
+from edit-surface checks and promotion patches. Worker verifier calls consume
+the corresponding immutable plan description as `hypothesis`; workers must not
+edit this file directly.
 On first resume of an older candidate, a legacy `.tmp/results.tsv` is migrated
 to the workspace root; verifier-backed `iterations[]` missing from that legacy
 file are appended as recovered rows so old evidence is not silently dropped.
@@ -560,6 +562,7 @@ These tools are safe to call anytime — they're read-only:
 | `search_list_history(run_id, top_n, sort_by)` | Top candidates by score |
 | `search_list_iterations(run_id, candidate_id)` | Full iteration history for a candidate |
 | `search_get_agent_context(agent_session_id)` | What a specific subagent sees (including its own iterations) |
+| `search_get_global_plan(agent_session_id)` | Narrow plan/result history across the session's current run |
 
 ## Cross-Referencing Layers
 

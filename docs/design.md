@@ -56,6 +56,7 @@ therefore stored under `.gp/host-pools/pi/`, separate from run records.
     run.json
     plans/<plan_id>.json
     candidates/<candidate_id>/
+      plans/iteration-<n>.json
     agent_sessions/<agent_session_id>.json
     workspace/<candidate_id>/
     report.md
@@ -72,6 +73,8 @@ The core records are:
   budget, strategy, and verifier commands.
 - `SearchPlan`: one planning decision/round.
 - `CandidateTask`: one isolated candidate workspace and its work order.
+- `CandidateIterationPlan`: one immutable, pre-edit sentence for a candidate
+  iteration; Global Plan joins it dynamically with the matching verifier record.
 - `AgentSessionRecord`: context/provenance plus a host launch payload; never a
   process lifecycle record.
 - `IterationRecord`: verifier result, failure, metrics, changed files, session
@@ -98,9 +101,10 @@ running/waiting/selecting
 
 Invalidation is runtime state; worker termination is host state. They are
 separate operations in a strict order: fence first, stop workers second. The
-runtime checks the fence both before verifier execution and before recording a
-completed verifier result, so an in-flight worker cannot race a confirmed
-invalidation.
+runtime checks the fence before plan persistence, before verifier execution,
+and before recording a completed verifier result. Plan persistence and
+invalidation share the run transaction, so no plan can appear after the fence
+returns and an in-flight worker cannot race a confirmed invalidation.
 
 `search_create(source_run_id=...)` snapshots policy-controlled research rather
 than deriving a workspace across contracts. It carries frontier summaries, the

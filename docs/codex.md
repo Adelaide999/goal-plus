@@ -83,9 +83,10 @@ The parent then:
 6. drains live agents before selection.
 
 Every launch message says the child owns one autonomous candidate loop, not
-global initial dispatch or final selection. It reads its context, chooses every
-later hypothesis/pivot/rebase, edits its workspace, verifies, and returns a
-research handoff. It must not create candidates, select, report, promote, or
+global initial dispatch or final selection. It reads its candidate-local
+context and the narrow Global Plan, submits an immutable one-line plan, chooses
+every later hypothesis/pivot/rebase, edits its workspace, verifies, and returns
+a research handoff. It must not create candidates, select, report, promote, or
 mutate Goal Plus state. Main never replaces it because of low score or one
 non-improving completion.
 

@@ -184,10 +184,13 @@ continuation 预算根据外层剩余时间和最终收尾预留推导，而不�
 
 ## 运行时历史与状态级恢复
 
-history 由运行时拥有，不是 `plan.md` 文件。worker 通过 `search_get_agent_context`
-恢复，其中包括 `context.history`、`context.iterations`、`context.results`、
-`context.results_tsv`、工作区 Git 状态和有界 handoff metadata。host transcript
-是有用上下文，但不是权威 Search 状态。
+candidate-local history 由运行时拥有，不是 `plan.md` 文件。worker 通过
+`search_get_agent_context` 恢复自己的 `context.iterations`、`context.results`、
+`context.results_tsv`、工作区 Git 状态和有界 handoff metadata。其他 candidate 的尝试
+只通过窄 `search_get_global_plan` 视图披露。每轮修改前，worker 提交不可变的
+`search_submit_iteration_plan`；需要代码级证据时，只在当前 workspace 使用
+`git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace。
+host transcript 是有用上下文，但不是权威 Search 状态。
 
 Codex 的同 worker continuation 使用 `search_continue_agent_session`，随后对现有 task
 调用 `followup_task`。worker 必须在每个恢复轮次开始时刷新上下文。

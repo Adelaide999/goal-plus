@@ -120,8 +120,9 @@ CODEX_CLOSEOUT_MESSAGE = (
 
 CODEX_WORKER_BOUNDARY = (
     "你是 Search 候选 worker，不是搜索编排器。首先使用提供的 agent_session_id 调用 "
-    "search_get_agent_context，只在该候选工作区中工作，并在返回前为该 agent session "
-    "调用 search_run_verifier。不要调用 search_plan_next、search_start_batch、"
+    "search_get_agent_context。每轮修改前调用 search_get_global_plan，思考后使用 "
+    "search_submit_iteration_plan 提交一句话计划，再编辑并为该 agent session 调用 "
+    "search_run_verifier。只在该候选工作区中工作。不要调用 search_plan_next、search_start_batch、"
     "search_select、search_report 或 search_promote。不要调用任何 `goal_plus_*` 工具。"
     "父级运行的规划、选择、报告、提升和最终审计不属于你的职责。如果 verifier 返回 "
     "failure_class=VerifierWorkspaceSideEffect 或 candidate_action=stop_and_report，"
@@ -258,7 +259,8 @@ class OpenCodeAdapter:
                 "continue_existing_agent_session=true; "
                 f"agent_session_id={agent_session_id}; "
                 f"candidate_id={candidate_id}; "
-                "编辑前使用 search_get_agent_context 刷新权威运行时上下文；"
+                "编辑前刷新 search_get_agent_context 和 search_get_global_plan，"
+                "并提交 search_submit_iteration_plan；"
                 "继续同一个 candidate 和 workspace；"
                 f"指令：{one_paragraph_idea}"
             ),
@@ -377,7 +379,8 @@ class CodexAdapter:
                 "continue_existing_agent_session=true; "
                 f"agent_session_id={agent_session_id}; "
                 f"candidate_id={candidate_id}; "
-                "编辑前使用 search_get_agent_context 刷新权威运行时上下文；"
+                "编辑前刷新 search_get_agent_context 和 search_get_global_plan，"
+                "并提交 search_submit_iteration_plan；"
                 f"继续同一个 candidate 和 workspace；指令：{one_paragraph_idea}"
             ),
         }

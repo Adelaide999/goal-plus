@@ -173,10 +173,13 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     )
 
     assert "search_get_agent_context" in text
+    assert "search_get_global_plan" in text
+    assert "search_submit_iteration_plan" in text
     assert "search_run_verifier" in text
     assert "workspace/results.tsv" in text
     assert "且只追加一条已验证" in text
-    assert "hypothesis=" in text
+    assert "plan description 是本轮唯一 hypothesis" in text
+    assert "git diff HEAD <commit> -- <allowed-file>" in text
     assert "尽早创建完整候选产物" in text
     assert "任何长优化循环前" in text
     assert "一条自主 Pi Search 循环" in text

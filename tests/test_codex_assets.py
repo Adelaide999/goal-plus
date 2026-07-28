@@ -181,9 +181,9 @@ def test_codex_search_skill_documents_state_level_resume() -> None:
         encoding="utf-8"
     )
 
-    assert "history 由运行时拥有，不是 `plan.md` 文件" in text
+    assert "candidate-local history 由运行时拥有，不是 `plan.md` 文件" in text
     assert "状态级恢复" in text
-    assert "context.history" in text
+    assert "context.history" not in text
     assert "context.iterations" in text
     assert "worker_budget.max_runtime_seconds" in text
     assert "search_redispatch_candidate" in text
@@ -199,10 +199,13 @@ def test_codex_worker_agent_calls_context_and_verifier() -> None:
 
     assert 'name = "search_candidate_agent"' in text
     assert "search_get_agent_context" in text
+    assert "search_get_global_plan" in text
+    assert "search_submit_iteration_plan" in text
     assert "search_run_verifier" in text
     assert "工作区根目录" in text
     assert "且只追加一条已验证记录" in text
-    assert "hypothesis=" in text
+    assert "plan 提交后不可修改" in text
+    assert "git diff HEAD <commit> -- <allowed-file>" in text
     assert "一条自主 Search 循环" in text
     assert "不要等待父 agent 选择方向" in text
     assert "search_select" in text

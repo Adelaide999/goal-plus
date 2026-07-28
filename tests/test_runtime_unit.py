@@ -2364,7 +2364,7 @@ def test_get_agent_context_has_only_authoritative_worker_fields(tmp_path: Path) 
     ):
         assert forbidden not in context, f"get_agent_context must not return {forbidden}"
     assert context["candidate_task"]["candidate_id"] == tasks[0].candidate_id
-    assert "history" in context
+    assert "history" not in context
     assert "iterations" in context
 
 
@@ -2717,6 +2717,7 @@ def test_run_verifier_records_edit_surface_violation_in_iteration(
     tasks = runtime.start_batch(run_id, plan.plan_id)
     candidate_id = tasks[0].candidate_id
     session = runtime.start_agent_session(run_id, candidate_id, {"goal": "cheat"})
+    runtime.submit_iteration_plan(session.agent_session_id, "Probe a denied edit")
 
     # Worker touches a denied file.
     (tasks[0].workspace / "config.yaml").write_text("name: tampered\n", encoding="utf-8")
@@ -2823,6 +2824,7 @@ def test_run_verifier_records_failure_class_on_timeout(
     tasks = runtime.start_batch(run_id, plan.plan_id)
     candidate_id = tasks[0].candidate_id
     session = runtime.start_agent_session(run_id, candidate_id, {"goal": "iterate"})
+    runtime.submit_iteration_plan(session.agent_session_id, "Measure timeout handling")
 
     def fake_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs["timeout"])
@@ -2877,6 +2879,7 @@ def test_run_verifier_records_iteration_with_agent_session_id(
     tasks = runtime.start_batch(run_id, plan.plan_id)
     candidate_id = tasks[0].candidate_id
     session = runtime.start_agent_session(run_id, candidate_id, {"goal": "iterate"})
+    runtime.submit_iteration_plan(session.agent_session_id, "Record session provenance")
 
     def fake_run(*args, **kwargs):
         return subprocess.CompletedProcess(
@@ -3495,11 +3498,13 @@ def test_results_tsv_is_committed_and_runtime_enforces_one_row_per_report(
     ).strip() == ""
 
     session = runtime.start_agent_session(run_id, candidate_id)
+    runtime.submit_iteration_plan(
+        session.agent_session_id, "measure inherited baseline"
+    )
     first = runtime.run_verifier(
         run_id,
         candidate_id,
         agent_session_id=session.agent_session_id,
-        hypothesis="measure inherited baseline",
     )
     assert first.process_passed is True
     first_text = results_path.read_text(encoding="utf-8")
@@ -3508,12 +3513,14 @@ def test_results_tsv_is_committed_and_runtime_enforces_one_row_per_report(
         "\tpass\tmeasure inherited baseline"
     )
 
+    runtime.submit_iteration_plan(
+        session.agent_session_id, "probe denied configuration change"
+    )
     (workspace / "config.yaml").write_text("name: denied edit\n", encoding="utf-8")
     second = runtime.run_verifier(
         run_id,
         candidate_id,
         agent_session_id=session.agent_session_id,
-        hypothesis="probe denied configuration change",
     )
     assert second.process_passed is False
     second_text = results_path.read_text(encoding="utf-8")
@@ -3830,7 +3837,10 @@ def test_run_verifier_works_without_session_and_records_iterations(
 
     monkeypatch.setattr(runtime, "_execute_verifier_process", fake_run)
 
-    for expected_score in [0.4, 0.7, 0.9]:
+    for iteration_number, expected_score in enumerate([0.4, 0.7, 0.9], start=1):
+        runtime.submit_iteration_plan(
+            session.agent_session_id, f"Measure score sample {iteration_number}"
+        )
         report = runtime.run_verifier(
             run_id, candidate_id, agent_session_id=session.agent_session_id
         )
@@ -3871,7 +3881,9 @@ def test_list_iterations_returns_all_records(
         )
 
     monkeypatch.setattr(runtime, "_execute_verifier_process", fake_run)
+    runtime.submit_iteration_plan(session.agent_session_id, "First listed iteration")
     runtime.run_verifier(run_id, candidate_id, agent_session_id=session.agent_session_id)
+    runtime.submit_iteration_plan(session.agent_session_id, "Second listed iteration")
     runtime.run_verifier(run_id, candidate_id, agent_session_id=session.agent_session_id)
 
     iterations = runtime.list_iterations(run_id, candidate_id)
@@ -3909,6 +3921,7 @@ def test_get_agent_context_returns_iterations(
         )
 
     monkeypatch.setattr(runtime, "_execute_verifier_process", fake_run)
+    runtime.submit_iteration_plan(session.agent_session_id, "Context iteration")
     runtime.run_verifier(run_id, candidate_id, agent_session_id=session.agent_session_id)
 
     context = runtime.get_agent_context(session.agent_session_id)
@@ -4174,6 +4187,7 @@ def test_invalidate_run_fences_work_and_successor_inherits_research(
             },
         },
     )
+    runtime.submit_iteration_plan(session.agent_session_id, "Portable fusion evidence")
     runtime.run_verifier(
         run_id,
         task.candidate_id,

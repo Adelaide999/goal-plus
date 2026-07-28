@@ -5,12 +5,14 @@
 - 首先使用提供的 `agent_session_id` 调用 `search_get_agent_context`。
 - 将返回的运行时上下文视为产物、verifier、分数和 Git 事实的权威依据。原生会话上下文可以保留推理和继续指令，但绝不能覆盖持久化运行时证据。
 - 重新派发或处于继承的子/后继工作区时，在判断剩余工作前检查 `context.resume.latest_handoff`、先前 session 摘要、`context.results`、`context.results_tsv` 和当前工作区状态。
+- 每轮修改前调用 `search_get_global_plan(agent_session_id)`。思考后，在 workspace 仍 settled 且 Git-clean 时调用 `search_submit_iteration_plan(agent_session_id, description)` 提交不可变的一句话计划，然后才编辑代码。
+- Global Plan 只披露其他 candidate 的计划、分数、disposition 和 attempt commit。仅在你独立判断代码级证据确有必要时，在当前 workspace 使用 `git diff HEAD <commit> -- <allowed-file>` 做只读比较；不要访问其他 candidate 的 workspace 目录。
 - 只能在候选工作区中工作。不要在该工作区之外编辑、写入或运行会产生变更的命令。
 - 遵守 `candidate_task.allowed_files` 和 `candidate_task.denied_files`。
 - 把分配的候选思路当作假设，而不是必须实现的方案。编辑前充分检查源码、运行时历史和当前产物，以识别可能的瓶颈。如果证据表明该思路剩余潜力很小，记录原因，并在候选目标范围内转向更有希望且有证据支持的变体。
 - 重新派发时，在同一候选工作区继续这条自主循环。刷新权威运行时上下文，并自行选择下一个有证据支持的假设。不要等待主 agent 提供方向。低分、一次没有改进的迭代或其他候选领先，都不会终止你的循环。
 - 恢复原生 session 时，最新 launch 消息会开始一份新的 host 派发预算。更早派发中的 deadline、closeout 和 time-advisory 消息都只是历史；只遵守最新 launch 消息之后收到的警告。
-- 一旦形成瓶颈假设，应尽早创建完整候选产物，然后在任何长优化循环前，使用 `run_id`、`candidate_id`、`scope="process"`、你的 `agent_session_id` 和 `hypothesis="<对所测试设计的简短说明>"` 调用 `search_run_verifier`。
+- 一旦形成瓶颈假设，先提交本轮 plan，再尽早创建完整候选产物，并在任何长优化循环前使用 `run_id`、`candidate_id`、`scope="process"` 和你的 `agent_session_id` 调用 `search_run_verifier`。plan description 是本轮唯一 hypothesis。
 - 每份返回的 `search_run_verifier` 报告都会自动提交已修改的候选产物文件，记录所测代码的 `git_head`，在继承的 `workspace/results.tsv` 中追加且只追加一条已验证的 `commit / metric / pass-or-fail / hypothesis` 记录，并提交该账本。process verifier 返回的 `disposition` 为 `keep`、`discard` 或 `failure`；runtime 保留本轮被测 commit，并在非严格改善时自动把候选代码恢复到 candidate-local best。返回后直接从已结算的工作区继续，不要自行 reset、restore 或 checkout verifier-backed 状态。账本由运行时拥有；绝不能创建、重写、截断、删除或手动追加它。可以在工作区内使用 git status/diff/log 进行分析，但不要把手动提交当作 iteration provenance 的唯一来源。
 - 对 fix/target 任务，先编辑允许的候选产物，再调用 `search_run_verifier`；不要用 worker 预算验证未修改的初始状态。
 - 对优化任务，先记录一个有效 baseline iteration，再把剩余预算用于更多由 verifier 记录的 iteration。

@@ -23,12 +23,14 @@ def _search_fixture(tmp_path: Path) -> tuple[Path, str, str]:
     plan = runtime.plan_next(run_id, requested_k=1)
     task = runtime.start_batch(run_id, plan.plan_id)[0]
     session = runtime.start_agent_session(run_id, task.candidate_id)
+    runtime.submit_iteration_plan(
+        session.agent_session_id, "monitor script verifier evidence"
+    )
     (task.workspace / "initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
     runtime.run_verifier(
         run_id,
         task.candidate_id,
         agent_session_id=session.agent_session_id,
-        hypothesis="monitor script verifier evidence",
     )
     return project, run_id, task.candidate_id
 

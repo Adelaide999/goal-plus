@@ -537,6 +537,24 @@ class IterationRecord(SearchModel):
     created_at: str
 
 
+class CandidateIterationPlan(SearchModel):
+    run_id: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1)
+    iteration: int = Field(ge=1)
+    agent_session_id: str = Field(min_length=1)
+    description: str = Field(min_length=1, max_length=240)
+    created_at: str
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def normalize_description(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if "\n" in value or "\r" in value:
+            raise ValueError("plan description must be one line")
+        return " ".join(value.strip().split())
+
+
 class ResultLedgerEntry(SearchModel):
     source_run_id: str
     source_candidate_id: str

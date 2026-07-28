@@ -32,6 +32,7 @@ from goal_plus.agent_hosts import (
 from goal_plus.models import (
     AgentHostHandle,
     AgentSessionRecord,
+    CandidateIterationPlan,
     CandidateRecord,
     CandidateProposal,
     CandidateTask,
@@ -145,6 +146,14 @@ LEGACY_RESULTS_TSV_RELATIVE_PATH = ".tmp/results.tsv"
 MODEL_HANDOFF_RELATIVE_PATH = ".tmp/handoff.json"
 MAX_MODEL_HANDOFF_BYTES = 64 * 1024
 MAX_VERIFIER_FEEDBACK_CHARS = 4_000
+WORKER_ITERATION_RUN_STATES = frozenset(
+    {
+        RunState.RUNNING,
+        RunState.WAITING_FOR_WORKERS,
+        RunState.SELECTING,
+        RunState.SELECTION_BLOCKED,
+    }
+)
 
 
 def utc_timestamp() -> str:
@@ -752,6 +761,17 @@ class FileSearchRuntime:
                 f"{run.invalidation_reason}"
             )
 
+    def _assert_worker_iteration_allowed(
+        self,
+        run: RunRecord,
+        operation: str,
+    ) -> None:
+        self._assert_run_not_invalidated(run, operation)
+        if run.state not in WORKER_ITERATION_RUN_STATES:
+            raise RuntimeError(
+                f"cannot {operation}: run {run.run_id} is in state {run.state}"
+            )
+
     def status(self, run_id: str) -> RunSummary:
         run = self._load_run(run_id)
         records = self._load_candidate_records(run_id)
@@ -1088,7 +1108,8 @@ class FileSearchRuntime:
             "previous_agent_session_ids": previous_session_ids,
             "resume_instruction": (
                 "这是现有候选的新 worker session。首先调用 search_get_agent_context，"
-                "并将其中的 history 和 iterations 作为权威恢复上下文。"
+                "将其中本 candidate 的 iterations/results 作为权威恢复上下文，"
+                "再读取 search_get_global_plan。"
             ),
         }
         return self._create_agent_session(
@@ -1445,9 +1466,93 @@ class FileSearchRuntime:
                     ),
                 },
             },
-            "history": self.list_history(session.run_id, top_n=5, sort_by="score"),
             "iterations": self.list_iterations(session.run_id, session.candidate_id),
         }
+
+    def get_global_plan(self, agent_session_id: str) -> list[dict[str, Any]]:
+        """Return the narrow plan/result projection for the session's run."""
+        session = self._load_agent_session_by_id(agent_session_id)
+        self._load_run(session.run_id)
+        return self._global_plan_view(session.run_id)
+
+    def submit_iteration_plan(
+        self,
+        agent_session_id: str,
+        description: str,
+    ) -> dict[str, Any]:
+        """Create one immutable plan at a candidate's settled boundary."""
+        session = self._load_agent_session_by_id(agent_session_id)
+        lock_path = self._candidate_dir(
+            session.run_id, session.candidate_id
+        ) / "verifier.lock"
+        with exclusive_file_lock(lock_path):
+            # Verifier settlement uses the same candidate -> run lock order.
+            with self._run_transaction(session.run_id):
+                run = self._load_run(session.run_id)
+                self._assert_worker_iteration_allowed(
+                    run, "submit iteration plan"
+                )
+                record = self._load_candidate_record(
+                    session.run_id, session.candidate_id
+                )
+                if record.status not in {"created", "evaluated"}:
+                    raise RuntimeError(
+                        f"cannot plan candidate in status {record.status}"
+                    )
+
+                iteration_number = len(record.iterations) + 1
+                plan = CandidateIterationPlan(
+                    run_id=session.run_id,
+                    candidate_id=session.candidate_id,
+                    iteration=iteration_number,
+                    agent_session_id=agent_session_id,
+                    description=description,
+                    created_at=utc_timestamp(),
+                )
+                existing = self._load_candidate_iteration_plan(
+                    session.run_id,
+                    session.candidate_id,
+                    iteration_number,
+                )
+                if existing is not None:
+                    if existing.description != plan.description:
+                        raise RuntimeError(
+                            f"candidate {session.candidate_id} iteration "
+                            f"{iteration_number} already has a different plan"
+                        )
+                    return self._global_plan_entry(existing, None)
+
+                if self._git_status(
+                    record.task.workspace, ignore_runtime_noise=True
+                ):
+                    raise RuntimeError(
+                        "iteration plans require a Git-clean settled workspace"
+                    )
+                results_were_initialized = (
+                    record.results_ledger_git_head is not None
+                )
+                metric_name = self._load_frozen_spec(
+                    run.frozen_spec_id
+                ).spec.metric_name
+                self._ensure_results_tsv(record, metric_name)
+                if not results_were_initialized:
+                    self._write_candidate_record(session.run_id, record)
+                if self._git_status(
+                    record.task.workspace, ignore_runtime_noise=True
+                ):
+                    raise RuntimeError(
+                        "iteration plans require a Git-clean settled workspace"
+                    )
+                if (
+                    self._git_head(record.task.workspace)
+                    != record.results_ledger_git_head
+                ):
+                    raise RuntimeError(
+                        "iteration plans require the settled results ledger HEAD"
+                    )
+
+                self._write_candidate_iteration_plan(plan)
+                return self._global_plan_entry(plan, None)
 
     def run_verifier(
         self,
@@ -1479,8 +1584,12 @@ class FileSearchRuntime:
         without it. Process calls record ranking iterations; promotion calls
         retain separate acceptance evidence.
         """
-        run = self._load_run(run_id)
-        self._assert_run_not_invalidated(run, "run verifier")
+        with self._run_transaction(run_id):
+            run = self._load_run(run_id)
+            if scope == "process":
+                self._assert_worker_iteration_allowed(run, "run verifier")
+            else:
+                self._assert_run_not_invalidated(run, "run verifier")
         frozen = self._load_frozen_spec(run.frozen_spec_id)
         record = self._load_candidate_record(run_id, candidate_id)
         if record.status not in {"created", "evaluated"}:
@@ -1504,12 +1613,26 @@ class FileSearchRuntime:
                 )
 
         session: AgentSessionRecord | None = None
+        iteration_plan: CandidateIterationPlan | None = None
         if agent_session_id:
             session = self._load_agent_session_by_id(agent_session_id, run_id=run_id)
             if session.candidate_id != candidate_id:
                 raise ValueError(
                     "agent_session_id does not belong to this candidate"
                 )
+            if scope == "process":
+                iteration_number = len(record.iterations) + 1
+                iteration_plan = self._load_candidate_iteration_plan(
+                    run_id,
+                    candidate_id,
+                    iteration_number,
+                )
+                if iteration_plan is None:
+                    raise RuntimeError(
+                        "worker process verifier requires an iteration plan "
+                        f"for {candidate_id} iteration {iteration_number}"
+                    )
+                hypothesis = iteration_plan.description
 
         results_were_initialized = record.results_ledger_git_head is not None
         self._ensure_results_tsv(record, frozen.spec.metric_name)
@@ -1607,7 +1730,10 @@ class FileSearchRuntime:
             if scope == "process":
                 with self._run_transaction(run_id):
                     run = self._load_run(run_id)
-                    if not run.invalidated_at:
+                    if (
+                        not run.invalidated_at
+                        and run.state in WORKER_ITERATION_RUN_STATES
+                    ):
                         run.state = RunState.FAILED
                         self._write_run(run)
             raise
@@ -1627,7 +1753,7 @@ class FileSearchRuntime:
     ) -> ScoreReport:
         with self._run_transaction(run_id):
             run = self._load_run(run_id)
-            self._assert_run_not_invalidated(run, "record verifier result")
+            self._assert_worker_iteration_allowed(run, "record verifier result")
             record = self._load_candidate_record(run_id, candidate_id)
             prior_best = self._best_git_iteration_record(
                 record,
@@ -2588,7 +2714,8 @@ class FileSearchRuntime:
             return prompt_path.read_text(encoding="utf-8")
         return (
             "首先调用 search_get_agent_context。只能在候选工作区中工作。"
-            "最终回复前调用 search_run_verifier。使用运行时历史，不要依赖 transcript。"
+            "每轮编辑前读取 search_get_global_plan 并提交 search_submit_iteration_plan，"
+            "然后调用 search_run_verifier。使用运行时证据，不要依赖 transcript。"
             "如果 verifier 报告 VerifierWorkspaceSideEffect 或 "
             "candidate_action=stop_and_report，报告基础设施阻塞原因并直接返回，不要重试。"
         )
@@ -2723,11 +2850,13 @@ class FileSearchRuntime:
             "不要删除、移动或清理文件；禁止 rm、mv、rmdir、unlink、trash 和 find -delete 等破坏性命令。",
             "使用 git status、git diff 和 git log 分析工作区；runtime 拥有 verifier-backed iteration 的提交和回滚，不要自行 reset、restore 或 checkout 已验证状态。",
             "所有评分都必须通过 goal-plus_search_run_verifier；不要通过 bash 直接运行 process_verifiers 命令，也不要自行编写评分器。",
-            "把 context.agent_session_id 传给 search_run_verifier，并提供简洁的 hypothesis 说明所测试设计，使运行时能记录 iteration provenance 和理由。",
+            "每轮修改前调用 search_get_global_plan，思考后用 context.agent_session_id 调用 search_submit_iteration_plan，提交一句话计划。",
+            "把 context.agent_session_id 传给 search_run_verifier；plan description 是本轮唯一 hypothesis。",
             "每次 run_verifier 调用都会记录一个 iteration。在配置的 host 预算内工作。尽早完成并验证候选，在达到限制前停止启动新的优化 iteration，并留出足够时间返回简洁摘要。",
             "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
             "process verifier 返回 keep/discard/failure disposition；非严格改善或验证失败时，runtime 会保留被测 commit 并把候选代码恢复到 candidate-local best。下一轮直接从返回后的已结算工作区继续。",
             "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
+            "Global Plan 只展示 peer 的计划、分数、disposition 和 attempt commit。仅在你独立判断代码级证据确有必要时，在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；不要访问其他 candidate 的 workspace。",
         ]
         if plan.worker_policy.get("subagent_type"):
             instructions.append(
@@ -4402,12 +4531,28 @@ class FileSearchRuntime:
             return None
         return value.strip() or None
 
-    def _git_status(self, workspace: Path) -> list[str]:
-        try:
-            value = self._git_output(
-                workspace,
-                ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+    def _git_status(
+        self,
+        workspace: Path,
+        *,
+        ignore_runtime_noise: bool = False,
+    ) -> list[str]:
+        command = ["git", "status", "--porcelain=v1", "--untracked-files=all"]
+        if ignore_runtime_noise:
+            exclusions = [
+                pattern
+                for name in sorted(IGNORED_NAMES - {".git"})
+                for pattern in (
+                    f":(exclude){name}/**",
+                    f":(exclude)**/{name}/**",
+                )
+            ]
+            exclusions.extend(
+                f":(exclude)**/*{suffix}" for suffix in sorted(IGNORED_SUFFIXES)
             )
+            command.extend(["--", ".", *exclusions])
+        try:
+            value = self._git_output(workspace, command)
         except (FileNotFoundError, subprocess.CalledProcessError):
             return []
         return [line for line in value.splitlines() if line.strip()]
@@ -4814,6 +4959,83 @@ class FileSearchRuntime:
 
     def _candidate_dir(self, run_id: str, candidate_id: str) -> Path:
         return self._run_dir(run_id) / "candidates" / candidate_id
+
+    def _candidate_iteration_plan_path(
+        self,
+        run_id: str,
+        candidate_id: str,
+        iteration: int,
+    ) -> Path:
+        return (
+            self._candidate_dir(run_id, candidate_id)
+            / "plans"
+            / f"iteration-{iteration:04d}.json"
+        )
+
+    def _load_candidate_iteration_plan(
+        self,
+        run_id: str,
+        candidate_id: str,
+        iteration: int,
+    ) -> CandidateIterationPlan | None:
+        path = self._candidate_iteration_plan_path(
+            run_id, candidate_id, iteration
+        )
+        if not path.exists():
+            return None
+        return CandidateIterationPlan.model_validate(load_json(path))
+
+    def _write_candidate_iteration_plan(
+        self,
+        plan: CandidateIterationPlan,
+    ) -> None:
+        write_json(
+            self._candidate_iteration_plan_path(
+                plan.run_id, plan.candidate_id, plan.iteration
+            ),
+            plan.model_dump(mode="json"),
+        )
+
+    @staticmethod
+    def _global_plan_entry(
+        plan: CandidateIterationPlan,
+        iteration: IterationRecord | None,
+    ) -> dict[str, Any]:
+        return {
+            "candidate_id": plan.candidate_id,
+            "iteration": plan.iteration,
+            "description": plan.description,
+            "score": iteration.score if iteration is not None else None,
+            "disposition": (
+                iteration.disposition if iteration is not None else None
+            ),
+            "commit": iteration.git_head if iteration is not None else None,
+        }
+
+    def _global_plan_view(self, run_id: str) -> list[dict[str, Any]]:
+        results = {
+            (record.candidate_id, iteration.iteration): iteration
+            for record in self._load_candidate_records(run_id)
+            for iteration in record.iterations
+            if iteration.agent_session_id is not None
+        }
+        plans = []
+        candidates_dir = self._run_dir(run_id) / "candidates"
+        for path in sorted(candidates_dir.glob("*/plans/iteration-*.json")):
+            plans.append(CandidateIterationPlan.model_validate(load_json(path)))
+        plans.sort(
+            key=lambda plan: (
+                plan.created_at,
+                plan.candidate_id,
+                plan.iteration,
+            )
+        )
+
+        view = []
+        for plan in plans:
+            result = results.get((plan.candidate_id, plan.iteration))
+            view.append(self._global_plan_entry(plan, result))
+        return view
 
     def _plan_dir(self, run_id: str) -> Path:
         return self._run_dir(run_id) / "plans"

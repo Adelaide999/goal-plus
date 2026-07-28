@@ -85,7 +85,17 @@ candidate workspaces, and the second caps concurrently live workers.
 For each selected candidate, the main agent creates a session with
 `search_start_agent_session` and launches the returned host-native payload.
 The worker must begin with `search_get_agent_context`; prompt ids are labels,
-while returned context is authoritative.
+while returned context is authoritative. That context contains only its own
+candidate history. Before every new edit, it reads the narrow current-run
+Global Plan and commits one immutable sentence describing the next attempt:
+
+```text
+search_get_global_plan(agent_session_id=<its session>)
+search_submit_iteration_plan(
+  agent_session_id=<its session>,
+  description=<one-line design to test>,
+)
+```
 
 The worker owns all later hypothesis, pivot, feature-transfer, structural
 restart, and rebase decisions within that candidate. It never waits for main to
@@ -96,9 +106,15 @@ iterations with:
 search_run_verifier(
   ...,
   agent_session_id=<its session>,
-  hypothesis=<concise design tested>,
 )
 ```
+
+The runtime uses the submitted plan description as the iteration hypothesis.
+The Global Plan joins that immutable plan with the resulting score,
+`keep`/`discard`/`failure`, and tested commit. Peer code stays progressively
+disclosed: when independently needed, a worker can compare an advertised
+commit from its own shared-object worktree with
+`git diff HEAD <commit> -- <allowed-file>`; it never needs a peer workspace path.
 
 Every returned verifier report appends exactly one durable result-ledger entry
 to `workspace/results.tsv` and commits that file. Before appending, the runtime

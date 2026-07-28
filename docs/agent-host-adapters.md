@@ -103,8 +103,8 @@ State-level redispatch is the portable recovery path:
 1. call `search_redispatch_candidate` for an existing candidate;
 2. launch the fresh `agent_session_id` in the same workspace;
 3. the worker reloads `search_get_agent_context`;
-4. Git state, verifier iterations, ranked history, and `research_summary`
-   replace dependence on a previous transcript.
+4. candidate-local Git state, verifier iterations, `research_summary`, and the
+   narrow `search_get_global_plan` view replace dependence on a previous transcript.
 
 Same-worker continuation is native on Codex. Pi provides native session
 continuation across process boundaries: each dispatch has a new PID,
