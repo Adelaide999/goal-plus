@@ -125,25 +125,42 @@ def test_search_trajectory_payload_keeps_parallel_candidate_loops() -> None:
                 "candidate_id": "c001",
                 "selected": False,
                 "iterations": [
-                    {"iteration": 1, "score": 1.0, "created_at": "2026-01-01T00:00:01Z"},
-                    {"iteration": 2, "score": 2.0, "created_at": "2026-01-01T00:00:03Z"},
+                    {
+                        "iteration": 1,
+                        "score": 1.0,
+                        "process_passed": True,
+                        "created_at": "2026-01-01T00:00:01Z",
+                    },
+                    {
+                        "iteration": 2,
+                        "score": 2.0,
+                        "process_passed": True,
+                        "created_at": "2026-01-01T00:00:03Z",
+                    },
                 ],
             },
             {
                 "candidate_id": "c002",
                 "selected": True,
                 "iterations": [
-                    {"iteration": 1, "score": 0.5, "created_at": "2026-01-01T00:00:02Z"},
+                    {
+                        "iteration": 1,
+                        "score": 0.5,
+                        "process_passed": True,
+                        "created_at": "2026-01-01T00:00:02Z",
+                    },
                     {
                         "iteration": 2,
                         "agent_session_id": "agent_002",
                         "score": 3.0,
+                        "process_passed": True,
                         "created_at": "2026-01-01T00:00:04Z",
                     },
                     {
                         "iteration": 3,
                         "agent_session_id": "agent_002",
                         "score": 3.0,
+                        "process_passed": True,
                         "created_at": "2026-01-01T00:00:05Z",
                     },
                 ],
@@ -175,6 +192,84 @@ def test_search_trajectory_payload_keeps_parallel_candidate_loops() -> None:
         "score": 3.0,
     }
     assert payload["trajectories"][1]["details"][1][1] == "worker verifier"
+
+
+def test_ineligible_iterations_do_not_enter_report_best_score_paths() -> None:
+    task = {
+        "run_id": "run_0001",
+        "run": {"created_at": "2026-01-01T00:00:00Z"},
+        "frozen_spec": {"metric_name": "cycles", "metric_direction": "minimize"},
+        "statistics": {
+            "scores": {
+                "metric_name": "cycles",
+                "direction": "minimize",
+                "baseline": 100.0,
+                "selected": 90.0,
+            }
+        },
+        "sessions": [
+            {
+                "agent_session_id": "agent_001",
+                "candidate_id": "c001",
+                "started_at": "2026-01-01T00:00:30Z",
+                "ended_at": "2026-01-01T00:03:30Z",
+                "terminal_state": "completed",
+            }
+        ],
+        "candidates": [
+            {
+                "candidate_id": "c001",
+                "selected": True,
+                "iterations": [
+                    {
+                        "iteration": 1,
+                        "agent_session_id": "agent_001",
+                        "score": 0.0,
+                        "process_passed": False,
+                        "created_at": "2026-01-01T00:01:00Z",
+                    },
+                    {
+                        "iteration": 2,
+                        "agent_session_id": "agent_001",
+                        "score": 90.0,
+                        "process_passed": True,
+                        "created_at": "2026-01-01T00:02:00Z",
+                    },
+                    {
+                        "iteration": 3,
+                        "agent_session_id": "agent_001",
+                        "score": 0.5,
+                        "process_passed": None,
+                        "created_at": "2026-01-01T00:03:00Z",
+                    },
+                ],
+            }
+        ],
+    }
+
+    _build_timeline(None, [], [task])
+
+    [worker] = [
+        event
+        for event in task["timeline"]["events"]
+        if event["kind"] == "worker_session"
+    ]
+    assert worker["score"] == 90.0
+    assert [
+        point["score"]
+        for point in task["timeline"]["performance"]["score"]["points"]
+    ] == [90.0]
+
+    payload = _search_trajectory_payload(task)
+    assert payload is not None
+    assert payload["passing_evaluations"] == 1
+    assert payload["failed_evaluations"] == 2
+    assert payload["trajectories"][0]["scores"] == [90.0]
+    assert payload["trajectories"][0]["failed_scores"] == [0.0, 0.5]
+    assert payload["global_best"] == {
+        "calls": [0, 1, 2, 3],
+        "scores": [100.0, 100.0, 90.0, 90.0],
+    }
 
 
 def test_search_trajectory_payload_adapts_axes_and_excludes_failed_scores() -> None:
@@ -506,12 +601,14 @@ def test_metric_lens_combines_score_progression_and_session_efficiency() -> None
                             "iteration": 1,
                             "agent_session_id": "agent_metric_001",
                             "score": 0.6,
+                            "process_passed": True,
                             "created_at": "2026-01-01T00:01:30Z",
                         },
                         {
                             "iteration": 2,
                             "agent_session_id": "agent_metric_002",
                             "score": 0.8,
+                            "process_passed": True,
                             "created_at": "2026-01-01T00:10:30Z",
                         },
                     ],

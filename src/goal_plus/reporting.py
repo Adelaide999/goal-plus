@@ -905,6 +905,8 @@ def _session_scores(task: dict[str, Any], direction: str) -> dict[str, float]:
     scores: dict[str, float] = {}
     for candidate in task.get("candidates", []):
         for iteration in candidate.get("iterations", []):
+            if iteration.get("process_passed") is not True:
+                continue
             session_id = iteration.get("agent_session_id")
             score = _finite_float(iteration.get("score"))
             if not isinstance(session_id, str) or score is None:
@@ -954,6 +956,8 @@ def _timeline_performance(task: dict[str, Any], timeline: dict[str, Any]) -> dic
     checkpoints: list[dict[str, Any]] = []
     for candidate in task.get("candidates", []):
         for iteration in candidate.get("iterations", []):
+            if iteration.get("process_passed") is not True:
+                continue
             score = _finite_float(iteration.get("score"))
             created_epoch = _epoch(iteration.get("created_at"))
             if score is None or created_epoch is None:
@@ -1963,7 +1967,7 @@ def _search_trajectory_payload(task: dict[str, Any]) -> dict[str, Any] | None:
                     "selected": bool(candidate.get("selected")),
                     "iteration": iteration.get("iteration") or iteration_index + 1,
                     "score": score,
-                    "process_passed": iteration.get("process_passed") is not False,
+                    "process_passed": iteration.get("process_passed") is True,
                     "created_at": created_at,
                     "created_epoch": created_epoch,
                     "source": "worker verifier" if session_id is not None else "parent verifier",
