@@ -1562,6 +1562,8 @@ class FileSearchRuntime:
         agent_session_id: str | None = None,
         hypothesis: str | None = None,
     ) -> ScoreReport:
+        if scope not in {"process", "promotion"}:
+            raise ValueError("verifier scope must be 'process' or 'promotion'")
         lock_path = self._candidate_dir(run_id, candidate_id) / "verifier.lock"
         with exclusive_file_lock(lock_path):
             return self._run_verifier(
@@ -2851,7 +2853,7 @@ class FileSearchRuntime:
             "使用 git status、git diff 和 git log 分析工作区；runtime 拥有 verifier-backed iteration 的提交和回滚，不要自行 reset、restore 或 checkout 已验证状态。",
             "所有评分都必须通过 goal-plus_search_run_verifier；不要通过 bash 直接运行 process_verifiers 命令，也不要自行编写评分器。",
             "每轮修改前调用 search_get_global_plan，思考后用 context.agent_session_id 调用 search_submit_iteration_plan，提交一句话计划。",
-            "把 context.agent_session_id 传给 search_run_verifier；plan description 是本轮唯一 hypothesis。",
+            "把 context.agent_session_id 传给 search_run_verifier，并省略 scope 以使用 process verifier；plan description 是本轮唯一 hypothesis。",
             "每次 run_verifier 调用都会记录一个 iteration。在配置的 host 预算内工作。尽早完成并验证候选，在达到限制前停止启动新的优化 iteration，并留出足够时间返回简洁摘要。",
             "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
             "process verifier 返回 keep/discard/failure disposition；非严格改善或验证失败时，runtime 会保留被测 commit 并把候选代码恢复到 candidate-local best。下一轮直接从返回后的已结算工作区继续。",

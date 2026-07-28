@@ -202,6 +202,7 @@ def test_codex_worker_agent_calls_context_and_verifier() -> None:
     assert "search_get_global_plan" in text
     assert "search_submit_iteration_plan" in text
     assert "search_run_verifier" in text
+    assert "不要传 `scope`" in text
     assert "工作区根目录" in text
     assert "且只追加一条已验证记录" in text
     assert "plan 提交后不可修改" in text

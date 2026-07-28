@@ -13,13 +13,13 @@ SearchSpec 进行显式底层调试。普通用户入口是 `/goal-plus`。
 
 ## Verifier 冻结契约
 
-调用 `search_freeze_spec` 前，从 `source_path` 运行拟定的 `ranking_signal`，
-并确认其最后一个非空 stdout 行是 JSON，其中包含有限数值类型的 `spec.metric_name`，
-例如 `{"combined_score": 123.0}`。命令可以内联，也可以调用仓库现有工具。
-只在必要时创建自定义 verifier 文件，并在冻结前的 Spec Discovery 阶段将其写入源码拥有的
-路径，例如 `.goal-plus-verifiers/`，绝不能放在 `.gp/` 或 `.search/` 中。
-freeze 工具会暴露完整的嵌套 `SearchSpec` schema。`expected_outputs` 只接受产物路径
-或 glob，不解析 stdout。
+不要在 `source_path` 手工运行拟定的 `ranking_signal`。将命令和 verifier 产物直接传给
+`search_freeze_spec`；它会在一次性源码副本中运行预检，并确认最后一个非空 stdout 行是
+JSON，其中包含有限数值类型的 `spec.metric_name`，例如
+`{"combined_score": 123.0}`。只在必要时创建自定义 verifier 文件，并在冻结前的 Spec
+Discovery 阶段将其写入源码拥有的路径，例如 `.goal-plus-verifiers/`，绝不能放在 `.gp/`
+或 `.search/` 中。freeze 工具会暴露完整的嵌套 `SearchSpec` schema。
+`expected_outputs` 只接受产物路径或 glob，不解析 stdout。
 
 冻结预检在一次性源码副本中运行，并将候选工作区视为只读。verifier 必须把编译器产物和
 临时输出放入 `GOAL_PLUS_VERIFIER_TMPDIR`/`TMPDIR` 或

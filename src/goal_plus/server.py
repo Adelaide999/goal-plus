@@ -255,16 +255,16 @@ def create_mcp(
     def search_run_verifier(
         run_id: str,
         candidate_id: str,
-        scope: str = "process",
+        scope: Literal["process", "promotion"] = "process",
         agent_session_id: str | None = None,
         hypothesis: str | None = None,
     ) -> dict[str, Any]:
         """Subagent 带 `agent_session_id` 自评分；主流程最终验证不带它。
 
-        subagent 传入自己的 `agent_session_id`；运行时要求本轮已有不可变 plan，并以
-        plan description 作为 iteration hypothesis。随后在继承的
+        subagent 传入自己的 `agent_session_id` 并省略 `scope`；运行时要求本轮已有
+        不可变 plan，并以 plan description 作为 iteration hypothesis。随后在继承的
         `workspace/results.tsv` 中追加且只追加一条已验证记录并提交账本。主 agent
-        不带 `agent_session_id` 的内部复验不要求 plan。带
+        不带 `agent_session_id` 的内部复验不要求 plan；`promotion` 只属于主流程。带
         `candidate_action="stop_and_report"` 的 `VerifierWorkspaceSideEffect` 是冻结
         verifier 的基础设施失败：worker 不能清理 verifier 输出或重试。
         """

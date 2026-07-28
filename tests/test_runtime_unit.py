@@ -906,6 +906,18 @@ def test_promotion_verifier_is_selected_parent_only(tmp_path: Path) -> None:
     plan = runtime.plan_next(run_id, requested_k=1)
     task = runtime.start_batch(run_id, plan.plan_id)[0]
     session = runtime.start_agent_session(run_id, task.candidate_id)
+
+    with pytest.raises(ValueError, match="scope must be"):
+        runtime.run_verifier(
+            run_id,
+            task.candidate_id,
+            scope="fused vector recurrence",  # type: ignore[arg-type]
+            agent_session_id=session.agent_session_id,
+        )
+    untouched = runtime._load_candidate_record(run_id, task.candidate_id)
+    assert untouched.iterations == []
+    assert untouched.promotion_report is None
+
     runtime.run_verifier(run_id, task.candidate_id)
 
     with pytest.raises(RuntimeError, match="selected by search_select"):

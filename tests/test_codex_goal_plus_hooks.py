@@ -768,7 +768,16 @@ def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
     assert "AutoResearch lease" in blocked["reason"]
     assert "不要返回父级" in blocked["reason"]
     assert "不要休眠或忙等" in blocked["reason"]
-    assert "每完成一次额外 verifier iteration 后" in blocked["reason"]
+    assert "若下一 iteration 已有计划，沿用它" in blocked["reason"]
+    assert "省略 scope 以使用 process verifier" in blocked["reason"]
+    assert "继续深度搜索" in blocked["reason"]
+    assert "不要通过重复返回来轮询此 hook" in blocked["reason"]
+    assert "把局部饱和视为转向信号" in blocked["reason"]
+    assert "与已有尝试不同的实质方向" in blocked["reason"]
+    assert "或基于连续结果形成具体的结构性饱和证据时才准备返回" not in blocked[
+        "reason"
+    ]
+    assert "立即再次尝试结束" not in blocked["reason"]
     protocol = [
         "search_get_agent_context",
         "search_get_global_plan",

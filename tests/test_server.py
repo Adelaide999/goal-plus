@@ -123,6 +123,7 @@ def test_run_verifier_exposes_optional_agent_session_id(tmp_path: Path) -> None:
 
     assert "agent_session_id" in schema["properties"]
     assert "hypothesis" in schema["properties"]
+    assert schema["properties"]["scope"]["enum"] == ["process", "promotion"]
     assert tools["search_get_global_plan"].parameters["required"] == [
         "agent_session_id"
     ]

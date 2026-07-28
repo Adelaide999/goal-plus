@@ -672,12 +672,15 @@ def _autoresearch_lease_stop_context(
             f"Search 候选 {session.agent_session_id} 的 AutoResearch lease 仍处于 active："
             f"{'，并且'.join(requirements)}。不要返回父级。先使用此 agent_session_id 调用 "
             "search_get_agent_context 刷新 candidate-local 证据，再调用 search_get_global_plan；"
-            "选择不同且有证据支持的假设，在修改代码前调用 search_submit_iteration_plan "
-            "提交一句话计划，然后实现它，并使用同一 agent_session_id 运行 "
-            "search_run_verifier，"
-            "将结果与当前最佳项比较，然后继续循环。每完成一次额外 verifier iteration 后，"
-            "立即再次尝试结束；此 hook 会阻止或放行该尝试。不要自行估算时间，不要休眠或"
-            "忙等。父级 watchdog 在该 lease 之后另有 closeout 窗口。"
+            "若下一 iteration 已有计划，沿用它且不要重新调用 search_submit_iteration_plan；"
+            "否则选择不同且有证据支持的假设，在修改代码前调用 "
+            "search_submit_iteration_plan 提交一句话计划。然后实现该计划，并使用同一 "
+            "agent_session_id 运行 search_run_verifier，省略 scope 以使用 process verifier，"
+            "将结果与当前最佳项比较并继续深度搜索。不要因为完成一次 iteration、暂时没有"
+            "改进或一次失败就尝试结束，也不要通过重复返回来轮询此 hook。只要 lease 仍"
+            "处于 active，就必须把局部饱和视为转向信号，重新评估瓶颈并选择与已有尝试"
+            "不同的实质方向；只有收到父级 closeout/deadline 后才准备收尾。不要自行估算时间，"
+            "不要休眠或忙等。父级 watchdog 在该 lease 之后另有 closeout 窗口。"
         )
 
     return {

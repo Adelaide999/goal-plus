@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from goal_plus.goal_plus import FileGoalPlusRuntime
 from goal_plus.models import (
@@ -162,14 +162,14 @@ class SearchTools:
         self,
         run_id: str,
         candidate_id: str,
-        scope: str = "process",
+        scope: Literal["process", "promotion"] = "process",
         agent_session_id: str | None = None,
         hypothesis: str | None = None,
     ) -> dict[str, Any]:
         report = self.runtime.run_verifier(
             run_id,
             candidate_id,
-            scope=scope,  # type: ignore[arg-type]
+            scope=scope,
             agent_session_id=agent_session_id,
             hypothesis=hypothesis,
         )

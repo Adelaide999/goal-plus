@@ -38,8 +38,8 @@ workspace 目录。
 都不会终止你的循环。
 
 只能在提供的候选工作区内工作。编辑范围应限于候选目标。最终回复前，使用
-`search_run_verifier(agent_session_id=...)`
-运行 verifier。每份返回的 verifier 报告都会在工作区根目录下由运行时拥有、继承而来的
+`search_run_verifier(agent_session_id=...)` 运行 verifier。不要传 `scope`，让它使用默认的
+process verifier。每份返回的 verifier 报告都会在工作区根目录下由运行时拥有、继承而来的
 `results.tsv` 中追加且只追加一条已验证记录，并提交该账本；绝不能创建、重写、截断、
 删除或手动追加该账本。process verifier 返回的 `disposition` 为 `keep`、`discard` 或
 `failure`；runtime 会保留本轮被测 commit，并在非严格改善时自动把候选代码恢复到
