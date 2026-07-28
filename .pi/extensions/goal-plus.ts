@@ -17,8 +17,6 @@ const STATE_ENTRY_TYPE = "goal-plus-native-state";
 const GOAL_PLUS_STATS_ENTRY_TYPE = "goal-plus-stats";
 let workspaceRoot: string | undefined;
 let sawContext = false;
-let searchSpaceEnabled = false;
-let acceptedInterventionPlanId: string | undefined;
 let activeGoalPlusId = process.env.GOAL_PLUS_ID;
 let cachedGoalStatus: GoalPlusStatusPayload | undefined;
 let continuationCount = 0;
@@ -99,12 +97,12 @@ const SearchBudget = Type.Object(
 		max_candidates: Type.Integer({
 			exclusiveMinimum: 0,
 			description:
-				"Hard cap on total distinct candidate workspaces across the entire frozen search run and all planning rounds. This is not a per-round limit and cannot be increased after freeze. Setting it equal to max_parallel normally permits only one full batch.",
+				"整个冻结 Search run 和所有规划轮次中不同候选工作区总数的硬上限。这不是单轮限制，冻结后不能增加。将其设为与 max_parallel 相同通常只允许一个完整 batch。",
 		}),
 		max_parallel: Type.Integer({
 			exclusiveMinimum: 0,
 			description:
-				"Maximum candidates that search_plan_next may place in one planned batch. This controls batch width or recommended concurrency, not the total candidate count.",
+				"search_plan_next 在一个规划 batch 中最多可放置的候选数。它控制 batch 宽度或建议并发度，不控制候选总数。",
 		}),
 		max_tokens: Type.Optional(NullablePositiveInteger),
 	},
@@ -335,7 +333,7 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 				Type.Integer({
 					exclusiveMinimum: 0,
 					description:
-						"Candidate count requested for this planning round only. The runtime plans min(requested_k, remaining total candidate budget, budget.max_parallel). The default 4 is a batch-size request, not a whole-run budget.",
+						"仅为本规划轮次请求的候选数。运行时按 min(requested_k, 剩余候选总预算, budget.max_parallel) 进行规划。默认值 4 是 batch size 请求，不是整个 run 的预算。",
 				}),
 			),
 		},
@@ -381,49 +379,19 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 		{ additionalProperties: false },
 	),
 	search_get_agent_context: Type.Object({ agent_session_id: Type.String() }, { additionalProperties: false }),
-	search_get_agent_observability: Type.Object(
+	search_get_global_plan: Type.Object(
 		{ agent_session_id: Type.String() },
 		{ additionalProperties: false },
 	),
-	search_space_open: Type.Object(
-		{
-			run_id: Type.String(),
-			mode: Type.Optional(Type.Union([
-				Type.Literal("observe"),
-				Type.Literal("enforce"),
-				Type.Literal("b1"),
-				Type.Literal("b4"),
-			])),
-			schema_path: Type.Optional(Type.String()),
-			experiment_id: Type.Optional(Type.String()),
-			reviewer_model: Type.Optional(Type.String()),
-			reviewer_reasoning_effort: Type.Optional(Type.Union([
-				Type.Literal("low"),
-				Type.Literal("medium"),
-				Type.Literal("high"),
-				Type.Literal("xhigh"),
-			])),
-			reviewer_timeout_seconds: Type.Optional(Type.Integer({ exclusiveMinimum: 0, maximum: 600 })),
-			schema_consolidation_interval: Type.Optional(Type.Integer({ minimum: 2, maximum: 100 })),
-		},
-		{ additionalProperties: false },
-	),
-	search_space_propose: Type.Object(
+	search_submit_iteration_plan: Type.Object(
 		{
 			agent_session_id: Type.String(),
-			proposal: Type.Object(
-				{
-					intervention: Type.String({ minLength: 1 }),
-					scope: Type.String({ minLength: 1 }),
-					expected_new_information: Type.String({ minLength: 1 }),
-				},
-				{ additionalProperties: false },
-			),
+			description: Type.String({ minLength: 1, maxLength: 240 }),
 		},
 		{ additionalProperties: false },
 	),
-	search_space_status: Type.Object(
-		{ run_id: Type.String() },
+	search_get_agent_observability: Type.Object(
+		{ agent_session_id: Type.String() },
 		{ additionalProperties: false },
 	),
 	search_run_verifier: Type.Object(
@@ -433,7 +401,6 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 			scope: Type.Optional(Type.Union([Type.Literal("process"), Type.Literal("promotion")])),
 			agent_session_id: Type.Optional(Type.String()),
 			hypothesis: Type.Optional(Type.String()),
-			intervention_plan_id: Type.Optional(Type.String()),
 		},
 		{ additionalProperties: false },
 	),
@@ -507,33 +474,31 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 };
 const RuntimeToolDescriptions: Record<string, string> = {
 	goal_plus_save_spec_draft:
-		"Save the discovered SearchSpec draft. New Pi specs use orchestration_mode=parallel_loops with max_candidates equal to the initial max_parallel candidate count.",
+		"保存发现的 SearchSpec draft。新的 Pi spec 使用 orchestration_mode=parallel_loops，并让 max_candidates 等于初始 max_parallel 候选数。",
 	search_freeze_spec:
-		"Freeze an immutable SearchSpec and verifier bundle. Preflight uses a disposable source copy and rejects verifier workspace side effects; verifier temp files belong in the unique GOAL_PLUS_VERIFIER_TMPDIR/TMPDIR, never a fixed /tmp path under concurrent Search. In parallel_loops mode one initial plan creates the long-lived candidates.",
+		"冻结不可变的 SearchSpec 和 verifier bundle。预检使用一次性源码副本，并拒绝 verifier 工作区副作用；并发 Search 下 verifier 临时文件必须放入唯一的 GOAL_PLUS_VERIFIER_TMPDIR/TMPDIR，绝不能使用固定 /tmp 路径。parallel_loops 模式由一份初始 plan 创建长期候选。",
+	search_get_global_plan:
+		"读取当前 run 的窄 Global Plan 视图。每项只包含 candidate、iteration、一句话计划、score、keep/discard/failure 和 verifier attempt commit。",
+	search_submit_iteration_plan:
+		"在修改候选代码前，从 settled 且 Git-clean 的 candidate workspace 提交本轮不可变的一句话计划。",
 	search_run_verifier:
-		"Score one candidate and pass a concise hypothesis for the tested design. When search-space admission is enabled, also pass the accepted intervention_plan_id. Every returned verifier report appends exactly one validated row to the runtime-owned, inherited workspace/results.tsv and commits it. VerifierWorkspaceSideEffect with candidate_action=stop_and_report is infrastructure failure: the worker must stop without cleaning or retrying so the parent can repair and refreeze.",
-	search_space_open:
-		"Open optional run-scoped observe/enforce SpaceAgent admission before launching candidates. B1/B4 are frozen experiment compatibility modes.",
-	search_space_propose:
-		"Submit intervention, scope, and expected_new_information before material candidate work. Reject responses identify conflicting completed coverage or active reservations but never suggest a direction.",
-	search_space_status:
-		"Inspect run-level coverage, active reservations, semantic duplicate rate, schema revision, and candidate loop signals.",
+		"为一个候选评分。worker process verifier 必须先提交本轮 plan，并以 plan description 作为唯一 hypothesis。每份返回的 verifier 报告都会在运行时拥有、继承而来的 workspace/results.tsv 中追加且只追加一条已验证记录，并提交该文件。process verifier 返回 keep/discard/failure disposition；runtime 保留被测 commit，并在非严格改善时恢复 candidate-local best。带 candidate_action=stop_and_report 的 VerifierWorkspaceSideEffect 属于基础设施失败：worker 必须停止，不能清理或重试，使父级能够修复并重新冻结。",
 	search_invalidate_run:
-		"Atomically fence a run after the main agent confirms verifier contract, coverage, determinism, target-alignment, or infrastructure failure. Then interrupt every host worker, wait for zero active workers, repair/freeze, and create a successor with source_run_id.",
+		"主 agent 确认 verifier 契约、覆盖范围、确定性、目标对齐或基础设施失败后，原子地隔离该 run。随后中断每个 host worker，等待 active worker 数归零，修复并重新冻结，再使用 source_run_id 创建后继项。",
 	search_report:
-		"Generate final report.md and report.html. For a linked Goal Plus run, call this exactly once only after the Goal Plus record is terminal; standalone Search calls it after promotion. Active linked Goal Plus records are rejected.",
+		"生成最终 report.md 和 report.html。对已链接的 Goal Plus run，只能在 Goal Plus 记录达到终态后调用且只调用一次；独立 Search 在提升后调用。active 的已链接 Goal Plus 记录会被拒绝。",
 	search_plan_next:
-		"Plan initial candidates. In parallel_loops mode this may be called exactly once; later work resumes existing candidates. planned_k is min(requested_k, remaining max_candidates, max_parallel).",
+		"规划初始候选。parallel_loops 模式下只能调用一次；后续工作恢复现有候选。planned_k 为 min(requested_k, 剩余 max_candidates, max_parallel)。",
 	pi_search_pool_open:
-		"Open a durable Pi candidate pool and launch the complete initial candidate set. Returns immediately after launch and enforces the frozen max_parallel limit.",
+		"打开持久化 Pi 候选 pool，并启动完整初始候选集合。启动后立即返回，并强制执行冻结的 max_parallel 限制。",
 	pi_search_pool_wait_any:
-		"Wait until any Pi pool worker reaches candidate_ready after handle binding and final verification. Validate every event, observe the durable best, then continue that same candidate unless a global stop condition is true.",
+		"等待任一 Pi pool worker 在 handle 绑定和最终验证后达到 candidate_ready。验证每个事件，观察持久化最佳结果；除非全局停止条件为 true，否则继续同一个候选。",
 	pi_search_pool_snapshot:
-		"Inspect durable Pi pool state, active workers, terminal results, and free slots without waiting. Pass run_id to rediscover a pool after main-session interruption, or pool_id for one exact pool.",
+		"无需等待即可检查持久化 Pi pool 状态、active worker、终态结果和空闲 slot。主 session 中断后传入 run_id 重新发现 pool，或传入 pool_id 指定准确 pool。",
 	pi_search_pool_continue:
-		"Resume the same autonomous Pi candidate loop through explicit state redispatch in its existing workspace, optionally with another one-dispatch budget.",
+		"通过显式状态重新派发，在现有工作区恢复同一条自主 Pi 候选循环；可选传入另一份单次派发预算。",
 	pi_search_pool_close:
-		"Close a Pi pool by draining active workers or interrupting them. Always close the pool before select/promote.",
+		"通过 drain 或中断 active worker 来关闭 Pi pool。select/promote 前必须关闭 pool。",
 };
 const MAIN_GATED_TOOLS = new Set([
 		"bash",
@@ -847,7 +812,7 @@ function buildGoalStatsMessage(status: GoalPlusStatusPayload, usage: GoalPlusUsa
 	const elapsedMs = Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0;
 	const totalTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 	return [
-		"Goal Plus stats",
+			"Goal Plus 统计",
 		`goal_plus_id: ${status.goal_plus_id ?? activeGoalPlusId ?? "unknown"}`,
 		`status: ${status.status ?? "unknown"}`,
 		`search_tasks: ${status.search_tasks_total ?? status.search_tasks?.length ?? 0}`,
@@ -883,20 +848,20 @@ function buildGoalPlusContext(status: GoalPlusStatusPayload): string {
 		`goal_revision: ${status.goal_revision ?? 1}`,
 		`final_check_policy: ${JSON.stringify(status.policy?.final_check ?? { mode: "disabled" })}`,
 		"",
-		"Raw goal:",
+			"原始目标：",
 		status.raw_goal ?? "",
 		"",
-		"Rules:",
-		"- Keep the raw goal separate from implementation guesses.",
-		"- Update goal-plus state after each phase change.",
-		"- Search is an autonomous upgrade: once the spec draft is high-confidence with no open questions, proceed through the Search Mode gate without asking the user for approval.",
-		"- Before claiming completion, audit the raw goal against current evidence and call goal_plus_set_status.",
-		"- If final_check.mode is required, completion must come from a passing independent final check for this exact goal revision.",
+			"规则：",
+			"- 将原始目标与实现猜测分开。",
+			"- 每次 phase 变化后更新 goal-plus 状态。",
+			"- Search 是自主升级：spec draft 达到高置信度且无 open question 后，直接通过 Search Mode gate，不要请求用户批准。",
+			"- 声称完成前，对照当前证据审计原始目标，并调用 goal_plus_set_status。",
+			"- 如果 final_check.mode 为 required，必须由该目标修订版通过独立最终检查来完成。",
 	];
 	if (action) {
 		lines.push(
 			"",
-			"Current next_action:",
+				"当前 next_action：",
 			`- kind: ${action.kind ?? "unknown"}`,
 			`- required: ${action.required === false ? "false" : "true"}`,
 			`- description: ${action.description ?? ""}`,
@@ -907,26 +872,26 @@ function buildGoalPlusContext(status: GoalPlusStatusPayload): string {
 
 function buildGoalStartPrompt(status: GoalPlusStatusPayload): string {
 	return [
-		"Continue this Goal Plus task.",
+		"继续此 Goal Plus 任务。",
 		"",
 		`goal_plus_id: ${status.goal_plus_id ?? activeGoalPlusId ?? "unknown"}`,
 		`goal_revision: ${status.goal_revision ?? 1}`,
 		"",
-		"Raw goal:",
+		"原始目标：",
 		status.raw_goal ?? "",
 		"",
-		"Important:",
-		"- The goal_plus_create tool has already created this record. Do not call goal_plus_create again for this goal.",
-		"- Load and follow the goal-plus skill.",
-		"- Treat the latest user message as authoritative for whether to continue, revise, or discuss something unrelated; do not resume merely because Goal Plus is active.",
-		"- If it changes the effective scope, deliverables, or success criteria, call goal_plus_update_goal with the complete revised raw goal and current expected_revision, then re-triage. Otherwise keep the revision unchanged and clarify ambiguous intent before resuming.",
-		"- Except for loading the goal-plus skill, do not read or audit target files before goal_plus_record_triage.",
-		"- Start by recording triage with goal_plus_record_triage.",
-		"- If the raw goal explicitly requests verifier-guided Search Mode and supplies a measurable verifier or metric, do not downgrade it to ordinary Goal Mode.",
-		"- If the task is search-ready, enter Search Mode autonomously through the frozen-spec and Search Mode gates; do not ask the user to approve the transition.",
-		"- Never invent frozen_spec_id, run_id, plan_id, candidate_id, or agent_session_id values. Use only exact ids returned by the immediately preceding runtime tools; call search_create before goal_plus_link_search_run.",
-		"- If it is not search-ready, continue in Goal Mode and update goal-plus state before stopping.",
-		"- If this record requires final check, call goal_plus_prepare_final_check(checker_host=\"pi\"), then pass its launch payload to pi_goal_plus_run_final_check.",
+		"重要事项：",
+		"- goal_plus_create 工具已经创建此记录。不要为该目标再次调用 goal_plus_create。",
+		"- 加载并遵循 goal-plus skill。",
+		"- 以最新用户消息作为判断继续、修订或讨论无关内容的权威依据；不要仅因 Goal Plus 处于 active 就恢复工作。",
+		"- 如果消息改变了实际范围、交付物或成功标准，使用完整修订后的原始目标和当前 expected_revision 调用 goal_plus_update_goal，然后重新 triage。否则保持修订版不变，并在恢复前澄清有歧义的意图。",
+		"- 除了加载 goal-plus skill 之外，在 goal_plus_record_triage 前不要读取或审计目标文件。",
+		"- 首先使用 goal_plus_record_triage 记录 triage。",
+		"- 如果原始目标明确要求 verifier 引导的 Search Mode，并提供可度量的 verifier 或 metric，不要将其降级为普通 Goal Mode。",
+		"- 如果任务已准备好进入 Search，通过 frozen-spec 和 Search Mode gate 自主进入 Search Mode；不要要求用户批准该转换。",
+		"- 绝不能编造 frozen_spec_id、run_id、plan_id、candidate_id 或 agent_session_id。只使用紧邻的前序运行时工具返回的准确 id；在 goal_plus_link_search_run 前调用 search_create。",
+		"- 如果尚未准备好进入 Search，在 Goal Mode 中继续，并在停止前更新 goal-plus 状态。",
+		"- 如果该记录要求最终检查，调用 goal_plus_prepare_final_check(checker_host=\"pi\")，然后把其 launch payload 传给 pi_goal_plus_run_final_check。",
 	].join("\n");
 }
 
@@ -1013,11 +978,11 @@ async function updateGoalPlusStart(
 	if (!status?.goal_plus_id) return undefined;
 	activateGoal(pi, status, undefined, canPersistGoalState(ctx.mode));
 	return [
-		"The Goal Plus objective was edited by the user.",
+			"用户已编辑 Goal Plus 目标。",
 		`goal_plus_id: ${status.goal_plus_id}`,
 		`goal_revision: ${status.goal_revision ?? "unknown"}`,
-		"The new raw goal supersedes the previous objective. Re-run goal_plus_record_triage before continuing.",
-		"Preserve prior search tasks only as historical evidence; do not treat an older revision's result or final check as current.",
+			"新的原始目标取代之前的目标。继续前重新运行 goal_plus_record_triage。",
+			"以前的 Search 任务仅作为历史证据保留；不要把旧修订版的结果或最终检查视为当前结果。",
 	].join("\n");
 }
 
@@ -1039,11 +1004,11 @@ async function resumeGoalPlusStart(
 		return undefined;
 	}
 	return [
-		"Resume the interrupted Goal Plus task from durable runtime state.",
+			"从持久化运行时状态恢复被中断的 Goal Plus 任务。",
 		`goal_plus_id: ${status.goal_plus_id ?? activeGoalPlusId}`,
 		`goal_revision: ${status.goal_revision ?? 1}`,
-		"Treat the current raw goal, revision, next_action, Search history, and final-check state as authoritative.",
-		"Do not recreate the Goal Plus record or silently restart completed phases.",
+			"将当前原始目标、修订版、next_action、Search history 和最终检查状态视为权威依据。",
+			"不要重新创建 Goal Plus 记录，也不要静默重启已完成的 phase。",
 	].join("\n");
 }
 
@@ -1059,7 +1024,7 @@ function registerRuntimeTool(pi: ExtensionAPI, name: string) {
 	pi.registerTool({
 		name,
 		label: name,
-		description: RuntimeToolDescriptions[name] ?? `Call goal-plus facade tool ${name}.`,
+		description: RuntimeToolDescriptions[name] ?? `调用 goal-plus facade 工具 ${name}。`,
 		parameters: toolParameters(name),
 		executionMode: "sequential",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -1071,37 +1036,9 @@ function registerRuntimeTool(pi: ExtensionAPI, name: string) {
 				activateGoal(pi, result.details, startEntryCount, canPersistPiState);
 			}
 			if (name === "search_get_agent_context") {
-				const details = isRecord(result.details) ? result.details : undefined;
-				workspaceRoot = typeof details?.workspace === "string" ? details.workspace : undefined;
+				const details = result.details as { workspace?: string } | undefined;
+				workspaceRoot = details?.workspace;
 				sawContext = true;
-				const searchSpace = isRecord(details?.search_space)
-					? details.search_space
-					: isRecord(details?.space_experiment)
-						? details.space_experiment
-						: undefined;
-				searchSpaceEnabled = searchSpace?.enabled === true;
-				const outstandingStatus = searchSpace?.outstanding_plan_status;
-				const outstandingPlanId = searchSpace?.outstanding_plan_id;
-				acceptedInterventionPlanId =
-					searchSpaceEnabled &&
-					typeof outstandingPlanId === "string" &&
-					["accepted", "verifying"].includes(String(outstandingStatus))
-						? outstandingPlanId
-						: undefined;
-			}
-			if (name === "search_space_propose" && isRecord(result.details)) {
-				const returnedPlanId = result.details.plan_id;
-				acceptedInterventionPlanId =
-					result.details.decision === "accept" && typeof returnedPlanId === "string"
-						? returnedPlanId
-						: undefined;
-			}
-			if (
-				name === "search_run_verifier" &&
-				isRecord(result.details) &&
-				result.details.ok !== false
-			) {
-				acceptedInterventionPlanId = undefined;
 			}
 			return result;
 		},
@@ -1112,7 +1049,7 @@ function registerPiFinalCheckTool(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "pi_goal_plus_run_final_check",
 		label: "Pi Goal Plus Final Check",
-		description: "Launch the foreground Pi RPC final-check reviewer from goal_plus_prepare_final_check.launch.",
+		description: "根据 goal_plus_prepare_final_check.launch 启动前台 Pi RPC 最终检查审查员。",
 		parameters: toolParameters("pi_goal_plus_run_final_check"),
 		executionMode: "sequential",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -1177,38 +1114,16 @@ function extractCandidatePath(event: ToolCallEvent): string | undefined {
 	return undefined;
 }
 
-function isMaterialWorkerCall(event: ToolCallEvent): boolean {
-	if (["edit", "write", "search_run_verifier"].includes(event.toolName)) return true;
-	if (event.toolName !== "bash") return false;
-	const command = String((event.input as Record<string, unknown>).command || "");
-	return (
-		/(?:^|[;&|]\s*|\s)(?:sed\s+-i|perl\s+-pi|tee|truncate|touch|cp|mv|rm|patch)\b/.test(command) ||
-		/(?:^|\s)>{1,2}\s*\S+/.test(command) ||
-		/(?:write_text|write_bytes|open)\s*\(/.test(command) ||
-		/(?:python(?:3)?\s+[^\n;]*|\.\/)(?:runner|evaluate)\.py\b/i.test(command)
-	);
-}
-
 function workspaceGuard(event: ToolCallEvent) {
 	if (role === "final-checker" && ["edit", "write"].includes(event.toolName)) {
-		return { block: true, reason: "Final-check reviewers are read-only." };
+		return { block: true, reason: "最终检查审查员只能进行只读操作。" };
 	}
 	if (role !== "worker") return undefined;
 	if (event.toolName === "search_get_agent_context") return undefined;
 	if (!sawContext) {
 		const readOnly = new Set(["read", "grep", "find", "ls"]);
 		if (readOnly.has(event.toolName)) return undefined;
-		return { block: true, reason: "Call search_get_agent_context before mutating tools." };
-	}
-	if (
-		searchSpaceEnabled &&
-		!acceptedInterventionPlanId &&
-		isMaterialWorkerCall(event)
-	) {
-		return {
-			block: true,
-			reason: "Call search_space_propose and receive accept before material edits or verification.",
-		};
+			return { block: true, reason: "使用变更类工具前调用 search_get_agent_context。" };
 	}
 	if (!workspaceRoot) return undefined;
 	if (!["edit", "write", "bash"].includes(event.toolName)) return undefined;
@@ -1259,7 +1174,7 @@ export default function (pi: ExtensionAPI) {
 	}
 	if (!isPrintLikeInvocation) {
 		pi.registerCommand("goal-plus", {
-			description: "Run, edit, or resume native Pi Goal Plus (mode=autonomous|probe)",
+			description: "运行、编辑或恢复原生 Pi Goal Plus（mode=autonomous|probe）",
 			handler: async (args, ctx) => {
 				const request = goalPlusRequestFromSlashInput(`/goal-plus ${args}`);
 				if (!request || (request.action !== "resume" && !request.rawGoal)) {
@@ -1276,7 +1191,7 @@ export default function (pi: ExtensionAPI) {
 			},
 		});
 		pi.registerCommand("goal-plus-with-final-check", {
-			description: "Run native Pi Goal Plus with a required independent final check",
+			description: "运行原生 Pi Goal Plus，并要求独立最终检查",
 			handler: async (args, ctx) => {
 				const rawGoal = args.trim();
 				if (!rawGoal) {
@@ -1310,8 +1225,6 @@ export default function (pi: ExtensionAPI) {
 		"search_plan_next",
 		"search_start_batch",
 		"search_get_agent_observability",
-		"search_space_open",
-		"search_space_status",
 		"search_run_verifier",
 		"search_select",
 		"search_report",
@@ -1324,7 +1237,8 @@ export default function (pi: ExtensionAPI) {
 	];
 	const workerTools = [
 		"search_get_agent_context",
-		"search_space_propose",
+		"search_get_global_plan",
+		"search_submit_iteration_plan",
 		"search_run_verifier",
 		"search_list_iterations",
 	];
@@ -1415,7 +1329,7 @@ export default function (pi: ExtensionAPI) {
 			pi.sendMessage(
 				{
 					customType: "goal-plus-stop-continuation",
-					content: details.continuation_prompt || details.reason || "Goal Plus is still active. Continue the next required action.",
+					content: details.continuation_prompt || details.reason || "Goal Plus 仍处于 active。继续下一项必需 action。",
 					display: true,
 					details: { goal_plus_id: activeGoalPlusId, continuationCount },
 				},

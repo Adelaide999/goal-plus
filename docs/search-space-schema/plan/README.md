@@ -13,12 +13,8 @@ resume 原 subagent，不重新判断方向或派发“下一轮”。本文档�
 
 ## 当前状态
 
-- 一个比本计划更窄的 [SpaceAgent Runtime](../space-agent-runtime.md) 已实现：最小
-  PlanCard、纯 accept/reject、run 级 coverage/reservation、乐观并发重审、append-only
-  Search Evidence、周期性 immutable Search Schema snapshot 和 Codex admission guard。
-  它不引入逐 plan projection，也不等同于下文完整 AtomicPlan 或自动方向规划路线。
-- 完整 AtomicPlan 生成 Agent、SearchEvent/SearchState 和其余 parallel loop-agent
-  能力仍按本计划保留为后续合同。
+- AtomicPlan 生成 Agent、SearchEvent/SearchState 以及完整 parallel loop-agent 流程均已
+  交由外部同事负责；本计划只保留合同和集成边界。
 - 统一统计、时间线和自包含 `report.html` 已实现。
 - 外部实现新增持久化数据后，再同步接入现有 monitor/statistics/report 链路。
 - verifier iteration 已保存 exact Git head、artifact hash 和 score；best artifact 可从

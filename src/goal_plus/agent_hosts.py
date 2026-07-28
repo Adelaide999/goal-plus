@@ -114,21 +114,21 @@ def _soft_closeout_seconds(max_runtime_seconds: int) -> int:
 
 
 CODEX_CLOSEOUT_MESSAGE = (
-    "Worker deadline is approaching. Stop starting new work, run one final "
-    "search_run_verifier if needed, write .tmp/handoff.json, and return a concise summary."
+    "Worker 的截止时间临近。停止启动新工作；如有需要，最后运行一次 "
+    "search_run_verifier，写入 .tmp/handoff.json，并返回简洁摘要。"
 )
 
 CODEX_WORKER_BOUNDARY = (
-    "You are a Search candidate worker, not the search orchestrator. "
-    "First call search_get_agent_context with the supplied agent_session_id, "
-    "work only in that candidate workspace, and call search_run_verifier for "
-    "that agent session before returning. Do not call search_plan_next, "
-    "search_start_batch, search_select, search_report, or search_promote. "
-    "Do not call any `goal_plus_*` tool. Parent-run planning, selection, "
-    "reporting, promotion, and final audit are outside your role. If a verifier "
-    "returns failure_class=VerifierWorkspaceSideEffect or "
-    "candidate_action=stop_and_report, do not clean verifier outputs or retry; "
-    "record the infrastructure blocker and return immediately."
+    "你是 Search 候选 worker，不是搜索编排器。首先使用提供的 agent_session_id 调用 "
+    "search_get_agent_context。每轮修改前调用 search_get_global_plan，思考后使用 "
+    "search_submit_iteration_plan 提交一句话计划，再编辑并为该 agent session 调用 "
+    "search_run_verifier。只在该候选工作区中工作。不要调用 search_plan_next、search_start_batch、"
+    "search_select、search_report 或 search_promote。不要调用任何 `goal_plus_*` 工具。"
+    "父级运行的规划、选择、报告、提升和最终审计不属于你的职责。如果 verifier 返回 "
+    "failure_class=VerifierWorkspaceSideEffect 或 candidate_action=stop_and_report，"
+    "不要清理 verifier 输出或重试；记录基础设施阻塞原因并立即返回。"
+    "process verifier 返回 disposition，并在非严格改善时自动恢复 candidate-local best；"
+    "不要自行 reset、restore 或 checkout verifier-backed 状态。"
 )
 
 
@@ -226,7 +226,7 @@ class OpenCodeAdapter:
             "prompt": (
                 f"agent_session_id={agent_session_id}; "
                 f"candidate_id={candidate_id}; "
-                f"idea: {one_paragraph_idea}"
+                f"思路：{one_paragraph_idea}"
             ),
         }
 
@@ -254,14 +254,15 @@ class OpenCodeAdapter:
         return {
             "task_id": external_id,
             "subagent_type": worker_agent_type or "SearchCandidateAgent",
-            "description": f"{candidate_id} continue {short_intent}",
+            "description": f"{candidate_id} 继续 {short_intent}",
             "prompt": (
                 "continue_existing_agent_session=true; "
                 f"agent_session_id={agent_session_id}; "
                 f"candidate_id={candidate_id}; "
-                "refresh authoritative runtime context with search_get_agent_context "
-                "before editing; continue the same candidate and workspace; "
-                f"directive: {one_paragraph_idea}"
+                "编辑前刷新 search_get_agent_context 和 search_get_global_plan，"
+                "并提交 search_submit_iteration_plan；"
+                "继续同一个 candidate 和 workspace；"
+                f"指令：{one_paragraph_idea}"
             ),
         }
 
@@ -320,8 +321,8 @@ class CodexAdapter:
                 f"{worker_contract}\n\n"
                 f"agent_session_id={agent_session_id}; "
                 f"candidate_id={candidate_id}; "
-                f"assigned_worker_budget={worker_budget or 'host default'}; "
-                f"idea: {one_paragraph_idea}"
+                f"assigned_worker_budget={worker_budget or 'host 默认值'}; "
+                f"思路：{one_paragraph_idea}"
             ),
         }
         # The default worker contract is already embedded in ``message``. Map
@@ -378,9 +379,9 @@ class CodexAdapter:
                 "continue_existing_agent_session=true; "
                 f"agent_session_id={agent_session_id}; "
                 f"candidate_id={candidate_id}; "
-                "refresh authoritative runtime context with "
-                "search_get_agent_context before editing; continue the same "
-                f"candidate and workspace; directive: {one_paragraph_idea}"
+                "编辑前刷新 search_get_agent_context 和 search_get_global_plan，"
+                "并提交 search_submit_iteration_plan；"
+                f"继续同一个 candidate 和 workspace；指令：{one_paragraph_idea}"
             ),
         }
         budget_control = _codex_budget_control(target, worker_budget)
@@ -422,7 +423,7 @@ class ClaudeCodeAdapter:
             "message": (
                 f"agent_session_id={agent_session_id}; "
                 f"candidate_id={candidate_id}; "
-                f"idea: {one_paragraph_idea}"
+                f"思路：{one_paragraph_idea}"
             ),
         }
         if worker_budget:
@@ -462,7 +463,7 @@ class ClaudeCodeAdapter:
                 "continue_existing_agent_session=true; "
                 f"agent_session_id={agent_session_id}; "
                 f"candidate_id={candidate_id}; "
-                f"idea: {one_paragraph_idea}"
+                f"思路：{one_paragraph_idea}"
             ),
         }
 
@@ -529,22 +530,21 @@ class PiRpcAdapter:
         worker_budget: dict[str, Any] | None = None,
         resume: bool = False,
     ) -> str:
-        header = (worker_prompt or "First call search_get_agent_context.").strip()
+        header = (worker_prompt or "首先调用 search_get_agent_context。").strip()
         labels = (
             f"agent_session_id={agent_session_id}; "
             f"candidate_id={candidate_id}; "
-            f"assigned_worker_budget={worker_budget or 'host default'}; "
-            f"idea: {one_paragraph_idea}"
+            f"assigned_worker_budget={worker_budget or 'host 默认值'}; "
+            f"思路：{one_paragraph_idea}"
         )
         if resume:
             labels = "continue_existing_agent_session=true; " + labels
             header += (
-                "\n\nA new host dispatch starts with this launch message. Any "
-                "deadline, closeout, or time-advisory message earlier in the "
-                "native conversation belongs to a previous dispatch and is no "
-                "longer active. Only warnings delivered after this launch apply."
+                "\n\n这条 launch 消息开始一次新的 host 派发。原生会话中更早的 deadline、"
+                "closeout 或 time-advisory 消息属于上一次派发，已不再生效。"
+                "只遵守本次 launch 之后收到的警告。"
             )
-        return f"{header}\n\nLaunch labels: {labels}"
+        return f"{header}\n\nLaunch 标签：{labels}"
 
     def build_launch_payload(
         self,

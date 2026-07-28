@@ -148,6 +148,17 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         )
     ]
     runtime.start_agent_session.return_value = agent_session
+    runtime.get_global_plan.return_value = [
+        {
+            "candidate_id": "c001",
+            "iteration": 1,
+            "description": "try one",
+            "score": None,
+            "disposition": None,
+            "commit": None,
+        }
+    ]
+    runtime.submit_iteration_plan.return_value = runtime.get_global_plan.return_value[0]
     runtime.redispatch_candidate.return_value = agent_session.model_copy(
         update={
             "agent_session_id": "agent_002",
@@ -202,19 +213,6 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         {"iteration": 1, "score": 0.4, "agent_session_id": "agent_001"},
         {"iteration": 2, "score": 0.7, "agent_session_id": "agent_001"},
     ]
-    runtime.open_search_space.return_value = {
-        "run_id": "run_1",
-        "mode": "b1",
-        "status": "open",
-    }
-    runtime.propose_search_space_plan.return_value = {
-        "plan_id": "ip-0001",
-        "decision": "accept",
-    }
-    runtime.search_space_status.return_value = {
-        "run_id": "run_1",
-        "plans_total": 1,
-    }
     runtime.select.return_value = {"selected_candidate_id": "c001"}
     runtime.report.return_value = Path("/tmp/report.md")
     runtime.promote.return_value = Path("/tmp/c001.patch")
@@ -259,6 +257,8 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
     continued = tools.search_continue_agent_session("agent_001")
     assert continued["launch"]["task_name"] == "search_agent_001"
     assert tools.search_get_agent_context("agent_001") == {"agent_session_id": "agent_001"}
+    assert tools.search_get_global_plan("agent_001")[0]["description"] == "try one"
+    assert tools.search_submit_iteration_plan("agent_001", "try one")["iteration"] == 1
     assert tools.search_get_agent_observability("agent_001") == {
         "agent_session_id": "agent_001",
         "source": "codex_session_jsonl",
@@ -283,25 +283,7 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         scope="process",
         agent_session_id="agent_001",
         hypothesis="try a fused path",
-        intervention_plan_id=None,
     )
-    opened = tools.search_space_open(
-        "run_1",
-        "b1",
-        "space-schema.json",
-        "experiment-1",
-    )
-    assert opened["status"] == "open"
-    plan = tools.search_space_propose(
-        "agent_001",
-        {
-            "intervention": "change the loop schedule",
-            "scope": "the hot loop under the public workload",
-            "expected_new_information": "whether scheduling reduces latency",
-        },
-    )
-    assert plan["plan_id"] == "ip-0001"
-    assert tools.search_space_status("run_1")["plans_total"] == 1
     iterations = tools.search_list_iterations("run_1", "c001")
     assert len(iterations) == 2
     assert iterations[0]["iteration"] == 1
@@ -346,6 +328,8 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         worker_budget=None,
     )
     runtime.get_agent_observability.assert_called_once_with("agent_001")
+    runtime.get_global_plan.assert_called_once_with("agent_001")
+    runtime.submit_iteration_plan.assert_called_once_with("agent_001", "try one")
 
 
 def test_search_tools_expose_no_lifecycle_methods() -> None:

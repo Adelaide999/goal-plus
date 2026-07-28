@@ -33,6 +33,7 @@ def _codex_candidate(tmp_path: Path) -> tuple[FileSearchRuntime, str, str, str]:
     plan = runtime.plan_next(run_id, requested_k=1)
     task = runtime.start_batch(run_id, plan.plan_id)[0]
     session = runtime.start_agent_session(run_id, task.candidate_id, {"goal": "test"})
+    runtime.submit_iteration_plan(session.agent_session_id, "Time advisory sample")
     return runtime, run_id, task.candidate_id, session.agent_session_id
 
 
@@ -69,6 +70,7 @@ def test_time_advisory_uses_subagent_iterations_and_lists_candidate_timing(
         candidate_id,
         agent_session_id=agent_session_id,
     )
+    runtime.submit_iteration_plan(agent_session_id, "Second time advisory sample")
     runtime.run_verifier(
         run_id,
         candidate_id,
@@ -90,9 +92,9 @@ def test_time_advisory_uses_subagent_iterations_and_lists_candidate_timing(
     assert advisory["low_sample"] is False
     assert advisory["candidates"][0]["candidate_id"] == candidate_id
     assert advisory["candidates"][0]["verifier_count"] == 2
-    assert "Observed candidate timings" in advisory["message"]
+    assert "观测到的候选耗时" in advisory["message"]
     assert f"- {candidate_id}:" in advisory["message"]
-    assert "no action is forced" in advisory["message"]
+    assert "不强制采取任何动作" in advisory["message"]
 
 
 def test_time_advisory_does_not_fire_when_one_average_submission_still_fits(
@@ -158,4 +160,4 @@ def test_time_advisory_uses_outer_deadline_and_marks_one_sample_low_confidence(
     assert advisory["deadline_source"] == "outer_deadline"
     assert advisory["remaining_seconds"] == 5
     assert advisory["low_sample"] is True
-    assert "low confidence" in advisory["message"]
+    assert "低置信度" in advisory["message"]

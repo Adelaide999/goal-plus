@@ -72,8 +72,8 @@ def build_search_spec(
     )
     return {
         "objective": (
-            f"Solve benchmark case {case.task_id}. Read QUESTION.md and write "
-            "the final answer to answer.json."
+            f"解答 benchmark case {case.task_id}。读取 QUESTION.md，并将最终答案写入 "
+            "answer.json。"
         ),
         "metric_name": "accuracy",
         "metric_direction": "maximize",
@@ -111,8 +111,8 @@ def build_search_spec(
             },
         },
         "root_hypotheses": [
-            "Use direct reasoning and write only the final answer label or number.",
-            "Check the options carefully before writing answer.json.",
+            "直接推理，只写最终答案标签或数字。",
+            "写入 answer.json 前仔细检查选项。",
         ],
         "constraints": {
             "benchmark": case.benchmark,
@@ -125,7 +125,7 @@ def build_search_spec(
 def _render_question(case: BenchmarkCase) -> str:
     lines = [f"# {case.benchmark} {case.task_id}", "", case.question.strip(), ""]
     if case.choices:
-        lines.append("Choices:")
+        lines.append("选项：")
         for choice in case.choices:
             lines.append(f"{choice.label}. {choice.text}")
         lines.append("")
@@ -138,6 +138,6 @@ def _render_instructions(case: BenchmarkCase) -> str:
     else:
         answer_shape = '{"answer": "42"}'
     return (
-        "Read QUESTION.md. Edit answer.json with the final answer only.\n"
-        f"Expected JSON shape: {answer_shape}\n"
+        "读取 QUESTION.md。编辑 answer.json，只写最终答案。\n"
+        f"预期 JSON 结构：{answer_shape}\n"
     )

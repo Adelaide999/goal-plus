@@ -1,31 +1,24 @@
 ---
 name: goal-plus-with-final-check
-description: Run Goal Plus with a required independent Codex final checker before completion.
+description: 运行 Goal Plus，并要求在完成前由独立 Codex 最终检查员进行检查。
 ---
 
-# Goal Plus With Final Check
+# 带最终检查的 Goal Plus
 
-Use this skill for `/goal-plus-with-final-check` or
-`$goal-plus-with-final-check`. The Codex `UserPromptSubmit` hook creates the
-Goal Plus record with `policy.final_check.mode="required"` before the model
-turn.
+对 `/goal-plus-with-final-check` 或 `$goal-plus-with-final-check` 使用此 skill。
+Codex 的 `UserPromptSubmit` hook 会在模型轮次开始前创建 Goal Plus 记录，并设置
+`policy.final_check.mode="required"`。
 
-Follow the complete `goal-plus` skill workflow. The only additional terminal
-contract is mandatory:
+遵循完整的 `goal-plus` skill 工作流，并额外遵守以下强制终态契约：
 
-1. Do not call `goal_plus_set_status(status="complete")` yourself.
-2. After the implementation and raw-goal audit are finished, call
+1. 不要自行调用 `goal_plus_set_status(status="complete")`。
+2. 完成实现和原始目标审计后，调用
    `goal_plus_prepare_final_check(goal_plus_id, checker_host="codex")`.
-3. Project the returned launch payload onto the available foreground
-   `spawn_agent` tool. Use the returned `task_name`, `message`, `fork_turns`,
-   and `agent_type` when that field is exposed.
-4. Wait for the checker to return. A passing checker atomically completes the
-   Goal Plus record. A failure requires fixing every finding and requesting a
-   fresh check. An interrupted checker leaves the goal active and also requires
-   a fresh check.
-5. Read `goal_plus_status`, then call `goal_plus_gate(event="stop")` before
-   stopping.
+3. 将返回的 launch payload 映射到可用的前台 `spawn_agent` 工具。当工具暴露相应字段时，
+   使用返回的 `task_name`、`message`、`fork_turns` 和 `agent_type`。
+4. 等待检查员返回。通过的检查会原子地完成 Goal Plus 记录。检查失败时必须修复每一项发现，
+   然后申请新的检查。检查被中断时目标保持 active，也必须申请新的检查。
+5. 读取 `goal_plus_status`，然后在停止前调用 `goal_plus_gate(event="stop")`。
 
-`/goal-plus edit <full revised goal>` keeps the same Goal Plus id, creates a new
-goal revision, and invalidates every older check. `/goal-plus resume` continues
-the current durable revision after a host interruption.
+`/goal-plus edit <完整的修订目标>` 会保留同一个 Goal Plus id，创建新的目标修订版，
+并使所有旧检查失效。host 中断后，`/goal-plus resume` 会继续当前持久化修订版。

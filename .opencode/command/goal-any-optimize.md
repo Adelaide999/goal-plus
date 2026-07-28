@@ -1,19 +1,18 @@
 ---
-description: Legacy alias for /goal-plus optimization goals
+description: /goal-plus 优化目标的旧兼容别名
 agent: goal-plus-orchestrator
 subtask: false
 ---
 
-Use the `goal-plus` skill for this legacy optimization command. This command is
-only a compatibility alias; `/goal-plus` is the canonical user entrypoint.
+对这个旧优化命令使用 `goal-plus` skill。该命令只是兼容别名；`/goal-plus` 是规范用户入口。
 
-Before taking action:
-1. Load the `goal-plus` skill with the skill tool.
-2. Treat @.opencode/skills/goal-plus/SKILL.md as the required workflow reference.
-3. Do not bypass `/goal-plus` triage, autonomous spec discovery, Search Mode gates, or final raw-goal audit.
-4. Call the internal `search` skill only after Goal Plus enters Search Mode.
-5. If the `goal-plus` skill or goal-plus MCP tools are unavailable, stop and report the missing dependency.
+采取行动前：
+1. 使用 skill 工具加载 `goal-plus` skill。
+2. 将 @.opencode/skills/goal-plus/SKILL.md 作为必需工作流参考。
+3. 不要绕过 `/goal-plus` triage、自主 spec discovery、Search Mode gate 或最终原始目标审计。
+4. 只有 Goal Plus 进入 Search Mode 后才调用内部 `search` skill。
+5. 如果 `goal-plus` skill 或 goal-plus MCP 工具不可用，停止并报告缺失依赖。
 
-Goal:
+目标：
 
 $ARGUMENTS

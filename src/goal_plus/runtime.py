@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import calendar
+from dataclasses import dataclass
 import hashlib
 import json
 import math
@@ -12,15 +13,11 @@ import subprocess
 import tempfile
 import threading
 import time
+import tomllib
 import uuid
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Literal
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
-    import tomli as tomllib
 
 try:
     import fcntl
@@ -35,12 +32,14 @@ from goal_plus.agent_hosts import (
 from goal_plus.models import (
     AgentHostHandle,
     AgentSessionRecord,
+    CandidateIterationPlan,
     CandidateRecord,
     CandidateProposal,
     CandidateTask,
     CandidateWorkOrder,
     FeedbackPolicy,
     FrozenSpec,
+    IterationDisposition,
     PromotionEvidence,
     RunRecord,
     RunState,
@@ -58,19 +57,6 @@ from goal_plus.models import (
     WorkerBudget,
 )
 from goal_plus.paths import DEFAULT_RUNTIME_ROOT, LEGACY_RUNTIME_ROOT
-from goal_plus.space_agent import (
-    DEFAULT_SCHEMA_CONSOLIDATION_INTERVAL,
-    FileSearchSpaceRuntime,
-    InterventionPlanProposal,
-    SPACE_BASE_EVIDENCE_DIFF_CHARS,
-    SPACE_BASE_EVIDENCE_LIST_CHARS,
-    SPACE_BASE_EVIDENCE_LIST_ITEMS,
-    SPACE_BASE_EVIDENCE_STAT_CHARS,
-    SpaceBaseEvidence,
-    SpacePlanRecord,
-    SpaceRealizedEvidence,
-    SearchSpaceMode,
-)
 from goal_plus.workspaces import (
     IGNORED_NAMES,
     IGNORED_SUFFIXES,
@@ -98,9 +84,17 @@ VERIFIER_RESOURCE_LOCK_DIR_ENV = "GOAL_PLUS_VERIFIER_RESOURCE_LOCK_DIR"
 VERIFIER_OUTPUT_LIMIT_BYTES = 64 * 1024
 VERIFIER_LOG_LIMIT_BYTES = VERIFIER_OUTPUT_LIMIT_BYTES * 2 + 8192
 VERIFIER_TERM_GRACE_SECONDS = 0.5
-SPACE_REALIZED_DIFF_LIMIT_CHARS = 12_000
-SPACE_REALIZED_STAT_LIMIT_CHARS = 4_000
-SPACE_REALIZED_SYMBOL_LIMIT = 64
+
+
+@dataclass(frozen=True)
+class _CandidateArtifactState:
+    changed_files: list[str]
+    touched_denied_files: bool
+    changed_outside_allowed: bool
+    artifact_hash: str
+    git_head: str | None
+    git_status: list[str]
+    git_artifact_clean: bool
 
 
 class _BoundedOutput:
@@ -152,6 +146,14 @@ LEGACY_RESULTS_TSV_RELATIVE_PATH = ".tmp/results.tsv"
 MODEL_HANDOFF_RELATIVE_PATH = ".tmp/handoff.json"
 MAX_MODEL_HANDOFF_BYTES = 64 * 1024
 MAX_VERIFIER_FEEDBACK_CHARS = 4_000
+WORKER_ITERATION_RUN_STATES = frozenset(
+    {
+        RunState.RUNNING,
+        RunState.WAITING_FOR_WORKERS,
+        RunState.SELECTING,
+        RunState.SELECTION_BLOCKED,
+    }
+)
 
 
 def utc_timestamp() -> str:
@@ -305,9 +307,6 @@ class FileSearchRuntime:
         self.runs_dir = self.root_dir / "runs"
         self.specs_dir.mkdir(parents=True, exist_ok=True)
         self.runs_dir.mkdir(parents=True, exist_ok=True)
-        self.search_space = FileSearchSpaceRuntime(self.root_dir)
-        # Compatibility for the frozen B1/B4 experiment runner.
-        self.space_experiments = self.search_space
 
     def _execute_verifier_process(
         self,
@@ -762,6 +761,17 @@ class FileSearchRuntime:
                 f"{run.invalidation_reason}"
             )
 
+    def _assert_worker_iteration_allowed(
+        self,
+        run: RunRecord,
+        operation: str,
+    ) -> None:
+        self._assert_run_not_invalidated(run, operation)
+        if run.state not in WORKER_ITERATION_RUN_STATES:
+            raise RuntimeError(
+                f"cannot {operation}: run {run.run_id} is in state {run.state}"
+            )
+
     def status(self, run_id: str) -> RunSummary:
         run = self._load_run(run_id)
         records = self._load_candidate_records(run_id)
@@ -860,93 +870,6 @@ class FileSearchRuntime:
     ) -> list[dict[str, Any]]:
         record = self._load_candidate_record(run_id, candidate_id)
         return [it.model_dump(mode="json") for it in record.iterations]
-
-    def open_search_space(
-        self,
-        run_id: str,
-        *,
-        mode: SearchSpaceMode = "enforce",
-        schema_path: str | None = None,
-        experiment_id: str | None = None,
-        reviewer_model: str,
-        reviewer_reasoning_effort: Literal["low", "medium", "high", "xhigh"],
-        reviewer_timeout_seconds: int = 180,
-        schema_consolidation_interval: int = DEFAULT_SCHEMA_CONSOLIDATION_INTERVAL,
-    ) -> dict[str, Any]:
-        run = self._load_run(run_id)
-        self._assert_run_not_invalidated(run, "open search space")
-        return self.search_space.open(
-            run_id=run_id,
-            source_path=Path(run.source_path),
-            mode=mode,
-            schema_path=schema_path,
-            experiment_id=experiment_id,
-            reviewer_model=reviewer_model,
-            reviewer_reasoning_effort=reviewer_reasoning_effort,
-            reviewer_timeout_seconds=reviewer_timeout_seconds,
-            schema_consolidation_interval=schema_consolidation_interval,
-        )
-
-    def open_space_experiment(
-        self,
-        run_id: str,
-        *,
-        mode: SearchSpaceMode,
-        schema_path: str | None = None,
-        experiment_id: str | None = None,
-        reviewer_model: str,
-        reviewer_reasoning_effort: Literal["low", "medium", "high", "xhigh"],
-        reviewer_timeout_seconds: int = 180,
-        schema_consolidation_interval: int = DEFAULT_SCHEMA_CONSOLIDATION_INTERVAL,
-    ) -> dict[str, Any]:
-        return self.open_search_space(
-            run_id,
-            mode=mode,
-            schema_path=schema_path,
-            experiment_id=experiment_id,
-            reviewer_model=reviewer_model,
-            reviewer_reasoning_effort=reviewer_reasoning_effort,
-            reviewer_timeout_seconds=reviewer_timeout_seconds,
-            schema_consolidation_interval=schema_consolidation_interval,
-        )
-
-    def propose_search_space_plan(
-        self,
-        agent_session_id: str,
-        proposal: InterventionPlanProposal,
-    ) -> dict[str, Any]:
-        session = self._load_agent_session_by_id(agent_session_id)
-        run = self._load_run(session.run_id)
-        self._assert_run_not_invalidated(run, "propose search-space plan")
-        record = self._load_candidate_record(session.run_id, session.candidate_id)
-        latest_score = record.iterations[-1].score if record.iterations else None
-        workspace = record.task.workspace
-        authoritative = proposal.model_copy(
-            update={
-                "base_git_head": self._git_head(workspace),
-                "base_score": latest_score,
-                "base_evidence": self._build_space_base_evidence(
-                    source=Path(run.source_path),
-                    workspace=workspace,
-                    base_revision=record.task.workspace_base_revision,
-                ),
-            }
-        )
-        return self.search_space.propose(session, authoritative)
-
-    def propose_intervention(
-        self,
-        agent_session_id: str,
-        proposal: InterventionPlanProposal,
-    ) -> dict[str, Any]:
-        return self.propose_search_space_plan(agent_session_id, proposal)
-
-    def search_space_status(self, run_id: str) -> dict[str, Any]:
-        self._load_run(run_id)
-        return self.search_space.status(run_id)
-
-    def space_experiment_status(self, run_id: str) -> dict[str, Any]:
-        return self.search_space_status(run_id)
 
     def plan_next(self, run_id: str, requested_k: int = 4) -> SearchPlan:
         with self._run_transaction(run_id):
@@ -1184,9 +1107,9 @@ class FileSearchRuntime:
             "resume_candidate_id": candidate_id,
             "previous_agent_session_ids": previous_session_ids,
             "resume_instruction": (
-                "This is a new worker session for an existing candidate. "
-                "Call search_get_agent_context first and use its history and "
-                "iterations as the authoritative resume context."
+                "这是现有候选的新 worker session。首先调用 search_get_agent_context，"
+                "将其中本 candidate 的 iterations/results 作为权威恢复上下文，"
+                "再读取 search_get_global_plan。"
             ),
         }
         return self._create_agent_session(
@@ -1509,10 +1432,6 @@ class FileSearchRuntime:
         is_native_session_resume = (
             continuation_mode == "native_session" and dispatch_count > 0
         )
-        search_space = self.search_space.candidate_context(
-            session.run_id,
-            session.candidate_id,
-        )
         return {
             "agent_session_id": session.agent_session_id,
             "run_id": session.run_id,
@@ -1526,8 +1445,6 @@ class FileSearchRuntime:
             "metric_direction": frozen.spec.metric_direction,
             "run_budget": frozen.spec.budget.model_dump(mode="json"),
             "candidate_task": candidate_record.task.model_dump(mode="json"),
-            "search_space": search_space,
-            "space_experiment": search_space,
             "results_tsv": str(results_tsv),
             "results": [
                 entry.model_dump(mode="json")
@@ -1549,9 +1466,93 @@ class FileSearchRuntime:
                     ),
                 },
             },
-            "history": self.list_history(session.run_id, top_n=5, sort_by="score"),
             "iterations": self.list_iterations(session.run_id, session.candidate_id),
         }
+
+    def get_global_plan(self, agent_session_id: str) -> list[dict[str, Any]]:
+        """Return the narrow plan/result projection for the session's run."""
+        session = self._load_agent_session_by_id(agent_session_id)
+        self._load_run(session.run_id)
+        return self._global_plan_view(session.run_id)
+
+    def submit_iteration_plan(
+        self,
+        agent_session_id: str,
+        description: str,
+    ) -> dict[str, Any]:
+        """Create one immutable plan at a candidate's settled boundary."""
+        session = self._load_agent_session_by_id(agent_session_id)
+        lock_path = self._candidate_dir(
+            session.run_id, session.candidate_id
+        ) / "verifier.lock"
+        with exclusive_file_lock(lock_path):
+            # Verifier settlement uses the same candidate -> run lock order.
+            with self._run_transaction(session.run_id):
+                run = self._load_run(session.run_id)
+                self._assert_worker_iteration_allowed(
+                    run, "submit iteration plan"
+                )
+                record = self._load_candidate_record(
+                    session.run_id, session.candidate_id
+                )
+                if record.status not in {"created", "evaluated"}:
+                    raise RuntimeError(
+                        f"cannot plan candidate in status {record.status}"
+                    )
+
+                iteration_number = len(record.iterations) + 1
+                plan = CandidateIterationPlan(
+                    run_id=session.run_id,
+                    candidate_id=session.candidate_id,
+                    iteration=iteration_number,
+                    agent_session_id=agent_session_id,
+                    description=description,
+                    created_at=utc_timestamp(),
+                )
+                existing = self._load_candidate_iteration_plan(
+                    session.run_id,
+                    session.candidate_id,
+                    iteration_number,
+                )
+                if existing is not None:
+                    if existing.description != plan.description:
+                        raise RuntimeError(
+                            f"candidate {session.candidate_id} iteration "
+                            f"{iteration_number} already has a different plan"
+                        )
+                    return self._global_plan_entry(existing, None)
+
+                if self._git_status(
+                    record.task.workspace, ignore_runtime_noise=True
+                ):
+                    raise RuntimeError(
+                        "iteration plans require a Git-clean settled workspace"
+                    )
+                results_were_initialized = (
+                    record.results_ledger_git_head is not None
+                )
+                metric_name = self._load_frozen_spec(
+                    run.frozen_spec_id
+                ).spec.metric_name
+                self._ensure_results_tsv(record, metric_name)
+                if not results_were_initialized:
+                    self._write_candidate_record(session.run_id, record)
+                if self._git_status(
+                    record.task.workspace, ignore_runtime_noise=True
+                ):
+                    raise RuntimeError(
+                        "iteration plans require a Git-clean settled workspace"
+                    )
+                if (
+                    self._git_head(record.task.workspace)
+                    != record.results_ledger_git_head
+                ):
+                    raise RuntimeError(
+                        "iteration plans require the settled results ledger HEAD"
+                    )
+
+                self._write_candidate_iteration_plan(plan)
+                return self._global_plan_entry(plan, None)
 
     def run_verifier(
         self,
@@ -1560,14 +1561,37 @@ class FileSearchRuntime:
         scope: Literal["process", "promotion"] = "process",
         agent_session_id: str | None = None,
         hypothesis: str | None = None,
-        intervention_plan_id: str | None = None,
+    ) -> ScoreReport:
+        if scope not in {"process", "promotion"}:
+            raise ValueError("verifier scope must be 'process' or 'promotion'")
+        lock_path = self._candidate_dir(run_id, candidate_id) / "verifier.lock"
+        with exclusive_file_lock(lock_path):
+            return self._run_verifier(
+                run_id,
+                candidate_id,
+                scope=scope,
+                agent_session_id=agent_session_id,
+                hypothesis=hypothesis,
+            )
+
+    def _run_verifier(
+        self,
+        run_id: str,
+        candidate_id: str,
+        scope: Literal["process", "promotion"] = "process",
+        agent_session_id: str | None = None,
+        hypothesis: str | None = None,
     ) -> ScoreReport:
         """Subagent self-score with ``agent_session_id``; main final verify
         without it. Process calls record ranking iterations; promotion calls
         retain separate acceptance evidence.
         """
-        run = self._load_run(run_id)
-        self._assert_run_not_invalidated(run, "run verifier")
+        with self._run_transaction(run_id):
+            run = self._load_run(run_id)
+            if scope == "process":
+                self._assert_worker_iteration_allowed(run, "run verifier")
+            else:
+                self._assert_run_not_invalidated(run, "run verifier")
         frozen = self._load_frozen_spec(run.frozen_spec_id)
         record = self._load_candidate_record(run_id, candidate_id)
         if record.status not in {"created", "evaluated"}:
@@ -1591,75 +1615,73 @@ class FileSearchRuntime:
                 )
 
         session: AgentSessionRecord | None = None
+        iteration_plan: CandidateIterationPlan | None = None
         if agent_session_id:
             session = self._load_agent_session_by_id(agent_session_id, run_id=run_id)
             if session.candidate_id != candidate_id:
                 raise ValueError(
                     "agent_session_id does not belong to this candidate"
                 )
-
-        space_plan_started = False
-        space_plan: SpacePlanRecord | None = None
-        verifier_recorded = False
-        if scope == "process" and session is not None:
-            if self.search_space.is_enabled(run_id):
-                if intervention_plan_id is None:
-                    raise PermissionError(
-                        "search-space verifier calls require intervention_plan_id "
-                        "from an accepted search_space_propose response"
+            if scope == "process":
+                iteration_number = len(record.iterations) + 1
+                iteration_plan = self._load_candidate_iteration_plan(
+                    run_id,
+                    candidate_id,
+                    iteration_number,
+                )
+                if iteration_plan is None:
+                    raise RuntimeError(
+                        "worker process verifier requires an iteration plan "
+                        f"for {candidate_id} iteration {iteration_number}"
                     )
-                space_plan = self.search_space.begin_verifier(
-                    run_id=run_id,
-                    candidate_id=candidate_id,
-                    agent_session_id=session.agent_session_id,
-                    plan_id=intervention_plan_id,
-                )
-                space_plan_started = True
-            elif intervention_plan_id is not None:
-                raise ValueError(
-                    "intervention_plan_id is only valid for an open search space"
-                )
-        elif intervention_plan_id is not None:
-            raise ValueError(
-                "intervention_plan_id is only valid for candidate process verification"
-            )
+                hypothesis = iteration_plan.description
 
         results_were_initialized = record.results_ledger_git_head is not None
         self._ensure_results_tsv(record, frozen.spec.metric_name)
         if not results_were_initialized:
             self._write_candidate_record(run_id, record)
-        detected_changed = self._detect_changed_files(
-            Path(run.source_path), record.task.workspace
-        )
-        touched_denied = any(
-            path_matches(path, frozen.spec.edit_surface.deny) for path in detected_changed
-        )
-        outside_allowed = any(
-            not path_matches(path, frozen.spec.edit_surface.allow) for path in detected_changed
-        )
-        if (
-            frozen.spec.edit_surface.max_file_changes is not None
-            and len(detected_changed) > frozen.spec.edit_surface.max_file_changes
-        ):
-            outside_allowed = True
-
-        record.detected_changed_files = detected_changed
-        record.touched_denied_files = touched_denied
-        record.changed_outside_allowed = outside_allowed
+        pre_attempt_settled_head = record.results_ledger_git_head
 
         try:
-            precheck = self._precheck_candidate(frozen, record)
-            if precheck is not None:
-                report = precheck
-            else:
-                self._commit_workspace_iteration(
+            state = self._candidate_artifact_state(run, frozen, record)
+            self._apply_candidate_artifact_state(record, state)
+            if scope == "process":
+                attempt_git_head = self._commit_workspace_iteration(
                     record.task.workspace,
-                    detected_changed,
+                    state.changed_files,
                     (
                         f"search verifier iteration "
                         f"{candidate_id}:{len(record.iterations) + 1}"
                     ),
                 )
+                if attempt_git_head is None or pre_attempt_settled_head is None:
+                    raise RuntimeError(
+                        "candidate verifier requires a committed attempt and settled head"
+                    )
+                if self._git_returncode(
+                    record.task.workspace,
+                    [
+                        "git",
+                        "merge-base",
+                        "--is-ancestor",
+                        pre_attempt_settled_head,
+                        attempt_git_head,
+                    ],
+                ) != 0:
+                    raise RuntimeError(
+                        "candidate Git history diverged from the settled results ledger"
+                    )
+                state = self._candidate_artifact_state(run, frozen, record)
+                self._apply_candidate_artifact_state(record, state)
+                if state.git_head != attempt_git_head or not state.git_artifact_clean:
+                    raise RuntimeError(
+                        "candidate attempt is not fully captured by its Git commit"
+                    )
+
+            precheck = self._precheck_candidate(frozen, record)
+            if precheck is not None:
+                report = precheck
+            else:
                 commands = (
                     frozen.spec.process_verifiers
                     if scope == "process"
@@ -1669,39 +1691,77 @@ class FileSearchRuntime:
                     commands = frozen.spec.process_verifiers
                 report = self._run_commands(run, frozen, record, commands, scope)
 
-            if scope == "promotion" and report.promotion_passed is None:
+            if scope == "process":
+                return self._settle_process_verifier(
+                    run_id=run_id,
+                    candidate_id=candidate_id,
+                    frozen=frozen,
+                    report=report,
+                    attempt=state,
+                    pre_attempt_settled_head=pre_attempt_settled_head,
+                    hypothesis=hypothesis,
+                    agent_session_id=agent_session_id,
+                    session=session,
+                )
+
+            if report.promotion_passed is None:
                 report = report.model_copy(
                     update={"promotion_passed": report.process_passed}
                 )
+            state = self._candidate_artifact_state(run, frozen, record)
 
-            detected_changed = self._detect_changed_files(
-                Path(run.source_path), record.task.workspace
-            )
-            artifact_hash = self._artifact_hash(
-                record.task.workspace, detected_changed
-            )
-            git_head = self._git_head(record.task.workspace)
-            git_status = self._git_status(record.task.workspace)
-            git_artifact_clean = self._git_artifact_clean(
-                record.task.workspace,
-                detected_changed,
-                git_head,
-            )
-            touched_denied = any(
-                path_matches(path, frozen.spec.edit_surface.deny)
-                for path in detected_changed
-            )
-            outside_allowed = any(
-                not path_matches(path, frozen.spec.edit_surface.allow)
-                for path in detected_changed
-            )
-            if (
-                frozen.spec.edit_surface.max_file_changes is not None
-                and len(detected_changed)
-                > frozen.spec.edit_surface.max_file_changes
-            ):
-                outside_allowed = True
+            with self._run_transaction(run_id):
+                run = self._load_run(run_id)
+                self._assert_run_not_invalidated(run, "record verifier result")
+                record = self._load_candidate_record(run_id, candidate_id)
+                self._apply_candidate_artifact_state(record, state)
+                record.promotion_report = report
+                record.promotion_evidence = PromotionEvidence(
+                    candidate_id=candidate_id,
+                    selected_git_head=run.selected_git_head,
+                    git_head=run.selected_git_head,
+                    artifact_hash=state.artifact_hash,
+                    passed=bool(report.promotion_passed),
+                    created_at=utc_timestamp(),
+                )
+                self._write_candidate_record(run_id, record)
+                self._write_run(run)
 
+            return report
+        except Exception:
+            if scope == "process":
+                with self._run_transaction(run_id):
+                    run = self._load_run(run_id)
+                    if (
+                        not run.invalidated_at
+                        and run.state in WORKER_ITERATION_RUN_STATES
+                    ):
+                        run.state = RunState.FAILED
+                        self._write_run(run)
+            raise
+
+    def _settle_process_verifier(
+        self,
+        *,
+        run_id: str,
+        candidate_id: str,
+        frozen: FrozenSpec,
+        report: ScoreReport,
+        attempt: _CandidateArtifactState,
+        pre_attempt_settled_head: str | None,
+        hypothesis: str | None,
+        agent_session_id: str | None,
+        session: AgentSessionRecord | None,
+    ) -> ScoreReport:
+        with self._run_transaction(run_id):
+            run = self._load_run(run_id)
+            self._assert_worker_iteration_allowed(run, "record verifier result")
+            record = self._load_candidate_record(run_id, candidate_id)
+            prior_best = self._best_git_iteration_record(
+                record,
+                frozen.spec.metric_direction,
+            )
+            iteration_number = len(record.iterations) + 1
             failure_class = next(
                 (
                     result.failure_class
@@ -1710,173 +1770,151 @@ class FileSearchRuntime:
                 ),
                 None,
             )
-            realized_evidence = (
-                self._build_space_realized_evidence(
-                    workspace=record.task.workspace,
-                    plan=space_plan,
-                    report=report,
-                    metric_name=frozen.spec.metric_name,
-                    metric_direction=frozen.spec.metric_direction,
-                    result_git_head=git_head,
-                    artifact_hash=artifact_hash,
-                    changed_files=list(detected_changed),
-                    failure_class=failure_class,
-                )
-                if space_plan is not None
-                else None
+            iteration_hypothesis = self._iteration_hypothesis(
+                hypothesis,
+                record,
+                iteration_number,
+                scope="process",
+                agent_session_id=agent_session_id,
             )
+            created_at = utc_timestamp()
+            iteration = IterationRecord(
+                iteration=iteration_number,
+                agent_session_id=agent_session_id,
+                score=report.aggregate_score,
+                process_passed=report.process_passed,
+                git_head=attempt.git_head,
+                git_artifact_clean=attempt.git_artifact_clean,
+                git_status=attempt.git_status,
+                failure_class=failure_class,
+                summary=iteration_hypothesis,
+                hypothesis=iteration_hypothesis,
+                changed_files=list(attempt.changed_files),
+                touched_denied_files=attempt.touched_denied_files,
+                changed_outside_allowed=attempt.changed_outside_allowed,
+                artifact_hash=attempt.artifact_hash,
+                metrics={
+                    result.name: result.metrics for result in report.verifier_results
+                },
+                log_paths=[
+                    str(result.log_path)
+                    for result in report.verifier_results
+                    if result.log_path is not None
+                ],
+                created_at=created_at,
+            )
+            disposition = self._iteration_disposition(
+                iteration,
+                prior_best,
+                frozen.spec.metric_direction,
+            )
+            iteration.disposition = disposition
 
-            with self._run_transaction(run_id):
-                run = self._load_run(run_id)
-                self._assert_run_not_invalidated(run, "record verifier result")
-                record = self._load_candidate_record(run_id, candidate_id)
-                record.detected_changed_files = detected_changed
-                record.touched_denied_files = touched_denied
-                record.changed_outside_allowed = outside_allowed
-                if scope == "process":
-                    record.status = "evaluated"
-                    record.score_report = report
-                    if record.promotion_evidence and (
-                        record.promotion_evidence.git_head != git_head
-                        or record.promotion_evidence.artifact_hash != artifact_hash
-                    ):
-                        record.promotion_report = None
-                        record.promotion_evidence = None
-                    iteration_number = len(record.iterations) + 1
-                    iteration_hypothesis = self._iteration_hypothesis(
-                        hypothesis,
-                        record,
-                        iteration_number,
-                        scope=scope,
-                        agent_session_id=agent_session_id,
-                    )
-                    created_at = utc_timestamp()
-                    iteration_record = IterationRecord(
-                        iteration=iteration_number,
-                        agent_session_id=agent_session_id,
-                        intervention_plan_id=intervention_plan_id,
-                        score=report.aggregate_score,
-                        process_passed=report.process_passed,
-                        git_head=git_head,
-                        git_artifact_clean=git_artifact_clean,
-                        git_status=git_status,
-                        failure_class=failure_class,
-                        summary=iteration_hypothesis,
-                        hypothesis=iteration_hypothesis,
-                        changed_files=list(detected_changed),
-                        touched_denied_files=touched_denied,
-                        changed_outside_allowed=outside_allowed,
-                        artifact_hash=artifact_hash,
-                        metrics={
-                            result.name: result.metrics
-                            for result in report.verifier_results
-                        },
-                        log_paths=[
-                            str(result.log_path)
-                            for result in report.verifier_results
-                            if result.log_path is not None
-                        ],
-                        created_at=created_at,
-                    )
-                    ledger_entry = ResultLedgerEntry(
-                        source_run_id=run_id,
-                        source_candidate_id=candidate_id,
-                        iteration=iteration_number,
-                        git_head=git_head,
-                        metric_name=frozen.spec.metric_name,
-                        score=report.aggregate_score,
-                        status="pass" if report.process_passed else "fail",
-                        hypothesis=iteration_hypothesis,
-                        failure_class=failure_class,
-                        created_at=created_at,
-                    )
-                    ledger_git_head = self._append_results_tsv(
-                        record,
-                        ledger_entry,
-                        frozen.spec.metric_name,
-                    )
-                    iteration_record.ledger_git_head = ledger_git_head
-                    record.iterations.append(iteration_record)
-                else:
-                    record.promotion_report = report
-                    record.promotion_evidence = PromotionEvidence(
-                        candidate_id=candidate_id,
-                        selected_git_head=run.selected_git_head,
-                        git_head=run.selected_git_head,
-                        artifact_hash=artifact_hash,
-                        passed=bool(report.promotion_passed),
-                        created_at=utc_timestamp(),
-                    )
-                self._write_candidate_record(run_id, record)
-                if scope == "process":
-                    self._update_best_seen(run, frozen.spec, report)
-                    run.candidates_evaluated = len(
-                        [
-                            r
-                            for r in self._load_candidate_records(run_id)
-                            if r.status == "evaluated"
-                        ]
-                    )
-                self._write_run(run)
+            if disposition == "keep":
+                best_iteration = iteration
+            else:
+                target = (
+                    prior_best.git_head
+                    if prior_best is not None
+                    else pre_attempt_settled_head
+                )
+                if target is None:
+                    raise RuntimeError("candidate rollback has no restoration target")
+                iteration.restored_to_iteration = (
+                    prior_best.iteration if prior_best is not None else None
+                )
+                iteration.restored_to_git_head = target
+                self._restore_candidate_artifact(
+                    record,
+                    frozen.spec.metric_name,
+                    target,
+                    (
+                        f"goal-plus restore {candidate_id} best after "
+                        f"iteration {iteration_number}"
+                    ),
+                )
+                best_iteration = prior_best
 
-                if session is not None and agent_session_id is not None:
-                    latest_session = self._load_agent_session_by_id(
-                        agent_session_id, run_id=run_id
-                    )
-                    counters = dict(latest_session.counters)
-                    counters["verifier_runs"] = counters.get("verifier_runs", 0) + 1
-                    updated = latest_session.model_copy(
+            settled = self._candidate_artifact_state(run, frozen, record)
+            if not settled.git_artifact_clean:
+                raise RuntimeError("candidate artifact is dirty after settlement")
+            if (
+                best_iteration is not None
+                and settled.artifact_hash != best_iteration.artifact_hash
+            ):
+                raise RuntimeError("candidate artifact does not match its best iteration")
+            self._apply_candidate_artifact_state(record, settled)
+
+            ledger_entry = ResultLedgerEntry(
+                source_run_id=run_id,
+                source_candidate_id=candidate_id,
+                iteration=iteration_number,
+                git_head=attempt.git_head,
+                metric_name=frozen.spec.metric_name,
+                score=report.aggregate_score,
+                status="pass" if report.process_passed else "fail",
+                hypothesis=iteration_hypothesis,
+                failure_class=failure_class,
+                created_at=created_at,
+            )
+            ledger_git_head = self._append_results_tsv(
+                record,
+                ledger_entry,
+                frozen.spec.metric_name,
+            )
+            iteration.ledger_git_head = ledger_git_head
+            iteration.workspace_git_head_after_settlement = ledger_git_head
+            record.iterations.append(iteration)
+            report = report.model_copy(
+                update={
+                    "disposition": disposition,
+                    "best_iteration": (
+                        best_iteration.iteration if best_iteration is not None else None
+                    ),
+                    "best_git_head": (
+                        best_iteration.git_head if best_iteration is not None else None
+                    ),
+                    "workspace_git_head_after_settlement": ledger_git_head,
+                }
+            )
+            record.status = "evaluated"
+            record.score_report = report
+            if record.promotion_evidence and (
+                record.promotion_evidence.git_head != report.best_git_head
+                or record.promotion_evidence.artifact_hash != settled.artifact_hash
+            ):
+                record.promotion_report = None
+                record.promotion_evidence = None
+            self._write_candidate_record(run_id, record)
+
+            self._update_best_seen(run, frozen.spec, report)
+            run.candidates_evaluated = len(
+                [
+                    item
+                    for item in self._load_candidate_records(run_id)
+                    if item.status == "evaluated"
+                ]
+            )
+            self._write_run(run)
+
+            if session is not None and agent_session_id is not None:
+                latest_session = self._load_agent_session_by_id(
+                    agent_session_id,
+                    run_id=run_id,
+                )
+                counters = dict(latest_session.counters)
+                counters["verifier_runs"] = counters.get("verifier_runs", 0) + 1
+                self._write_agent_session(
+                    latest_session.model_copy(
                         update={
                             "updated_at": utc_timestamp(),
                             "counters": counters,
                         }
                     )
-                    self._write_agent_session(updated)
-
-                verifier_recorded = True
-
-            if space_plan_started and intervention_plan_id is not None:
-                self.search_space.complete_verifier(
-                    run_id=run_id,
-                    plan_id=intervention_plan_id,
-                    iteration=iteration_number,
-                    score=report.aggregate_score,
-                    process_passed=report.process_passed,
-                    git_head=git_head,
-                    artifact_hash=artifact_hash,
-                    changed_files=list(detected_changed),
-                    failure_class=failure_class,
-                    verifier_metrics={
-                        result.name: result.metrics
-                        for result in report.verifier_results
-                    },
-                    realized_evidence=realized_evidence,
                 )
-
             return report
-        except Exception:
-            if (
-                space_plan_started
-                and not verifier_recorded
-                and intervention_plan_id is not None
-            ):
-                self.search_space.restore_after_verifier_error(
-                    run_id,
-                    intervention_plan_id,
-                )
-            if scope == "process":
-                with self._run_transaction(run_id):
-                    run = self._load_run(run_id)
-                    if not run.invalidated_at:
-                        run.state = RunState.FAILED
-                        self._write_run(run)
-            raise
 
     def select(self, run_id: str) -> dict[str, Any]:
-        self.search_space.abort_outstanding(
-            run_id,
-            reason="search selection began after the candidate worker drain",
-        )
         with self._run_transaction(run_id):
             run = self._load_run(run_id)
             self._assert_run_not_invalidated(run, "select")
@@ -1909,14 +1947,20 @@ class FileSearchRuntime:
         selected_git_head: str | None = None
         final_report: ScoreReport | None = None
         for option_score, option_record, option_iteration, option_git_head in ranked:
+            option_record = self._load_candidate_record(
+                run_id,
+                option_record.candidate_id,
+            )
             if option_git_head:
-                self._checkout_git_revision(option_record.task.workspace, option_git_head)
-                self._ensure_results_tsv(
+                self._restore_candidate_artifact(
                     option_record,
                     frozen.spec.metric_name,
-                    force_after_checkout=True,
+                    option_git_head,
+                    (
+                        f"goal-plus select {option_record.candidate_id} "
+                        f"iteration {option_iteration}"
+                    ),
                 )
-                self._write_candidate_record(run_id, option_record)
             report = self.run_verifier(run_id, option_record.candidate_id)
             if report.process_passed and report.aggregate_score is not None:
                 selected_score = report.aggregate_score
@@ -2231,39 +2275,24 @@ class FileSearchRuntime:
             reject_promotion(
                 "cannot promote candidate without an immutable selected Git revision"
             )
-        self._checkout_git_revision(record.task.workspace, run.selected_git_head)
-        detected_changed = self._detect_changed_files(
-            Path(run.source_path), record.task.workspace
-        )
-        artifact_hash = self._artifact_hash(
-            record.task.workspace, detected_changed
-        )
-        git_head = self._git_head(record.task.workspace)
-        record.detected_changed_files = detected_changed
-        record.touched_denied_files = any(
-            path_matches(path, frozen.spec.edit_surface.deny)
-            for path in detected_changed
-        )
-        record.changed_outside_allowed = any(
-            not path_matches(path, frozen.spec.edit_surface.allow)
-            for path in detected_changed
-        )
-        if (
-            frozen.spec.edit_surface.max_file_changes is not None
-            and len(detected_changed) > frozen.spec.edit_surface.max_file_changes
+        current = self._candidate_artifact_state(run, frozen, record)
+        if run.selected_artifact_hash is not None and (
+            current.artifact_hash != run.selected_artifact_hash
+            or not current.git_artifact_clean
         ):
-            record.changed_outside_allowed = True
-        self._write_candidate_record(run_id, record)
-
-        if run.selected_git_head and git_head != run.selected_git_head:
             reject_promotion(
-                "cannot promote candidate because the selected Git revision is stale"
+                "cannot promote candidate because the selected artifact changed"
             )
-        self._ensure_results_tsv(
+        self._restore_candidate_artifact(
             record,
             frozen.spec.metric_name,
-            force_after_checkout=True,
+            run.selected_git_head,
+            f"goal-plus promote {candidate_id} selected revision",
         )
+        selected = self._candidate_artifact_state(run, frozen, record)
+        self._apply_candidate_artifact_state(record, selected)
+        detected_changed = selected.changed_files
+        artifact_hash = selected.artifact_hash
         self._write_candidate_record(run_id, record)
         if run.selected_artifact_hash is None:
             run.selected_artifact_hash = artifact_hash
@@ -2473,8 +2502,8 @@ class FileSearchRuntime:
             "continuation": adapter.capabilities.continuation,
             "pool": adapter.capabilities.pool.as_dict(),
             "reason": (
-                f"The main agent launches {strategy.worker_host} workers through the host-pool "
-                "contract using launch payloads from search_start_agent_session."
+                f"主 agent 使用 search_start_agent_session 返回的 launch payload，"
+                f"通过 host-pool 契约启动 {strategy.worker_host} worker。"
             ),
         }
 
@@ -2643,11 +2672,10 @@ class FileSearchRuntime:
         worker_budget_override: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         worker_agent_type = self._candidate_worker_agent_type(frozen, candidate_record)
-        short_intent = "continue same autonomous candidate loop"
+        short_intent = "继续同一条自主候选循环"
         directive_text = (
-            "Continue the same autonomous search loop from the latest committed "
-            "evidence. Refresh runtime context, choose the next evidence-backed "
-            "hypothesis yourself, and verify every material change."
+            "根据最新提交的证据继续同一条自主搜索循环。刷新运行时上下文，"
+            "自行选择下一个有证据支持的假设，并验证每项实质变更。"
         )
 
         adapter = get_agent_host_adapter(session.host)
@@ -2687,11 +2715,11 @@ class FileSearchRuntime:
         if prompt_path.exists():
             return prompt_path.read_text(encoding="utf-8")
         return (
-            "First call search_get_agent_context. Work in the candidate workspace only. "
-            "Before final response call search_run_verifier. Use runtime history; "
-            "do not rely on transcript. If the verifier reports "
-            "VerifierWorkspaceSideEffect or candidate_action=stop_and_report, "
-            "report the infrastructure blocker and return without retrying."
+            "首先调用 search_get_agent_context。只能在候选工作区中工作。"
+            "每轮编辑前读取 search_get_global_plan 并提交 search_submit_iteration_plan，"
+            "然后调用 search_run_verifier。使用运行时证据，不要依赖 transcript。"
+            "如果 verifier 报告 VerifierWorkspaceSideEffect 或 "
+            "candidate_action=stop_and_report，报告基础设施阻塞原因并直接返回，不要重试。"
         )
 
     def _next_plan_id(self, run: RunRecord) -> str:
@@ -2726,7 +2754,7 @@ class FileSearchRuntime:
             hypothesis = (
                 frozen.spec.root_hypotheses[hypothesis_index]
                 if hypothesis_index < len(frozen.spec.root_hypotheses)
-                else f"Independent candidate {planned_candidate_id}"
+                else f"独立候选 {planned_candidate_id}"
             )
             work_orders.append(
                 CandidateWorkOrder(
@@ -2747,8 +2775,8 @@ class FileSearchRuntime:
             requires_agent_proposals=False,
             work_orders=work_orders,
             strategy_trace={
-                "selection_rule": "independent source branches",
-                "reason": "Each candidate starts from the frozen source workspace.",
+                "selection_rule": "独立源码分支",
+                "reason": "每个候选都从冻结的源码工作区开始。",
             },
             created_at=utc_timestamp(),
         )
@@ -2770,8 +2798,8 @@ class FileSearchRuntime:
             remaining_budget=remaining,
             requires_agent_proposals=True,
             strategy_trace={
-                "selection_rule": "agent-guided initial candidates",
-                "reason": "The main agent defines the initial candidate set exactly once.",
+                "selection_rule": "agent 引导的初始候选",
+                "reason": "主 agent 只定义一次初始候选集合。",
             },
             created_at=utc_timestamp(),
         )
@@ -2817,25 +2845,28 @@ class FileSearchRuntime:
         )
 
         instructions = [
-            "Work only inside this candidate workspace.",
-            "Use this workspace's .tmp/ directory for notes and scratch drafts.",
-            "Do not use /tmp, home directories, or paths outside the candidate workspace for candidate work.",
-            "Modify only files listed in allowed_files; never touch denied_files or frozen verifier artifacts.",
-            "Do not delete, move, or clean files; destructive commands such as rm, mv, rmdir, unlink, trash, and find -delete are forbidden.",
-            "A local git repository has already been initialized with the copied baseline; use git status, git diff, git add, git commit, git reset, git restore, and git checkout only inside this workspace.",
-            "All scoring must go through goal-plus_search_run_verifier; do not run the process_verifiers command directly via bash, and do not write your own scorer.",
-            "Pass context.agent_session_id to search_run_verifier and include a concise hypothesis describing the tested design so the runtime can record iteration provenance and rationale.",
-            "Each run_verifier call records an iteration. Work within the configured host budget. Complete and verify a candidate early, stop starting new optimization iterations before the limit, and leave enough time to return a concise summary.",
-            "search_run_verifier automatically commits changed candidate artifact files before running the verifier; use git status, git diff, and git log to inspect iteration provenance.",
-            "Inspect the inherited iteration log at workspace/results.tsv before planning another variant. The runtime owns and commits this append-only ledger, validates that existing rows are unchanged, and adds exactly one row for every returned verifier report; never rewrite, truncate, delete, or manually append it.",
+            "只能在此候选工作区内工作。",
+            "使用此工作区的 .tmp/ 目录存放笔记和临时草稿。",
+            "不要使用 /tmp、home 目录或候选工作区之外的路径处理候选工作。",
+            "只能修改 allowed_files 中列出的文件；绝不能触碰 denied_files 或冻结的 verifier 产物。",
+            "不要删除、移动或清理文件；禁止 rm、mv、rmdir、unlink、trash 和 find -delete 等破坏性命令。",
+            "使用 git status、git diff 和 git log 分析工作区；runtime 拥有 verifier-backed iteration 的提交和回滚，不要自行 reset、restore 或 checkout 已验证状态。",
+            "所有评分都必须通过 goal-plus_search_run_verifier；不要通过 bash 直接运行 process_verifiers 命令，也不要自行编写评分器。",
+            "每轮修改前调用 search_get_global_plan，思考后用 context.agent_session_id 调用 search_submit_iteration_plan，提交一句话计划。",
+            "把 context.agent_session_id 传给 search_run_verifier，并省略 scope 以使用 process verifier；plan description 是本轮唯一 hypothesis。",
+            "每次 run_verifier 调用都会记录一个 iteration。在配置的 host 预算内工作。尽早完成并验证候选，在达到限制前停止启动新的优化 iteration，并留出足够时间返回简洁摘要。",
+            "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
+            "process verifier 返回 keep/discard/failure disposition；非严格改善或验证失败时，runtime 会保留被测 commit 并把候选代码恢复到 candidate-local best。下一轮直接从返回后的已结算工作区继续。",
+            "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
+            "Global Plan 只展示 peer 的计划、分数、disposition 和 attempt commit。仅在你独立判断代码级证据确有必要时，在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；不要访问其他 candidate 的 workspace。",
         ]
         if plan.worker_policy.get("subagent_type"):
             instructions.append(
-                f"Use subagent_type={plan.worker_policy['subagent_type']!r} for the managed agent session."
+                f"对受管 agent session 使用 subagent_type={plan.worker_policy['subagent_type']!r}。"
             )
         instructions.extend(proposal.instructions)
 
-        hypothesis = proposal.hypothesis or proposal.intent or f"Candidate {candidate_id}"
+        hypothesis = proposal.hypothesis or proposal.intent or f"候选 {candidate_id}"
         return CandidateTask(
             run_id=run.run_id,
             candidate_id=candidate_id,
@@ -3155,10 +3186,8 @@ class FileSearchRuntime:
         self,
         record: CandidateRecord,
         metric_name: str,
-        *,
-        force_after_checkout: bool = False,
     ) -> Path:
-        if record.results_ledger_git_head is not None and not force_after_checkout:
+        if record.results_ledger_git_head is not None:
             return self._assert_results_tsv_unchanged(record, metric_name)
         if not record.results_ledger and record.results_ledger_git_head is None:
             record.results_ledger = self._read_results_tsv(record)
@@ -3824,6 +3853,37 @@ class FileSearchRuntime:
             run.best_score = report.aggregate_score
             run.best_candidate_id = report.candidate_id
 
+    @staticmethod
+    def _git_iteration_eligible(iteration: IterationRecord) -> bool:
+        return bool(
+            iteration.process_passed is True
+            and iteration.score is not None
+            and math.isfinite(iteration.score)
+            and iteration.git_head
+            and iteration.git_artifact_clean is True
+            and not iteration.touched_denied_files
+            and not iteration.changed_outside_allowed
+        )
+
+    @classmethod
+    def _iteration_disposition(
+        cls,
+        iteration: IterationRecord,
+        prior_best: IterationRecord | None,
+        metric_direction: Literal["maximize", "minimize"],
+    ) -> IterationDisposition:
+        if not cls._git_iteration_eligible(iteration):
+            return "failure"
+        if prior_best is None:
+            return "keep"
+        assert iteration.score is not None and prior_best.score is not None
+        improved = (
+            iteration.score > prior_best.score
+            if metric_direction == "maximize"
+            else iteration.score < prior_best.score
+        )
+        return "keep" if improved else "discard"
+
     def _best_current_artifact_iteration(
         self,
         run: RunRecord,
@@ -3880,12 +3940,7 @@ class FileSearchRuntime:
         scored = [
             iteration
             for iteration in record.iterations
-            if iteration.process_passed is True
-            and iteration.score is not None
-            and iteration.git_head is not None
-            and iteration.git_artifact_clean is True
-            and not iteration.touched_denied_files
-            and not iteration.changed_outside_allowed
+            if self._git_iteration_eligible(iteration)
         ]
         if not scored:
             return None
@@ -4148,8 +4203,7 @@ class FileSearchRuntime:
             "verifier_assessments": verifier_assessments[:15],
             "pitfalls": round_robin(pitfall_groups, 30),
             "description": (
-                "Bounded current-run research rollup across all candidates, including "
-                "discoveries from candidates outside the visible ranking frontier."
+                "当前 run 中所有候选的有界研究汇总，包括可见排名 frontier 之外候选的发现。"
             ),
         }
 
@@ -4217,8 +4271,8 @@ class FileSearchRuntime:
             "pitfalls": pitfalls,
             "score_reusable": False,
             "description": (
-                "Policy-controlled inherited research context. Source scores are historical "
-                "only and every imported artifact or feature must be re-verified."
+                "由 policy 控制的继承研究上下文。来源分数仅作历史记录，"
+                "每个导入产物或特性都必须重新验证。"
             ),
         }
 
@@ -4363,6 +4417,12 @@ class FileSearchRuntime:
             "best_git_head": best_iteration.git_head if best_iteration else None,
             "latest_process_passed": score_report.process_passed if score_report else None,
             "latest_score": score_report.aggregate_score if score_report else None,
+            "latest_disposition": score_report.disposition if score_report else None,
+            "workspace_git_head_after_settlement": (
+                score_report.workspace_git_head_after_settlement
+                if score_report
+                else None
+            ),
             "latest_failure_classes": latest_failure_classes,
             "latest_verifiers": latest_verifier_summaries,
             "latest_log_paths": latest_log_paths,
@@ -4414,239 +4474,55 @@ class FileSearchRuntime:
                 changed.append(rel_path)
         return changed
 
+    def _candidate_artifact_state(
+        self,
+        run: RunRecord,
+        frozen: FrozenSpec,
+        record: CandidateRecord,
+    ) -> _CandidateArtifactState:
+        workspace = record.task.workspace
+        changed_files = self._detect_changed_files(Path(run.source_path), workspace)
+        touched_denied = any(
+            path_matches(path, frozen.spec.edit_surface.deny)
+            for path in changed_files
+        )
+        outside_allowed = any(
+            not path_matches(path, frozen.spec.edit_surface.allow)
+            for path in changed_files
+        )
+        max_changes = frozen.spec.edit_surface.max_file_changes
+        if max_changes is not None and len(changed_files) > max_changes:
+            outside_allowed = True
+        git_head = self._git_head(workspace)
+        return _CandidateArtifactState(
+            changed_files=changed_files,
+            touched_denied_files=touched_denied,
+            changed_outside_allowed=outside_allowed,
+            artifact_hash=self._artifact_hash(workspace, changed_files),
+            git_head=git_head,
+            git_status=self._git_status(workspace),
+            git_artifact_clean=self._git_artifact_clean(
+                workspace,
+                changed_files,
+                git_head,
+            ),
+        )
+
+    @staticmethod
+    def _apply_candidate_artifact_state(
+        record: CandidateRecord,
+        state: _CandidateArtifactState,
+    ) -> None:
+        record.detected_changed_files = list(state.changed_files)
+        record.touched_denied_files = state.touched_denied_files
+        record.changed_outside_allowed = state.changed_outside_allowed
+
     def _artifact_hash(self, workspace: Path, changed_files: list[str]) -> str:
         payload: dict[str, str | None] = {}
         for rel_path in sorted(changed_files):
             path = workspace / rel_path
             payload[rel_path] = sha256_file(path) if path.is_file() else None
         return sha256_text(canonical_json(payload))
-
-    def _build_space_base_evidence(
-        self,
-        *,
-        source: Path,
-        workspace: Path,
-        base_revision: str | None,
-    ) -> SpaceBaseEvidence:
-        changed_files = self._detect_changed_files(source, workspace)
-        artifact_hash = self._artifact_hash(workspace, changed_files)
-        _delta_files, diff_stat, full_patch = self._space_git_delta(
-            workspace,
-            base_revision,
-            None,
-            fallback_files=changed_files,
-        )
-        diff_excerpt, diff_truncated = self._bounded_space_text(
-            full_patch,
-            SPACE_BASE_EVIDENCE_DIFF_CHARS,
-        )
-        bounded_stat, _ = self._bounded_space_text(
-            diff_stat,
-            SPACE_BASE_EVIDENCE_STAT_CHARS,
-        )
-        changed_symbols = self._space_changed_symbols(full_patch)
-        return SpaceBaseEvidence(
-            artifact_hash=artifact_hash,
-            cumulative_delta_sha256=sha256_text(full_patch),
-            changed_files=self._bounded_space_list(changed_files),
-            changed_file_count=len(changed_files),
-            changed_symbols=self._bounded_space_list(changed_symbols),
-            changed_symbol_count=len(changed_symbols),
-            diff_stat=bounded_stat,
-            diff_excerpt=diff_excerpt,
-            diff_truncated=diff_truncated,
-        )
-
-    def _build_space_realized_evidence(
-        self,
-        *,
-        workspace: Path,
-        plan: SpacePlanRecord,
-        report: ScoreReport,
-        metric_name: str,
-        metric_direction: Literal["minimize", "maximize"],
-        result_git_head: str | None,
-        artifact_hash: str | None,
-        changed_files: list[str],
-        failure_class: str | None,
-    ) -> SpaceRealizedEvidence:
-        base_git_head = plan.proposal.base_git_head
-        delta_files, diff_stat, full_patch = self._space_git_delta(
-            workspace,
-            base_git_head,
-            result_git_head,
-            fallback_files=changed_files,
-        )
-        diff_patch, diff_truncated = self._bounded_space_text(
-            full_patch,
-            SPACE_REALIZED_DIFF_LIMIT_CHARS,
-        )
-        diff_stat, _ = self._bounded_space_text(
-            diff_stat,
-            SPACE_REALIZED_STAT_LIMIT_CHARS,
-        )
-        metrics = {
-            result.name: result.metrics for result in report.verifier_results
-        }
-        infrastructure_failure = (
-            failure_class in {"VerifierWorkspaceSideEffect", "VerifierStartFailed"}
-            or any(
-                isinstance(value, dict)
-                and value.get("infrastructure_failure") is True
-                for value in metrics.values()
-            )
-        )
-        score_before = plan.proposal.base_score
-        score_after = report.aggregate_score
-        score_delta = (
-            score_after - score_before
-            if score_before is not None and score_after is not None
-            else None
-        )
-        if infrastructure_failure:
-            outcome = "infrastructure_failure"
-        elif not report.validity_passed or not report.process_passed:
-            outcome = "invalid"
-        elif score_before is None or score_after is None or math.isclose(
-            score_before,
-            score_after,
-            rel_tol=1e-12,
-            abs_tol=1e-12,
-        ):
-            outcome = "neutral"
-        else:
-            improved = (
-                score_after > score_before
-                if metric_direction == "maximize"
-                else score_after < score_before
-            )
-            outcome = "improved" if improved else "regressed"
-        return SpaceRealizedEvidence(
-            base_git_head=base_git_head,
-            result_git_head=result_git_head,
-            artifact_hash=artifact_hash,
-            artifact_delta_sha256=sha256_text(full_patch),
-            changed_files=changed_files,
-            delta_files=delta_files,
-            changed_symbols=self._space_changed_symbols(full_patch),
-            diff_stat=diff_stat,
-            diff_patch=diff_patch,
-            diff_truncated=diff_truncated,
-            metric_name=metric_name,
-            metric_direction=metric_direction,
-            score_before=score_before,
-            score_after=score_after,
-            score_delta=score_delta,
-            outcome=outcome,
-            validity_passed=report.validity_passed,
-            process_passed=report.process_passed,
-            infrastructure_failure=infrastructure_failure,
-            failure_class=failure_class,
-            completed_at=utc_timestamp(),
-        )
-
-    def _space_git_delta(
-        self,
-        workspace: Path,
-        base_git_head: str | None,
-        result_git_head: str | None,
-        *,
-        fallback_files: list[str],
-    ) -> tuple[list[str], str, str]:
-        if base_git_head is None:
-            return list(fallback_files), "", ""
-        revisions = [base_git_head]
-        if result_git_head is not None and result_git_head != base_git_head:
-            revisions.append(result_git_head)
-        pathspec = ["--", ".", f":(exclude){RESULTS_TSV_RELATIVE_PATH}"]
-        try:
-            names = self._git_output(
-                workspace,
-                ["git", "diff", "--name-only", *revisions, *pathspec],
-            )
-            diff_stat = self._git_output(
-                workspace,
-                ["git", "diff", "--stat", *revisions, *pathspec],
-            )
-            patch = self._git_output(
-                workspace,
-                [
-                    "git",
-                    "diff",
-                    "--no-ext-diff",
-                    "--no-color",
-                    "--unified=0",
-                    *revisions,
-                    *pathspec,
-                ],
-            )
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            return list(fallback_files), "", ""
-        delta_files = [line.strip() for line in names.splitlines() if line.strip()]
-        return delta_files, diff_stat.strip(), patch
-
-    @staticmethod
-    def _bounded_space_text(value: str, limit: int) -> tuple[str, bool]:
-        if len(value) <= limit:
-            return value, False
-        marker = "\n[... deterministic diff truncation ...]\n"
-        available = max(0, limit - len(marker))
-        head = (available * 3) // 4
-        tail = available - head
-        return value[:head] + marker + value[-tail:], True
-
-    @staticmethod
-    def _bounded_space_list(values: list[str]) -> list[str]:
-        if len(values) <= SPACE_BASE_EVIDENCE_LIST_ITEMS:
-            candidates = values
-        else:
-            head = SPACE_BASE_EVIDENCE_LIST_ITEMS // 2
-            candidates = [*values[:head], *values[-head:]]
-        bounded: list[str] = []
-        used_chars = 0
-        for value in candidates:
-            remaining = SPACE_BASE_EVIDENCE_LIST_CHARS - used_chars
-            if remaining <= 0:
-                break
-            item, _ = FileSearchRuntime._bounded_space_text(
-                value,
-                min(remaining, 500),
-            )
-            bounded.append(item)
-            used_chars += len(item)
-        return bounded
-
-    @staticmethod
-    def _space_changed_symbols(patch: str) -> list[str]:
-        symbols: list[str] = []
-
-        def add(value: str) -> None:
-            normalized = " ".join(value.split())
-            if normalized and normalized not in symbols:
-                symbols.append(normalized[:240])
-
-        for line in patch.splitlines():
-            if len(symbols) >= SPACE_REALIZED_SYMBOL_LIMIT:
-                break
-            if line.startswith("@@"):
-                parts = line.split("@@", 2)
-                if len(parts) == 3:
-                    add(parts[2])
-                continue
-            if not line.startswith(("+", "-")) or line.startswith(("+++", "---")):
-                continue
-            content = line[1:].strip()
-            for prefix in ("def ", "class ", "fn ", "func ", "#define "):
-                if content.startswith(prefix):
-                    add(content)
-                    break
-            else:
-                if "=" in content:
-                    left = content.split("=", 1)[0].strip()
-                    identifier = left.replace("_", "").replace(".", "")
-                    if identifier.isalnum() and " " not in left:
-                        add(left)
-        return symbols
 
     def _git_head(self, workspace: Path) -> str | None:
         try:
@@ -4657,12 +4533,28 @@ class FileSearchRuntime:
             return None
         return value.strip() or None
 
-    def _git_status(self, workspace: Path) -> list[str]:
-        try:
-            value = self._git_output(
-                workspace,
-                ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+    def _git_status(
+        self,
+        workspace: Path,
+        *,
+        ignore_runtime_noise: bool = False,
+    ) -> list[str]:
+        command = ["git", "status", "--porcelain=v1", "--untracked-files=all"]
+        if ignore_runtime_noise:
+            exclusions = [
+                pattern
+                for name in sorted(IGNORED_NAMES - {".git"})
+                for pattern in (
+                    f":(exclude){name}/**",
+                    f":(exclude)**/{name}/**",
+                )
+            ]
+            exclusions.extend(
+                f":(exclude)**/*{suffix}" for suffix in sorted(IGNORED_SUFFIXES)
             )
+            command.extend(["--", ".", *exclusions])
+        try:
+            value = self._git_output(workspace, command)
         except (FileNotFoundError, subprocess.CalledProcessError):
             return []
         return [line for line in value.splitlines() if line.strip()]
@@ -4833,18 +4725,65 @@ class FileSearchRuntime:
         except (FileNotFoundError, subprocess.CalledProcessError):
             return None
 
-    def _checkout_git_revision(self, workspace: Path, revision: str) -> None:
+    def _restore_candidate_artifact(
+        self,
+        record: CandidateRecord,
+        metric_name: str,
+        revision: str,
+        message: str,
+    ) -> str:
+        workspace = record.task.workspace
+        self._assert_results_tsv_unchanged(record, metric_name)
+        ledger_text = self._render_results_tsv(record.results_ledger, metric_name)
         try:
-            subprocess.check_call(
-                ["git", "checkout", "-q", "--detach", revision],
-                cwd=workspace,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+            self._git_output(
+                workspace,
+                [
+                    "git",
+                    "restore",
+                    f"--source={revision}",
+                    "--staged",
+                    "--worktree",
+                    "--",
+                    ".",
+                ],
             )
+            write_text(self._results_tsv_path(workspace), ledger_text)
+            self._git_output(
+                workspace,
+                ["git", "add", "--", RESULTS_TSV_RELATIVE_PATH],
+            )
+            staged_returncode = self._git_returncode(
+                workspace,
+                ["git", "diff", "--cached", "--quiet"],
+            )
+            if staged_returncode == 1:
+                self._git_output(
+                    workspace,
+                    [
+                        "git",
+                        "-c",
+                        "user.name=goal-plus",
+                        "-c",
+                        "user.email=goal-plus@example.invalid",
+                        "commit",
+                        "-q",
+                        "--no-verify",
+                        "-m",
+                        message,
+                    ],
+                )
+            elif staged_returncode != 0:
+                raise RuntimeError("could not inspect staged restoration")
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             raise RuntimeError(
-                f"failed to checkout candidate revision {revision}"
+                f"failed to restore candidate artifact from {revision}"
             ) from exc
+        self._assert_results_tsv_unchanged(record, metric_name)
+        git_head = self._git_head(workspace)
+        if git_head is None:
+            raise RuntimeError("candidate restoration produced no Git HEAD")
+        return git_head
 
     def _hash_tree(
         self,
@@ -5022,6 +4961,83 @@ class FileSearchRuntime:
 
     def _candidate_dir(self, run_id: str, candidate_id: str) -> Path:
         return self._run_dir(run_id) / "candidates" / candidate_id
+
+    def _candidate_iteration_plan_path(
+        self,
+        run_id: str,
+        candidate_id: str,
+        iteration: int,
+    ) -> Path:
+        return (
+            self._candidate_dir(run_id, candidate_id)
+            / "plans"
+            / f"iteration-{iteration:04d}.json"
+        )
+
+    def _load_candidate_iteration_plan(
+        self,
+        run_id: str,
+        candidate_id: str,
+        iteration: int,
+    ) -> CandidateIterationPlan | None:
+        path = self._candidate_iteration_plan_path(
+            run_id, candidate_id, iteration
+        )
+        if not path.exists():
+            return None
+        return CandidateIterationPlan.model_validate(load_json(path))
+
+    def _write_candidate_iteration_plan(
+        self,
+        plan: CandidateIterationPlan,
+    ) -> None:
+        write_json(
+            self._candidate_iteration_plan_path(
+                plan.run_id, plan.candidate_id, plan.iteration
+            ),
+            plan.model_dump(mode="json"),
+        )
+
+    @staticmethod
+    def _global_plan_entry(
+        plan: CandidateIterationPlan,
+        iteration: IterationRecord | None,
+    ) -> dict[str, Any]:
+        return {
+            "candidate_id": plan.candidate_id,
+            "iteration": plan.iteration,
+            "description": plan.description,
+            "score": iteration.score if iteration is not None else None,
+            "disposition": (
+                iteration.disposition if iteration is not None else None
+            ),
+            "commit": iteration.git_head if iteration is not None else None,
+        }
+
+    def _global_plan_view(self, run_id: str) -> list[dict[str, Any]]:
+        results = {
+            (record.candidate_id, iteration.iteration): iteration
+            for record in self._load_candidate_records(run_id)
+            for iteration in record.iterations
+            if iteration.agent_session_id is not None
+        }
+        plans = []
+        candidates_dir = self._run_dir(run_id) / "candidates"
+        for path in sorted(candidates_dir.glob("*/plans/iteration-*.json")):
+            plans.append(CandidateIterationPlan.model_validate(load_json(path)))
+        plans.sort(
+            key=lambda plan: (
+                plan.created_at,
+                plan.candidate_id,
+                plan.iteration,
+            )
+        )
+
+        view = []
+        for plan in plans:
+            result = results.get((plan.candidate_id, plan.iteration))
+            view.append(self._global_plan_entry(plan, result))
+        return view
 
     def _plan_dir(self, run_id: str) -> Path:
         return self._run_dir(run_id) / "plans"

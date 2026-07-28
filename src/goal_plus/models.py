@@ -50,24 +50,23 @@ class Budget(SearchModel):
     max_candidates: int = Field(
         gt=0,
         description=(
-            "Hard cap on total distinct candidate workspaces across the entire "
-            "frozen search run and all planning rounds. This is not a per-round "
-            "limit and cannot be increased after freeze. Setting it equal to "
-            "max_parallel normally permits only one full batch."
+            "整个冻结 Search run 和所有规划轮次中不同候选工作区总数的硬上限。"
+            "这不是单轮限制，冻结后不能增加。将其设为与 max_parallel 相同通常只允许"
+            "一个完整 batch。"
         ),
     )
     max_parallel: int = Field(
         gt=0,
         description=(
-            "Maximum candidates that search_plan_next may place in one planned "
-            "batch. This controls batch width or recommended concurrency, not "
-            "the total candidate count."
+            "search_plan_next 在一个规划 batch 中最多可放置的候选数。"
+            "它控制 batch 宽度或建议并发度，不控制候选总数。"
         ),
     )
     max_tokens: int | None = Field(default=None, gt=0)
 
 
 WorkspaceBackend = Literal["copy", "git_worktree"]
+IterationDisposition = Literal["keep", "discard", "failure"]
 VerifierInvalidationReason = Literal[
     "verifier_contract_invalid",
     "verifier_coverage_inadequate",
@@ -179,16 +178,14 @@ class VerifierCommand(SearchModel):
         default=None,
         min_length=1,
         description=(
-            "Optional host-wide exclusive resource name. Verifier commands "
-            "with the same value execute serially across candidates and runs."
+            "可选的 host 级独占资源名。值相同的 verifier 命令会跨候选和 run 串行执行。"
         ),
     )
     feedback_policy: FeedbackPolicy = FeedbackPolicy.VISIBLE_TO_WORKERS
     expected_outputs: list[str] = Field(
         default_factory=list,
         description=(
-            "Expected artifact path or glob strings in the candidate workspace; "
-            "this field does not parse verifier stdout metrics."
+            "候选工作区中预期的产物路径或 glob；此字段不解析 verifier stdout metric。"
         ),
     )
 
@@ -500,6 +497,10 @@ class ScoreReport(SearchModel):
     touched_denied_files: bool = False
     changed_outside_allowed: bool = False
     hardcoding_suspected: bool = False
+    disposition: IterationDisposition | None = None
+    best_iteration: int | None = Field(default=None, ge=1)
+    best_git_head: str | None = None
+    workspace_git_head_after_settlement: str | None = None
 
 
 class PromotionEvidence(SearchModel):
@@ -514,7 +515,6 @@ class PromotionEvidence(SearchModel):
 class IterationRecord(SearchModel):
     iteration: int
     agent_session_id: str | None = None
-    intervention_plan_id: str | None = None
     score: float | None = None
     process_passed: bool | None = None
     git_head: str | None = None
@@ -530,7 +530,29 @@ class IterationRecord(SearchModel):
     artifact_hash: str | None = None
     metrics: dict[str, Any] = Field(default_factory=dict)
     log_paths: list[str] = Field(default_factory=list)
+    disposition: IterationDisposition | None = None
+    restored_to_iteration: int | None = Field(default=None, ge=1)
+    restored_to_git_head: str | None = None
+    workspace_git_head_after_settlement: str | None = None
     created_at: str
+
+
+class CandidateIterationPlan(SearchModel):
+    run_id: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1)
+    iteration: int = Field(ge=1)
+    agent_session_id: str = Field(min_length=1)
+    description: str = Field(min_length=1, max_length=240)
+    created_at: str
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def normalize_description(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if "\n" in value or "\r" in value:
+            raise ValueError("plan description must be one line")
+        return " ".join(value.strip().split())
 
 
 class ResultLedgerEntry(SearchModel):

@@ -100,16 +100,19 @@ low score or lack of improvement. A terminal event
 is published only after the driver has completed the worker, bound its handle,
 and run final verification.
 
-There is no public synchronous candidate/batch runner and no manual submit
-tool. Pool open owns the initial fixed lane set; pool continue owns later
-dispatches for those same lanes.
+There is no public synchronous candidate/batch runner. Pool open owns the
+initial fixed lane set; pool continue owns later dispatches for those same
+lanes. `search_submit_iteration_plan` only records a worker's next immutable
+attempt description; it is not a candidate or pool submission API.
 
 ## Worker Boundary
 
 Worker-role extension tools are limited to `search_get_agent_context`,
-`search_run_verifier`, and `search_list_iterations`. The worker operates only
-inside the returned workspace, creates an early real artifact, runs verifier
-iterations, and writes a bounded `.tmp/handoff.json`.
+`search_get_global_plan`, `search_submit_iteration_plan`,
+`search_run_verifier`, and `search_list_iterations`. Each iteration reads the
+Global Plan, submits one sentence while the workspace is still settled, edits
+only inside the returned workspace, runs the verifier, and updates a bounded
+`.tmp/handoff.json`.
 
 The persisted native session is the normal continuation surface. The handoff,
 candidate Git state, and `.gp` verifier history remain the durable recovery

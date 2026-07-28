@@ -141,6 +141,14 @@ def test_search_spec_adapter_verifies_case_workspace(tmp_path: Path) -> None:
     assert spec["metric_name"] == "accuracy"
     assert spec["edit_surface"]["allow"] == ["answer.json"]
     assert spec["strategy"]["worker_host"] == "pi-rpc"
+    assert spec["objective"].startswith("解答 benchmark case")
+    assert spec["root_hypotheses"] == [
+        "直接推理，只写最终答案标签或数字。",
+        "写入 answer.json 前仔细检查选项。",
+    ]
+    assert "预期 JSON 结构" in (workspace.source_path / "README.md").read_text(
+        encoding="utf-8"
+    )
 
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(

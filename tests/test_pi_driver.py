@@ -171,11 +171,15 @@ def test_run_pi_search_candidate_skips_duplicate_final_verify_for_infrastructure
     candidate = runtime.start_batch(run_id, plan.plan_id)[0]
 
     def fake_worker(launch: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+        worker_runtime = FileSearchRuntime(runtime.root_dir)
+        worker_runtime.get_agent_context(launch["agent_session_id"])
+        worker_runtime.submit_iteration_plan(
+            launch["agent_session_id"], "Trigger verifier infrastructure failure"
+        )
         Path(launch["cwd"], "initial_program.py").write_text(
             "VALUE = 7\n",
             encoding="utf-8",
         )
-        worker_runtime = FileSearchRuntime(runtime.root_dir)
         report = worker_runtime.run_verifier(
             run_id,
             candidate.candidate_id,

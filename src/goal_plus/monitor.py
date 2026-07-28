@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
-from math import isfinite
-import re
 import time
 from pathlib import Path
 from typing import Any
@@ -69,89 +67,9 @@ def _parse_utc_timestamp(value: str | None) -> float | None:
         return None
 
 
-_NUMBER_TEXT = re.compile(
-    r"^[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$"
-)
-
-
 def _number(value: Any) -> float | None:
     if isinstance(value, int | float) and not isinstance(value, bool):
-        number = float(value)
-        return number if isfinite(number) else None
-    if isinstance(value, str):
-        text = value.strip()
-        if not _NUMBER_TEXT.fullmatch(text):
-            return None
-        number = float(text.replace(",", ""))
-        return number if isfinite(number) else None
-    return None
-
-
-def _metric_token(value: Any) -> str:
-    return "".join(character for character in str(value).casefold() if character.isalnum())
-
-
-def _metric_number(value: Any, metric_name: str) -> float | None:
-    number = _number(value)
-    if number is not None or not isinstance(value, str):
-        return number
-    parts = value.strip().split(maxsplit=1)
-    if len(parts) != 2:
-        return None
-    number = _number(parts[0])
-    unit = _metric_token(parts[1])
-    metric = _metric_token(metric_name)
-    if number is None or unit.rstrip("s") != metric.rstrip("s"):
-        return None
-    return number
-
-
-def _metric_payload_value(payload: Any, metric_name: str, *, depth: int = 0) -> float | None:
-    if not isinstance(payload, dict):
-        return _metric_number(payload, metric_name)
-    if depth > 4:
-        return None
-
-    metric = _metric_token(metric_name)
-    by_key = {_metric_token(key): value for key, value in payload.items()}
-    for key in (metric, f"baseline{metric}", f"{metric}baseline"):
-        if key in by_key:
-            value = _metric_number(by_key[key], metric_name)
-            if value is not None:
-                return value
-
-    for key in (
-        "metrics",
-        "metricvalues",
-        "measurement",
-        "measurements",
-        "observed",
-        "result",
-        "results",
-    ):
-        nested = by_key.get(key)
-        if isinstance(nested, dict):
-            value = _metric_payload_value(nested, metric_name, depth=depth + 1)
-            if value is not None:
-                return value
-
-    declared_metric = payload.get("metric_name") or payload.get("name") or payload.get("unit")
-    declared_matches = (
-        declared_metric is not None
-        and _metric_token(declared_metric).rstrip("s") == metric.rstrip("s")
-    )
-    if (depth == 0 and declared_metric is None) or declared_matches:
-        for key in (
-            "baseline_score",
-            "aggregate_score",
-            "measured_value",
-            "metric_value",
-            "score",
-            "value",
-        ):
-            value = _metric_number(payload.get(key), metric_name)
-            if value is not None:
-                return value
+        return float(value)
     return None
 
 
@@ -210,16 +128,8 @@ def _metric_context(
         metric_payload = draft.get("metric")
         correctness = draft.get("correctness_gate")
         if isinstance(baseline_payload, dict):
-            baseline = _metric_payload_value(
-                baseline_payload,
-                frozen.spec.metric_name,
-            )
+            baseline = _number(baseline_payload.get(frozen.spec.metric_name))
         if isinstance(metric_payload, dict):
-            if baseline is None and "baseline" in metric_payload:
-                baseline = _metric_payload_value(
-                    metric_payload["baseline"],
-                    frozen.spec.metric_name,
-                )
             target = _number(metric_payload.get("target"))
         if target is None and isinstance(correctness, dict):
             target = _number(correctness.get("score_threshold"))
@@ -859,12 +769,20 @@ def goal_plus_monitor_snapshot(
                 ),
                 "verifier_count": len(candidate.iterations),
                 "last_score": last_iteration.score if last_iteration else None,
+                "last_disposition": (
+                    last_iteration.disposition if last_iteration else None
+                ),
                 "last_verifier_at": last_iteration.created_at if last_iteration else None,
                 "last_git_head": last_iteration.git_head if last_iteration else None,
                 "best_iteration": best_iteration.iteration if best_iteration else None,
                 "best_iteration_score": best_iteration.score if best_iteration else None,
                 "best_iteration_at": best_iteration.created_at if best_iteration else None,
                 "best_iteration_git_head": best_iteration.git_head if best_iteration else None,
+                "workspace_git_head_after_settlement": (
+                    last_iteration.workspace_git_head_after_settlement
+                    if last_iteration
+                    else None
+                ),
                 "changed_files": candidate.detected_changed_files,
                 "touched_denied_files": candidate.touched_denied_files,
                 "changed_outside_allowed": candidate.changed_outside_allowed,

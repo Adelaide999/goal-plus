@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from goal_plus.goal_plus import FileGoalPlusRuntime
 from goal_plus.models import (
@@ -15,11 +15,6 @@ from goal_plus.models import (
 )
 from goal_plus.monitor import goal_plus_monitor_snapshot
 from goal_plus.runtime import FileSearchRuntime
-from goal_plus.space_agent import (
-    DEFAULT_SCHEMA_CONSOLIDATION_INTERVAL,
-    InterventionPlanProposal,
-    SearchSpacePlanCard,
-)
 
 
 class SearchTools:
@@ -147,6 +142,19 @@ class SearchTools:
     def search_get_agent_context(self, agent_session_id: str) -> dict[str, Any]:
         return self.runtime.get_agent_context(agent_session_id)
 
+    def search_get_global_plan(
+        self,
+        agent_session_id: str,
+    ) -> list[dict[str, Any]]:
+        return self.runtime.get_global_plan(agent_session_id)
+
+    def search_submit_iteration_plan(
+        self,
+        agent_session_id: str,
+        description: str,
+    ) -> dict[str, Any]:
+        return self.runtime.submit_iteration_plan(agent_session_id, description)
+
     def search_get_agent_observability(self, agent_session_id: str) -> dict[str, Any]:
         return self.runtime.get_agent_observability(agent_session_id)
 
@@ -154,62 +162,18 @@ class SearchTools:
         self,
         run_id: str,
         candidate_id: str,
-        scope: str = "process",
+        scope: Literal["process", "promotion"] = "process",
         agent_session_id: str | None = None,
         hypothesis: str | None = None,
-        intervention_plan_id: str | None = None,
     ) -> dict[str, Any]:
         report = self.runtime.run_verifier(
             run_id,
             candidate_id,
-            scope=scope,  # type: ignore[arg-type]
+            scope=scope,
             agent_session_id=agent_session_id,
             hypothesis=hypothesis,
-            intervention_plan_id=intervention_plan_id,
         )
         return report.model_dump(mode="json")
-
-    def search_space_open(
-        self,
-        run_id: str,
-        mode: str = "enforce",
-        schema_path: str | None = None,
-        experiment_id: str | None = None,
-        reviewer_model: str = "gpt-5.6-sol",
-        reviewer_reasoning_effort: str = "medium",
-        reviewer_timeout_seconds: int = 180,
-        schema_consolidation_interval: int = DEFAULT_SCHEMA_CONSOLIDATION_INTERVAL,
-    ) -> dict[str, Any]:
-        return self.runtime.open_search_space(
-            run_id,
-            mode=mode,  # type: ignore[arg-type]
-            schema_path=schema_path,
-            experiment_id=experiment_id,
-            reviewer_model=reviewer_model,
-            reviewer_reasoning_effort=reviewer_reasoning_effort,  # type: ignore[arg-type]
-            reviewer_timeout_seconds=reviewer_timeout_seconds,
-            schema_consolidation_interval=schema_consolidation_interval,
-        )
-
-    def search_space_propose(
-        self,
-        agent_session_id: str,
-        proposal: dict[str, Any] | SearchSpacePlanCard | InterventionPlanProposal,
-    ) -> dict[str, Any]:
-        if isinstance(proposal, InterventionPlanProposal):
-            parsed = proposal
-        elif isinstance(proposal, SearchSpacePlanCard):
-            parsed = proposal.to_proposal()
-        else:
-            try:
-                parsed = SearchSpacePlanCard.model_validate(proposal).to_proposal()
-            except ValueError:
-                # Backward-readable path for frozen B1/B4 callers.
-                parsed = InterventionPlanProposal.model_validate(proposal)
-        return self.runtime.propose_search_space_plan(agent_session_id, parsed)
-
-    def search_space_status(self, run_id: str) -> dict[str, Any]:
-        return self.runtime.search_space_status(run_id)
 
     def search_list_iterations(
         self,

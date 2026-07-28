@@ -550,7 +550,7 @@ def test_run_pi_rpc_worker_steers_once_before_hard_deadline(
 
     steer_commands = [command for command in commands if command["type"] == "steer"]
     assert len(steer_commands) == 1
-    assert "final search_run_verifier" in steer_commands[0]["message"]
+    assert "最后运行一次 search_run_verifier" in steer_commands[0]["message"]
     assert handle["metadata"]["soft_closeout_seconds"] == 6
     assert handle["metadata"]["soft_closeout_sent"] is True
     assert handle["metadata"]["timed_out"] is False

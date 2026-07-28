@@ -125,8 +125,8 @@ def test_expected_outputs_schema_describes_artifact_paths_not_stdout_parser() ->
     schema = VerifierCommand.model_json_schema()
     description = schema["properties"]["expected_outputs"]["description"]
 
-    assert "artifact path or glob strings" in description
-    assert "does not parse verifier stdout metrics" in description
+    assert "产物路径或 glob" in description
+    assert "不解析 verifier stdout metric" in description
 
 
 def test_verifier_resource_lock_rejects_blank_names() -> None:

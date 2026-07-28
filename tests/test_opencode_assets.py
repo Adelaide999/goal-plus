@@ -31,21 +31,21 @@ def test_search_skill_is_internal_search_mode_engine() -> None:
     skill = (ROOT / ".opencode" / "skills" / "search" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "name: search" in skill
-    assert "internal Search Mode engine" in skill
+    assert "内部 Search Mode 引擎" in skill
     assert "goal-plus_search_freeze_spec" in skill
     assert "goal-plus_search_bind_opencode_session" in skill
     assert "goal-plus_search_continue_agent_session" in skill
     assert "goal-plus_search_redispatch_candidate" in skill
-    assert "Do not start candidate execution before" in skill
+    assert "完成预检前启动候选执行" in skill
     assert "k_module" in skill
-    assert "## Verifier Freeze Contract" in skill
-    assert 'numeric `spec.metric_name`' in skill
+    assert "## Verifier 冻结契约" in skill
+    assert '有限数值类型的 `spec.metric_name`' in skill
     assert ".goal-plus-verifiers/" in skill
-    assert "`expected_outputs` accepts" in skill
-    assert "existing `frozen_spec_id`" in skill
+    assert "`expected_outputs` 只接受" in skill
+    assert "现有 `frozen_spec_id`" in skill
     assert "GOAL_PLUS_VERIFIER_TMPDIR" in skill
     assert "VerifierWorkspaceSideEffect" in skill
-    assert "fixed `/tmp`" in skill
+    assert "固定 `/tmp`" in skill
 
 
 def test_opencode_search_skill_keeps_opencode_bind_contract() -> None:
@@ -65,14 +65,14 @@ def test_opencode_search_skill_documents_whole_run_budget_planning() -> None:
     normalized = " ".join(skill.split())
 
     assert_common_budget_planning_claims(skill)
-    assert "immutable total candidate-workspace cap" in normalized
+    assert "不可变的候选工作区总上限" in normalized
     assert "`ceil(max_candidates / max_parallel)`" in skill
     assert "`max_candidates = rounds * max_parallel`" in skill
-    assert "set `max_candidates=15`" in skill
-    assert "default value 4 as the whole-run budget" in normalized
-    assert "Do not call `search_select` while" in normalized
-    assert "same-candidate" in normalized
-    assert "not an obligation to launch more work" in normalized
+    assert "`max_candidates=15`" in skill
+    assert "默认值 4 当作整个 run 预算" in normalized
+    assert "不要调用 `search_select`" in normalized
+    assert "同候选 continuation" in normalized
+    assert "不代表必须启动更多工作" in normalized
 
 
 def test_goal_any_optimize_command_is_goal_plus_alias() -> None:
@@ -80,12 +80,12 @@ def test_goal_any_optimize_command_is_goal_plus_alias() -> None:
         encoding="utf-8"
     )
 
-    assert "description: Legacy alias for /goal-plus optimization goals" in command
+    assert "description: /goal-plus 优化目标的旧兼容别名" in command
     assert "agent: goal-plus-orchestrator" in command
     assert "subtask: false" in command
-    assert "Load the `goal-plus` skill" in command
+    assert "加载 `goal-plus` skill" in command
     assert "@.opencode/skills/goal-plus/SKILL.md" in command
-    assert "Do not bypass `/goal-plus` triage" in command
+    assert "不要绕过 `/goal-plus` triage" in command
     assert "$ARGUMENTS" in command
 
 
@@ -94,9 +94,9 @@ def test_goal_plus_command_references_goal_plus_skill() -> None:
         encoding="utf-8"
     )
 
-    assert "description: Run a goal with optional Agentic Search upgrade" in command
+    assert "description: 运行目标，并可选择升级到 Agentic Search" in command
     assert "agent: goal-plus-orchestrator" in command
-    assert "Load the `goal-plus` skill" in command
+    assert "加载 `goal-plus` skill" in command
     assert "@.opencode/skills/goal-plus/SKILL.md" in command
     assert "goal_plus_create" in command
     assert "$ARGUMENTS" in command
@@ -121,20 +121,21 @@ def test_opencode_goal_plus_skill_documents_progressive_modes() -> None:
     assert "Goal Mode" in combined
     assert "Spec Discovery Mode" in combined
     assert "Search Mode" in combined
-    assert "Autonomous Search Upgrade" in combined
-    assert "Do not ask the user" in combined
-    assert "User hints are useful but" in combined
-    assert "not Search admission requirements" in combined
-    assert "Do not create a SearchSpec in Goal Mode" in combined
-    assert "call the internal `search` skill" in combined
-    assert "final raw-goal audit" in combined
-    assert "Never generate an intermediate Goal Plus report" in combined
-    assert "Only after the Goal Plus record is terminal" in combined
+    assert "自主 Search 升级" in combined
+    assert "不要要求用户" in combined
+    assert "用户提示有用但可选" in combined
+    assert "不是 Search 准入要求" in combined
+    assert "不要在 Goal Mode 创建 SearchSpec" in combined
+    assert "调用内部 `search` skill" in combined
+    assert "最终原始目标审计" in combined
+    assert "绝不能生成中间 Goal Plus 报告" in combined
+    assert "只有 Goal Plus 记录达到终态" in combined
     assert "mode=autonomous" in skill
     assert "mode=probe" in skill
-    assert "canonical final line in `raw_goal`" in skill
-    assert "worker lease ending never completes" in skill
-    assert "not enforced by OpenCode itself" in combined
+    assert "`raw_goal`" in skill
+    assert "一行规范中文提示" in skill
+    assert "lease 结束绝不会完成父级目标" in skill
+    assert "OpenCode 本身不会强制执行" in combined
     assert ".goal-plus-verifiers/" in skill
     assert "`expected_outputs`" in skill
 
@@ -152,7 +153,7 @@ def test_search_skill_uses_foreground_tasks() -> None:
     removed_launch_key = "back" + "ground_required"
     assert removed_task_arg not in combined
     assert removed_launch_key not in combined
-    assert "no `timeout` parameter" in combined
+    assert "没有受支持的 `timeout` 参数" in combined
 
 
 def test_subagent_contract_derives_identifiers_from_context() -> None:
@@ -165,12 +166,12 @@ def test_subagent_contract_derives_identifiers_from_context() -> None:
     )
 
     combined = skill + "\n" + agent + "\n" + orchestrator
-    assert "Do not hard-code `run_id`, `candidate_id`, or workspace paths" in combined
+    assert "不要硬编码 `run_id`、`candidate_id` 或工作区路径" in combined
     assert "context.run_id" in combined
     assert "context.candidate_id" in combined
     assert "context.workspace" in combined
     assert "search_get_agent_context" in combined
-    assert "The only required MCP calls" in combined
+    assert "唯一必需 MCP 调用" in combined
 
 
 def test_k_module_example_spec_is_valid_json() -> None:
@@ -215,17 +216,17 @@ def test_search_candidate_agent_documents_autoresearch_loop() -> None:
         encoding="utf-8"
     )
 
-    assert "## Iteration Loop" in agent
+    assert "## Iteration 循环" in agent
     assert "git init" in agent
     assert "search_run_verifier" in agent
     assert "context.workspace/results.tsv" in agent
-    assert "exactly one validated `results.tsv` row" in agent
+    assert "且只追加一条已验证的" in agent
     assert "hypothesis=" in agent
     assert "agent_session_id" in agent
-    assert "assigned candidate idea as a hypothesis" in agent
-    assert "any promising direction" in agent
-    assert "fixed artifact count" in agent
-    assert "theoretical or structural limits" in agent
+    assert "把分配的候选思路当作假设" in agent
+    assert "有希望的方向" in agent
+    assert "固定产物数量" in agent
+    assert "理论或结构限制" in agent
 
 
 def test_opencode_search_skill_documents_tier_escalation_and_resume_history() -> None:
@@ -236,15 +237,15 @@ def test_opencode_search_skill_documents_tier_escalation_and_resume_history() ->
         encoding="utf-8"
     )
 
-    assert "Main-Agent Dispatch Policy" in skill
+    assert "主 Agent 派发 Policy" in skill
     assert "SearchCandidateAgentFlash" in skill
     assert "SearchCandidateAgentDeep" in skill
-    assert "previous flash/default worker returned without any `search_run_verifier`" in skill
-    assert "History is runtime-owned, not `plan.md`" in skill
+    assert "先前 flash/default worker 未产生任何" in skill
+    assert "history 由运行时拥有，不是 `plan.md`" in skill
     assert "context.history" in skill
     assert "context.iterations" in skill
     assert "search_redispatch_candidate" in skill
-    assert "do not rely on chat transcript" in agent
+    assert "不要依赖聊天 transcript" in agent
 
 
 @pytest.mark.parametrize(
@@ -263,9 +264,9 @@ def test_search_candidate_agent_tier_has_expected_step_cap(
     assert f"steps: {expected_steps}" in text
     assert "mode: subagent" in text
     assert "candidate_action=stop_and_report" in text
-    assert "return immediately" in text
-    assert "assigned candidate idea as a hypothesis" in text
-    assert "theoretical or structural limits" in text
+    assert "立即返回" in text
+    assert "把分配的候选思路当作假设" in text
+    assert "理论或结构限制" in text or "资源瓶颈" in text
 
 
 @pytest.mark.parametrize(
@@ -332,8 +333,8 @@ def test_opencode_goal_plus_assets_document_multiple_search_tasks() -> None:
         ROOT / ".opencode" / "agents" / "goal-plus-orchestrator.md"
     ).read_text(encoding="utf-8")
 
-    assert "same" in skill
+    assert "同一个" in skill
     assert "`goal_plus_id`" in skill
-    assert "`search_tasks` is the append-only task history" in skill
-    assert "another verifier-backed search" in orchestrator
-    assert "new `run_id`" in orchestrator
+    assert "`search_tasks` 是仅追加任务历史" in skill
+    assert "另一次有 verifier 支持的 Search" in orchestrator
+    assert "新 `run_id`" in orchestrator

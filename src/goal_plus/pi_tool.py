@@ -33,6 +33,8 @@ SEARCH_TOOL_NAMES = {
     "search_bind_agent_handle",
     "search_continue_agent_session",
     "search_get_agent_context",
+    "search_get_global_plan",
+    "search_submit_iteration_plan",
     "search_get_agent_observability",
     "search_run_verifier",
     "search_list_iterations",

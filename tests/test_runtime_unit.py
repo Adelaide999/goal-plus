@@ -775,7 +775,7 @@ def test_plan_next_and_start_batch_record_plan_metadata(tmp_path: Path) -> None:
     assert plan.planned_k == 2
     assert [task.candidate_id for task in tasks] == ["c001", "c002"]
     assert tasks[0].plan_id == "plan_001"
-    assert tasks[0].proposal.intent == "Independent candidate c001"  # type: ignore[union-attr]
+    assert tasks[0].proposal.intent == "独立候选 c001"  # type: ignore[union-attr]
     assert (tasks[0].workspace / ".tmp").is_dir()
     assert any(".tmp" in instruction for instruction in tasks[0].instructions)
 
@@ -850,22 +850,23 @@ def test_worker_policy_documents_host_launch_contract(tmp_path: Path) -> None:
     assert plan.worker_policy["subagent_type"] == "SearchCandidateAgent"
     assert "worker_mode" not in tasks[0].strategy_metadata
     assert any(
-        "Pass context.agent_session_id to search_run_verifier" in instruction
+        "把 context.agent_session_id 传给 search_run_verifier" in instruction
         for instruction in tasks[0].instructions
     )
     assert any(
         "search_run_verifier" in instruction for instruction in tasks[0].instructions
     )
     assert any(
-        "git repository has already been initialized" in instruction
+        "runtime 拥有 verifier-backed iteration 的提交和回滚" in instruction
+        and "不要自行 reset" in instruction
         for instruction in tasks[0].instructions
     )
     assert any(
-        "iteration log" in instruction for instruction in tasks[0].instructions
+        "iteration 日志" in instruction for instruction in tasks[0].instructions
     )
     combined_instructions = "\n".join(tasks[0].instructions)
-    assert "Complete and verify a candidate early" in combined_instructions
-    assert "leave enough time to return a concise summary" in combined_instructions
+    assert "尽早完成并验证候选" in combined_instructions
+    assert "留出足够时间返回简洁摘要" in combined_instructions
     assert "When steps run out the host will ask you" not in combined_instructions
 
 
@@ -905,6 +906,18 @@ def test_promotion_verifier_is_selected_parent_only(tmp_path: Path) -> None:
     plan = runtime.plan_next(run_id, requested_k=1)
     task = runtime.start_batch(run_id, plan.plan_id)[0]
     session = runtime.start_agent_session(run_id, task.candidate_id)
+
+    with pytest.raises(ValueError, match="scope must be"):
+        runtime.run_verifier(
+            run_id,
+            task.candidate_id,
+            scope="fused vector recurrence",  # type: ignore[arg-type]
+            agent_session_id=session.agent_session_id,
+        )
+    untouched = runtime._load_candidate_record(run_id, task.candidate_id)
+    assert untouched.iterations == []
+    assert untouched.promotion_report is None
+
     runtime.run_verifier(run_id, task.candidate_id)
 
     with pytest.raises(RuntimeError, match="selected by search_select"):
@@ -1457,8 +1470,8 @@ def test_start_agent_session_returns_codex_launch_payload(tmp_path: Path) -> Non
 
     session = runtime.start_agent_session(run_id, task.candidate_id)
 
-    assert "theoretical or structural limits" in session.launch["message"]
-    assert "Before returning, create `.tmp/handoff.json`" in session.launch["message"]
+    assert "理论或结构限制" in session.launch["message"]
+    assert "返回前，在候选工作区创建 `.tmp/handoff.json`" in session.launch["message"]
 
     assert session.host == "codex"
     assert session.host_handle.host == "codex"
@@ -1619,8 +1632,8 @@ def test_redispatch_candidate_overrides_codex_worker_budget(tmp_path: Path) -> N
         "closeout_tool": "send_message",
         "closeout_target": redispatched.launch["task_name"],
         "closeout_message": (
-            "Worker deadline is approaching. Stop starting new work, run one final "
-            "search_run_verifier if needed, write .tmp/handoff.json, and return a concise summary."
+            "Worker 的截止时间临近。停止启动新工作；如有需要，最后运行一次 "
+            "search_run_verifier，写入 .tmp/handoff.json，并返回简洁摘要。"
         ),
         "final_wait_timeout_ms": 6000,
         "on_exceed": "interrupt",
@@ -1669,8 +1682,8 @@ def test_codex_worker_budget_flows_to_watchdog_launch_payload(tmp_path: Path) ->
         "closeout_tool": "send_message",
         "closeout_target": session.launch["task_name"],
         "closeout_message": (
-            "Worker deadline is approaching. Stop starting new work, run one final "
-            "search_run_verifier if needed, write .tmp/handoff.json, and return a concise summary."
+            "Worker 的截止时间临近。停止启动新工作；如有需要，最后运行一次 "
+            "search_run_verifier，写入 .tmp/handoff.json，并返回简洁摘要。"
         ),
         "final_wait_timeout_ms": 45000,
         "on_exceed": "interrupt",
@@ -2066,8 +2079,8 @@ def test_codex_continue_agent_session_uses_bound_worker_and_budget(tmp_path: Pat
     assert continued.launch["tool"] == "followup_task"
     assert continued.launch["target"] == "search_agent_0001"
     assert continued.launch["budget_control"]["max_runtime_seconds"] == 900
-    assert "theoretical or structural limits" in continued.launch["message"]
-    assert "Before returning, create `.tmp/handoff.json`" in continued.launch["message"]
+    assert "理论或结构限制" in continued.launch["message"]
+    assert "返回前，在候选工作区创建 `.tmp/handoff.json`" in continued.launch["message"]
 
 
 def test_claude_continue_agent_session_uses_send_message_payload(tmp_path: Path) -> None:
@@ -2363,7 +2376,7 @@ def test_get_agent_context_has_only_authoritative_worker_fields(tmp_path: Path) 
     ):
         assert forbidden not in context, f"get_agent_context must not return {forbidden}"
     assert context["candidate_task"]["candidate_id"] == tasks[0].candidate_id
-    assert "history" in context
+    assert "history" not in context
     assert "iterations" in context
 
 
@@ -2528,7 +2541,7 @@ def test_random_strategy_gen1_independent_bootstrap(tmp_path: Path) -> None:
     plan = runtime.plan_next(run_id, 2)
 
     assert plan.requires_agent_proposals is False
-    assert plan.strategy_trace["selection_rule"] == "independent source branches"
+    assert plan.strategy_trace["selection_rule"] == "独立源码分支"
     assert "parent_candidate_id" not in plan.strategy_trace
     assert len(plan.work_orders) == 2
     assert all(wo.metadata["strategy"] == "parallel_loops" for wo in plan.work_orders)
@@ -2552,7 +2565,7 @@ def test_random_strategy_name_normalizes_case_and_dash(
 
         plan = runtime.plan_next(run_id, 2)
 
-        assert plan.strategy_trace["selection_rule"] == "independent source branches"
+        assert plan.strategy_trace["selection_rule"] == "独立源码分支"
         assert plan.requires_agent_proposals is False
 
 
@@ -2716,6 +2729,7 @@ def test_run_verifier_records_edit_surface_violation_in_iteration(
     tasks = runtime.start_batch(run_id, plan.plan_id)
     candidate_id = tasks[0].candidate_id
     session = runtime.start_agent_session(run_id, candidate_id, {"goal": "cheat"})
+    runtime.submit_iteration_plan(session.agent_session_id, "Probe a denied edit")
 
     # Worker touches a denied file.
     (tasks[0].workspace / "config.yaml").write_text("name: tampered\n", encoding="utf-8")
@@ -2767,7 +2781,14 @@ def test_run_verifier_reports_and_cleans_verifier_workspace_side_effect(
     assert result.metrics["infrastructure_failure"] is True
     assert result.metrics["candidate_action"] == "stop_and_report"
     assert not (workspace / ".goal-plus-verifiers/generated.bin").exists()
-    assert (workspace / "initial_program.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert report.disposition == "failure"
+    assert (workspace / "initial_program.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+    attempt = runtime.list_iterations(run_id, candidate_id)[0]["git_head"]
+    assert subprocess.check_output(
+        ["git", "show", f"{attempt}:initial_program.py"],
+        cwd=workspace,
+        text=True,
+    ) == "VALUE = 1\n"
 
 
 def test_run_verifier_classifies_legacy_generated_verifier_file_as_infrastructure(
@@ -2787,9 +2808,14 @@ def test_run_verifier_classifies_legacy_generated_verifier_file_as_infrastructur
     assert result.failure_class == "VerifierWorkspaceSideEffect"
     assert result.metrics["infrastructure_failure"] is True
     assert result.metrics["candidate_action"] == "stop_and_report"
-    assert runtime._git_status(workspace) == [
-        "?? .goal-plus-verifiers/generated.bin"
-    ]
+    assert report.disposition == "failure"
+    assert runtime._git_status(workspace) == []
+    attempt = runtime.list_iterations(run_id, candidate_id)[0]["git_head"]
+    assert subprocess.check_output(
+        ["git", "show", f"{attempt}:.goal-plus-verifiers/generated.bin"],
+        cwd=workspace,
+        text=True,
+    ) == "legacy side effect"
 
 
 def test_run_verifier_records_failure_class_on_timeout(
@@ -2810,6 +2836,7 @@ def test_run_verifier_records_failure_class_on_timeout(
     tasks = runtime.start_batch(run_id, plan.plan_id)
     candidate_id = tasks[0].candidate_id
     session = runtime.start_agent_session(run_id, candidate_id, {"goal": "iterate"})
+    runtime.submit_iteration_plan(session.agent_session_id, "Measure timeout handling")
 
     def fake_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs["timeout"])
@@ -2864,6 +2891,7 @@ def test_run_verifier_records_iteration_with_agent_session_id(
     tasks = runtime.start_batch(run_id, plan.plan_id)
     candidate_id = tasks[0].candidate_id
     session = runtime.start_agent_session(run_id, candidate_id, {"goal": "iterate"})
+    runtime.submit_iteration_plan(session.agent_session_id, "Record session provenance")
 
     def fake_run(*args, **kwargs):
         return subprocess.CompletedProcess(
@@ -3482,11 +3510,13 @@ def test_results_tsv_is_committed_and_runtime_enforces_one_row_per_report(
     ).strip() == ""
 
     session = runtime.start_agent_session(run_id, candidate_id)
+    runtime.submit_iteration_plan(
+        session.agent_session_id, "measure inherited baseline"
+    )
     first = runtime.run_verifier(
         run_id,
         candidate_id,
         agent_session_id=session.agent_session_id,
-        hypothesis="measure inherited baseline",
     )
     assert first.process_passed is True
     first_text = results_path.read_text(encoding="utf-8")
@@ -3495,12 +3525,14 @@ def test_results_tsv_is_committed_and_runtime_enforces_one_row_per_report(
         "\tpass\tmeasure inherited baseline"
     )
 
+    runtime.submit_iteration_plan(
+        session.agent_session_id, "probe denied configuration change"
+    )
     (workspace / "config.yaml").write_text("name: denied edit\n", encoding="utf-8")
     second = runtime.run_verifier(
         run_id,
         candidate_id,
         agent_session_id=session.agent_session_id,
-        hypothesis="probe denied configuration change",
     )
     assert second.process_passed is False
     second_text = results_path.read_text(encoding="utf-8")
@@ -3623,7 +3655,7 @@ def test_legacy_tmp_results_tsv_migrates_and_backfills_missing_iterations(
     assert len(migrated_record.results_ledger) == 2
 
 
-def test_select_checks_out_best_git_commit_before_final_verify(
+def test_select_restores_best_git_commit_before_final_verify(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = make_project(tmp_path)
@@ -3817,7 +3849,10 @@ def test_run_verifier_works_without_session_and_records_iterations(
 
     monkeypatch.setattr(runtime, "_execute_verifier_process", fake_run)
 
-    for expected_score in [0.4, 0.7, 0.9]:
+    for iteration_number, expected_score in enumerate([0.4, 0.7, 0.9], start=1):
+        runtime.submit_iteration_plan(
+            session.agent_session_id, f"Measure score sample {iteration_number}"
+        )
         report = runtime.run_verifier(
             run_id, candidate_id, agent_session_id=session.agent_session_id
         )
@@ -3858,7 +3893,9 @@ def test_list_iterations_returns_all_records(
         )
 
     monkeypatch.setattr(runtime, "_execute_verifier_process", fake_run)
+    runtime.submit_iteration_plan(session.agent_session_id, "First listed iteration")
     runtime.run_verifier(run_id, candidate_id, agent_session_id=session.agent_session_id)
+    runtime.submit_iteration_plan(session.agent_session_id, "Second listed iteration")
     runtime.run_verifier(run_id, candidate_id, agent_session_id=session.agent_session_id)
 
     iterations = runtime.list_iterations(run_id, candidate_id)
@@ -3896,6 +3933,7 @@ def test_get_agent_context_returns_iterations(
         )
 
     monkeypatch.setattr(runtime, "_execute_verifier_process", fake_run)
+    runtime.submit_iteration_plan(session.agent_session_id, "Context iteration")
     runtime.run_verifier(run_id, candidate_id, agent_session_id=session.agent_session_id)
 
     context = runtime.get_agent_context(session.agent_session_id)
@@ -4161,6 +4199,7 @@ def test_invalidate_run_fences_work_and_successor_inherits_research(
             },
         },
     )
+    runtime.submit_iteration_plan(session.agent_session_id, "Portable fusion evidence")
     runtime.run_verifier(
         run_id,
         task.candidate_id,

@@ -19,7 +19,7 @@ Install from Git or an existing checkout:
 python -m pip install --user "git+https://github.com/ck0123/goal-plus.git"
 # or
 python -m pip install -e ".[dev]"
-# add the optional interactive Plotly enhancement to HTML report trajectories
+# add the optional self-contained Plotly trajectory to HTML reports
 python -m pip install -e ".[dev,report]"
 ```
 
@@ -108,6 +108,7 @@ promotion stays retryable in `ready_to_promote` and emits no patch.
 |---|---|
 | End-to-end ownership and parallel-loop flow | [Flow](docs/flow-view.md) |
 | Architecture, state, and invariants | [Design](docs/design.md) |
+| Candidate-local best rollback design | [Candidate Rollback](docs/candidate-local-best-rollback.md) |
 | Current MCP and Pi-local tools | [API](docs/api.md) |
 | Host capability comparison | [Agent Host Adapters](docs/agent-host-adapters.md) |
 | Runtime and host logs | [Debugging](docs/debugging-runtime.md) |

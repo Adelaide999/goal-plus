@@ -13,7 +13,6 @@ from goal_plus.goal_plus import EXPLORATION_MODE_LINES, FileGoalPlusRuntime
 from goal_plus.models import SearchSpec
 from goal_plus.monitor import goal_plus_monitor_snapshot
 from goal_plus.runtime import FileSearchRuntime
-from goal_plus.space_agent import InterventionPlanProposal
 from tests._runtime_helpers import make_project, spec_with_host
 
 
@@ -79,6 +78,7 @@ def _codex_search_worker(
     plan = runtime.plan_next(run_id, requested_k=1)
     task = runtime.start_batch(run_id, plan.plan_id)[0]
     session = runtime.start_agent_session(run_id, task.candidate_id, {"goal": "test"})
+    runtime.submit_iteration_plan(session.agent_session_id, "Hook-owned worker evidence")
     old_start = datetime.now(timezone.utc) - timedelta(seconds=90)
     runtime._write_agent_session(
         session.model_copy(
@@ -119,11 +119,11 @@ def test_user_prompt_submit_precreates_and_binds_goal(tmp_path: Path) -> None:
     assert record.active_session.host == "codex"
     assert record.active_session.session_id == "session-codex"
     assert record.goal_plus_id in context
-    assert "do not call goal_plus_create again" in context
-    assert "do not resume merely because Goal Plus is active" in context
-    assert "scope, deliverables, or success criteria" in context
+    assert "不要再次调用 goal_plus_create" in context
+    assert "不要仅因 Goal Plus 处于 active 就恢复工作" in context
+    assert "范围、交付物或成功标准" in context
     assert "goal_plus_update_goal" in context
-    assert "clarify ambiguous intent before resuming" in context
+    assert "恢复前澄清有歧义的意图" in context
 
 
 def test_user_prompt_submit_materializes_probe_mode_in_raw_goal(tmp_path: Path) -> None:
@@ -184,7 +184,7 @@ def test_with_final_check_precreates_required_policy(tmp_path: Path) -> None:
     assert record.policy["final_check"]["mode"] == "required"
     assert record.goal_revision == 1
     assert "required" in context
-    assert "Load and follow the goal-plus skill" in context
+    assert "加载并遵循 goal-plus skill" in context
 
 
 def test_interrupted_session_restores_then_edits_same_goal(tmp_path: Path) -> None:
@@ -232,7 +232,7 @@ def test_interrupted_session_restores_then_edits_same_goal(tmp_path: Path) -> No
         "Implement requirements A and B\n\n"
         + EXPLORATION_MODE_LINES["autonomous"],
     ]
-    assert "revision: 2" in edited_context
+    assert "目标修订版：2" in edited_context
     assert initial_context != edited_context
 
 
@@ -500,9 +500,9 @@ def test_post_tool_time_advisory_only_targets_search_candidate_subagent_once(
     )
 
     context = _additional_context(advisory, "PostToolUse")
-    assert "Time advisory (informational only)" in context
+    assert "时间提示（仅供参考）" in context
     assert candidate_id in context
-    assert "no action is forced" in context
+    assert "不强制采取任何动作" in context
 
     repeated = _run_hook(
         tmp_path,
@@ -556,7 +556,7 @@ def test_pre_tool_use_blocks_search_before_spec_is_ready(tmp_path: Path) -> None
     assert specific == {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
-        "permissionDecisionReason": "Search tools require a high-confidence frozen spec draft first.",
+        "permissionDecisionReason": "Search 工具要求先提供高置信度的冻结 spec draft。",
     }
     assert runtime.status(record.goal_plus_id).hook_counters["pre_tool_use"] == 1
 
@@ -584,109 +584,6 @@ def test_pre_tool_use_ignores_unrelated_tool(tmp_path: Path) -> None:
     assert runtime.status(record.goal_plus_id).hook_counters == {}
 
 
-def test_pre_tool_use_enforces_space_admission_for_candidate(tmp_path: Path) -> None:
-    search_runtime, run_id, _candidate_id, agent_session_id = _codex_search_worker(
-        tmp_path
-    )
-    source = Path(search_runtime._load_run(run_id).source_path)
-    schema_path = source / "space-schema.json"
-    schema_path.write_text(
-        json.dumps(
-            {
-                "schema_version": "hook-test-v1",
-                "views": {
-                    name: {"description": name}
-                    for name in (
-                        "artifact",
-                        "configuration",
-                        "mechanism",
-                        "context",
-                        "epistemic",
-                        "behavior",
-                    )
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    search_runtime.open_space_experiment(
-        run_id,
-        mode="b1",
-        schema_path="space-schema.json",
-        experiment_id="hook-test",
-        reviewer_model="gpt-5.6-sol",
-        reviewer_reasoning_effort="medium",
-        reviewer_timeout_seconds=30,
-    )
-    identity = "space-candidate-worker"
-
-    context_call = _run_hook(
-        tmp_path,
-        search_runtime.root_dir,
-        {
-            "hook_event_name": "PreToolUse",
-            "agent_id": identity,
-            "agent_type": "search_candidate_agent",
-            "tool_name": "mcp__goal-plus__search_get_agent_context",
-            "tool_input": {"agent_session_id": agent_session_id},
-        },
-    )
-    assert context_call.stdout == ""
-
-    mutation = {
-        "hook_event_name": "PreToolUse",
-        "agent_id": identity,
-        "agent_type": "search_candidate_agent",
-        "tool_name": "functions.exec",
-        "tool_input": (
-            "const r = await tools.apply_patch('*** Begin Patch'); text(r);"
-        ),
-    }
-    blocked = _run_hook(tmp_path, search_runtime.root_dir, mutation)
-    payload = json.loads(blocked.stdout)
-    assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "accepted intervention plan" in payload["hookSpecificOutput"][
-        "permissionDecisionReason"
-    ]
-
-    search_runtime.propose_intervention(
-        agent_session_id,
-        InterventionPlanProposal(
-            target="initial_program.py",
-            bottleneck="baseline",
-            mechanism="change constant",
-            proposed_change="set VALUE to one",
-            expected_observation="verifier passes",
-            success_criterion="score is one",
-            failure_criterion="verifier fails",
-            relation="new_axis",
-            footprint={
-                "artifact": ["initial_program.py"],
-                "configuration": ["VALUE=1"],
-                "mechanism": ["constant change"],
-                "context": ["test fixture"],
-                "epistemic": ["whether the edit passes"],
-                "behavior": ["score one"],
-            },
-        ),
-    )
-    allowed = _run_hook(tmp_path, search_runtime.root_dir, mutation)
-    assert allowed.stdout == ""
-
-    combined = {
-        **mutation,
-        "tool_input": (
-            "const p = await tools.search_space_propose({}); "
-            "const r = await tools.apply_patch('*** Begin Patch'); text(r);"
-        ),
-    }
-    combined_blocked = _run_hook(tmp_path, search_runtime.root_dir, combined)
-    combined_payload = json.loads(combined_blocked.stdout)
-    assert "separate tool call" in combined_payload["hookSpecificOutput"][
-        "permissionDecisionReason"
-    ]
-
-
 def test_unbound_search_candidate_stop_requires_own_verifier(tmp_path: Path) -> None:
     search_root = tmp_path / ".gp"
     runtime = FileGoalPlusRuntime(search_root)
@@ -709,8 +606,10 @@ def test_unbound_search_candidate_stop_requires_own_verifier(tmp_path: Path) -> 
 
     payload = json.loads(result.stdout)
     assert payload["decision"] == "block"
-    assert "must complete at least one search_run_verifier" in payload["reason"]
-    assert "parent-owned" in payload["reason"]
+    assert "必须使用自己的 agent_session_id 完成至少一次 search_run_verifier" in payload[
+        "reason"
+    ]
+    assert "父级负责" in payload["reason"]
     assert runtime.status(record.goal_plus_id).hook_counters["subagent_stop"] == 1
 
 
@@ -786,7 +685,7 @@ def test_search_candidate_stop_is_owned_by_its_verifier_not_parent_next_action(
     )
     parent_payload = json.loads(parent_stop.stdout)
     assert parent_payload["decision"] == "block"
-    assert "Classify whether the raw goal" in parent_payload["reason"]
+    assert "判断原始目标" in parent_payload["reason"]
     counters = goal_runtime.status(record.goal_plus_id).hook_counters
     assert counters["subagent_stop"] == 2
     assert counters["stop"] == 1
@@ -809,7 +708,12 @@ def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
     record = goal_runtime.create_goal("Run one sustained AutoResearch worker")
     goal_runtime.activate_session(
         record.goal_plus_id,
-        {"host": "codex", "session_id": "session-codex"},
+        {"host": "codex", "session_id": "parent-session"},
+    )
+    goal_runtime.link_search_run(
+        record.goal_plus_id,
+        search_runtime._load_run(run_id).frozen_spec_id,
+        run_id,
     )
     agent_identity = "019f-native-autoresearch-worker"
     session = search_runtime._load_agent_session_by_id(agent_session_id)
@@ -853,7 +757,7 @@ def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
         search_root,
         {
             "hook_event_name": "SubagentStop",
-            "session_id": "session-codex",
+            "session_id": "child-session",
             "agent_id": agent_identity,
             "agent_type": "default",
         },
@@ -862,9 +766,29 @@ def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
     blocked = json.loads(early_stop.stdout)
     assert blocked["decision"] == "block"
     assert "AutoResearch lease" in blocked["reason"]
-    assert "Do not return to the parent" in blocked["reason"]
-    assert "Do not sleep or busy-wait" in blocked["reason"]
-    assert "After each additional verifier iteration" in blocked["reason"]
+    assert "不要返回父级" in blocked["reason"]
+    assert "不要休眠或忙等" in blocked["reason"]
+    assert "若下一 iteration 已有计划，沿用它" in blocked["reason"]
+    assert "省略 scope 以使用 process verifier" in blocked["reason"]
+    assert "继续深度搜索" in blocked["reason"]
+    assert "不要通过重复返回来轮询此 hook" in blocked["reason"]
+    assert "把局部饱和视为转向信号" in blocked["reason"]
+    assert "与已有尝试不同的实质方向" in blocked["reason"]
+    assert "或基于连续结果形成具体的结构性饱和证据时才准备返回" not in blocked[
+        "reason"
+    ]
+    assert "立即再次尝试结束" not in blocked["reason"]
+    protocol = [
+        "search_get_agent_context",
+        "search_get_global_plan",
+        "search_submit_iteration_plan",
+        "实现",
+        "search_run_verifier",
+    ]
+    assert all(step in blocked["reason"] for step in protocol)
+    assert [blocked["reason"].index(step) for step in protocol] == sorted(
+        blocked["reason"].index(step) for step in protocol
+    )
 
     evidence_path = (
         search_root
@@ -895,7 +819,7 @@ def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
         search_root,
         {
             "hook_event_name": "SubagentStop",
-            "session_id": "session-codex",
+            "session_id": "child-session",
             "agent_id": agent_identity,
             "agent_type": "default",
         },

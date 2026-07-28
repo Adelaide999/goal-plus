@@ -56,14 +56,8 @@ therefore stored under `.gp/host-pools/pi/`, separate from run records.
     run.json
     plans/<plan_id>.json
     candidates/<candidate_id>/
+      plans/iteration-<n>.json
     agent_sessions/<agent_session_id>.json
-    search-space/
-      config.json
-      state.json
-      plans/<intervention_plan_id>.json
-      events/<search_evidence_event>.json
-      schemas/<search_schema_snapshot>.json
-    space-experiment/              # legacy B1/B4 location
     workspace/<candidate_id>/
     report.md
     report.html
@@ -79,11 +73,12 @@ The core records are:
   budget, strategy, and verifier commands.
 - `SearchPlan`: one planning decision/round.
 - `CandidateTask`: one isolated candidate workspace and its work order.
+- `CandidateIterationPlan`: one immutable, pre-edit sentence for a candidate
+  iteration; Global Plan joins it dynamically with the matching verifier record.
 - `AgentSessionRecord`: context/provenance plus a host launch payload; never a
   process lifecycle record.
 - `IterationRecord`: verifier result, failure, metrics, changed files, session
-  provenance, optional intervention-plan provenance, and exact candidate Git
-  commit.
+  provenance, and exact candidate Git commit.
 - `RunRecord`: also stores optional verifier invalidation evidence,
   `source_run_id`, `replacement_run_id`, and policy-controlled
   `inherited_research`.
@@ -106,9 +101,10 @@ running/waiting/selecting
 
 Invalidation is runtime state; worker termination is host state. They are
 separate operations in a strict order: fence first, stop workers second. The
-runtime checks the fence both before verifier execution and before recording a
-completed verifier result, so an in-flight worker cannot race a confirmed
-invalidation.
+runtime checks the fence before plan persistence, before verifier execution,
+and before recording a completed verifier result. Plan persistence and
+invalidation share the run transaction, so no plan can appear after the fence
+returns and an in-flight worker cannot race a confirmed invalidation.
 
 `search_create(source_run_id=...)` snapshots policy-controlled research rather
 than deriving a workspace across contracts. It carries frontier summaries, the
@@ -176,20 +172,10 @@ artifact hash. Changing the selected artifact invalidates that evidence.
     results, selection, or promotion.
 14. **Never reuse cross-run scores.** Successor runs may inherit bounded
     hypotheses and artifacts as research context, but must re-verify them.
-15. **Keep SpaceAgent admission direction-neutral.** Each candidate may have at
-    most one outstanding intervention, while a run may have many concurrent
-    reservations. SpaceAgent only accepts or rejects semantic duplicates and
-    active collisions; it cannot suggest or rewrite a direction. A stale review
-    cannot commit after `admission_revision`, `evidence_revision`, or
-    `schema_revision` changes. Verifier completion records a bounded concrete
-    artifact delta and outcome as immutable Search Evidence without another
-    Agent call. Later admissions immediately read the Evidence tail, while the
-    same SpaceAgent periodically appends a complete Search Schema snapshot under
-    the same CAS protocol; there is no per-plan projection.
-    Every admitted execution closes through one verifier iteration, which
-    atomically moves eligible evidence from active reservation to completed
-    coverage. B1/B4 retain the same candidate-visible protocol for experiment
-    compatibility.
+15. **Settle each candidate to its local best.** Every process verifier keeps
+    the exact tested attempt commit. Only a strict metric improvement is kept;
+    equal, regressed, or invalid attempts remain in history while runtime
+    restores the candidate artifact before appending the iteration ledger row.
 
 If no verifier-backed revision is eligible, or all ranked revisions fail parent
 final verification, selection records a recoverable `selection_blocked` reason.

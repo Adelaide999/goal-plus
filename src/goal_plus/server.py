@@ -10,10 +10,6 @@ from goal_plus.goal_plus import FileGoalPlusRuntime
 from goal_plus.models import GoalPlusSpecDraftInput, SearchSpec
 from goal_plus.paths import DEFAULT_RUNTIME_ROOT
 from goal_plus.runtime import FileSearchRuntime
-from goal_plus.space_agent import (
-    DEFAULT_SCHEMA_CONSOLIDATION_INTERVAL,
-    SearchSpacePlanCard,
-)
 from goal_plus.tools import GoalPlusTools, SearchTools
 
 
@@ -33,25 +29,19 @@ def create_mcp(
         spec: SearchSpec,
         verifier_artifact_paths: list[str],
     ) -> dict[str, Any]:
-        """Freeze a SearchSpec and its verifier files into an immutable bundle.
+        """将 SearchSpec 及其 verifier 文件冻结为不可变 bundle。
 
-        Returns `frozen_spec_id`. Call before `search_create`. Verifier files
-        are hash-pinned; modifying them during candidate execution forces the
-        score to 0.0. Freeze preflights every `ranking_signal`: it must exit 0
-        and print a final JSON object containing a finite numeric
-        `spec.metric_name`, for example `{"score": 123.0}`. The verifier
-        command runs in a disposable source copy and must not change that
-        workspace. Use the unique per-invocation directory exposed as
-        `GOAL_PLUS_VERIFIER_TMPDIR`, `TMPDIR`, `TMP`, and `TEMP` for compiler
-        products and temporary outputs; fixed `/tmp` paths are unsafe when
-        candidates verify concurrently. Optional custom verifier files must be
-        materialized during Spec Discovery in a source-owned path, never `.gp`
-        or `.search`. `expected_outputs`
-        contains artifact path/glob strings only; it is not a stdout parser
-        configuration. `spec.budget.max_candidates` is the immutable total
-        candidate cap across the whole run and all rounds;
-        `spec.budget.max_parallel` is the per-batch planning cap. Equal values
-        normally permit only one full batch.
+        返回 `frozen_spec_id`，应在 `search_create` 前调用。verifier 文件按 hash 固定；
+        候选执行期间修改它们会强制分数为 0.0。冻结会预检每个 `ranking_signal`：
+        它必须以 0 退出，并输出一个最终 JSON 对象，其中包含有限数值类型的
+        `spec.metric_name`，例如 `{"score": 123.0}`。verifier 命令在一次性源码副本中
+        运行，不能改变该工作区。编译器产物和临时输出应放入每次调用唯一的
+        `GOAL_PLUS_VERIFIER_TMPDIR`、`TMPDIR`、`TMP` 或 `TEMP`；并发验证候选时固定
+        `/tmp` 路径不安全。可选自定义 verifier 必须在 Spec Discovery 期间写入源码拥有
+        的路径，绝不能放在 `.gp` 或 `.search`。`expected_outputs` 只包含产物路径/glob，
+        不是 stdout parser 配置。`spec.budget.max_candidates` 是整个 run 和所有轮次中
+        不可变的候选总上限；`spec.budget.max_parallel` 是每个 batch 的规划上限。
+        两者相等通常只允许一个完整 batch。
         """
         return tools.search_freeze_spec(spec, verifier_artifact_paths)
 
@@ -60,18 +50,16 @@ def create_mcp(
         frozen_spec_id: str,
         source_run_id: str | None = None,
     ) -> dict[str, str]:
-        """Start a search run from a frozen spec. Returns `run_id`.
+        """从冻结 spec 启动 Search run，并返回 `run_id`。
 
-        Pass `source_run_id` only when a new immutable run is unavoidable. The
-        new run receives a bounded snapshot of the source frontier, scoped
-        pitfalls, and feature ledger. Source scores are historical and must be
-        re-verified under the new contract.
+        只有无法避免新的不可变 run 时才传入 `source_run_id`。新 run 会收到来源 frontier、
+        限定范围的问题和特性账本的有界 snapshot。来源分数只是历史，必须在新契约下重新验证。
         """
         return tools.search_create(frozen_spec_id, source_run_id)
 
     @mcp.tool()
     def search_status(run_id: str) -> dict[str, Any]:
-        """Read-only snapshot of run state, budget usage, and best score."""
+        """返回 run 状态、预算使用和最佳分数的只读 snapshot。"""
         return tools.search_status(run_id)
 
     @mcp.tool()
@@ -87,13 +75,11 @@ def create_mcp(
         summary: str,
         evidence: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Fence a run after the main agent confirms verifier inadequacy.
+        """主 agent 确认 verifier 不充分后隔离 run。
 
-        This atomically blocks new planning, sessions, verifier records,
-        selection, and promotion. It does not control host workers: after this
-        call, the main agent must interrupt the host pool, wait until every
-        worker is terminal, then repair/freeze the verifier and create a new
-        run with `source_run_id`.
+        该操作会原子地阻止新规划、session、verifier 记录、选择和提升。它不控制 host
+        worker：调用后，主 agent 必须中断 host pool，等待每个 worker 达到终态，
+        再修复/冻结 verifier，并使用 `source_run_id` 创建新 run。
         """
         return tools.search_invalidate_run(run_id, reason, summary, evidence)
 
@@ -103,11 +89,10 @@ def create_mcp(
         run_id: str | None = None,
         stale_after_seconds: int = 600,
     ) -> dict[str, Any]:
-        """Read-only Goal Plus/Search monitoring snapshot for polling agents.
+        """返回供轮询 agent 使用的只读 Goal Plus/Search 监控 snapshot。
 
-        Returns run, candidate, agent-session, verifier, host-log, and Pi usage
-        evidence from durable `.gp` state. It does not start, wait for, or
-        interrupt workers.
+        从持久化 `.gp` 状态返回 run、candidate、agent-session、verifier、host-log 和 Pi
+        usage 证据。它不会启动、等待或中断 worker。
         """
         return tools.goal_plus_monitor_snapshot(
             goal_plus_id=goal_plus_id,
@@ -121,7 +106,7 @@ def create_mcp(
         top_n: int = 5,
         sort_by: str = "score",
     ) -> dict[str, Any]:
-        """Read-only ranked list of evaluated candidates and their scores."""
+        """返回已评估候选及其分数的只读排名列表。"""
         return tools.search_list_history(run_id, top_n, sort_by)
 
     @mcp.tool()
@@ -132,19 +117,18 @@ def create_mcp(
             Field(
                 gt=0,
                 description=(
-                    "Candidate count requested for this planning round only. "
-                    "The runtime plans min(requested_k, remaining total "
-                    "candidate budget, budget.max_parallel). The default 4 is "
-                    "a batch-size request, not a whole-run budget."
+                    "仅为本规划轮次请求的候选数。运行时按 min(requested_k, 剩余候选总预算, "
+                    "budget.max_parallel) 进行规划。默认值 4 是 batch size 请求，"
+                    "不是整个 run 的预算。"
                 ),
             ),
         ] = 4,
     ) -> dict[str, Any]:
-        """Plan one candidate batch/round from the frozen whole-run budget.
+        """从冻结的整个 run 预算中规划一个候选 batch/轮次。
 
-        `requested_k` applies only to this call. The actual `planned_k` is the
-        minimum of `requested_k`, the remaining `budget.max_candidates`, and
-        `budget.max_parallel`. Returns `plan_id` plus candidate tasks.
+        `requested_k` 只适用于本次调用。实际 `planned_k` 是 `requested_k`、剩余
+        `budget.max_candidates` 和 `budget.max_parallel` 的最小值。返回 `plan_id`
+        和候选任务。
         """
         return tools.search_plan_next(run_id, requested_k)
 
@@ -154,10 +138,10 @@ def create_mcp(
         plan_id: str,
         proposals: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
-        """Materialize planned candidate workspaces (copies of source_path).
+        """materialize 已规划的候选工作区（`source_path` 的副本）。
 
-        Each returned `CandidateTask` owns an isolated workspace; candidate
-        edits must stay inside it. Do not call before `search_plan_next`.
+        每个返回的 `CandidateTask` 拥有隔离工作区；候选编辑必须留在其中。
+        不要在 `search_plan_next` 前调用。
         """
         return tools.search_start_batch(run_id, plan_id, proposals)
 
@@ -168,14 +152,11 @@ def create_mcp(
         directive: dict[str, Any] | str | None = None,
         worker_budget: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Create a context/provenance handle and host-native launch payload.
+        """创建 context/provenance handle 和 host 原生 launch payload。
 
-        It does not start a worker or track lifecycle. The optional
-        `worker_budget` overrides only this dispatch without mutating the
-        frozen spec. Use the returned `launch` payload
-        with the selected host. The prompt-supplied `candidate_id` is a label
-        only; the worker must derive authoritative context from
-        `search_get_agent_context`.
+        它不会启动 worker 或跟踪 lifecycle。可选 `worker_budget` 只覆盖本次派发，
+        不改变冻结 spec。对所选 host 使用返回的 `launch` payload。prompt 提供的
+        `candidate_id` 只是标签；worker 必须从 `search_get_agent_context` 获取权威上下文。
         """
         return tools.search_start_agent_session(
             run_id, candidate_id, directive, worker_budget
@@ -188,12 +169,11 @@ def create_mcp(
         worker_agent_type: str | None = None,
         worker_budget: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Create a new worker launch for an existing candidate workspace.
+        """为现有候选工作区创建新的 worker launch。
 
-        This is state-level resume, not same-worker continuation. It returns a
-        fresh `agent_session_id` and host launch payload for the same
-        candidate/workspace. Optional `worker_agent_type` and `worker_budget`
-        override only this dispatch; candidate task policy is unchanged.
+        这是状态级恢复，不是同 worker continuation。它为相同 candidate/workspace 返回新的
+        `agent_session_id` 和 host launch payload。可选 `worker_agent_type` 和
+        `worker_budget` 只覆盖本次派发；候选任务 policy 不变。
         """
         return tools.search_redispatch_candidate(
             run_id,
@@ -207,19 +187,18 @@ def create_mcp(
         agent_session_id: str,
         handle: dict[str, Any],
     ) -> dict[str, Any]:
-        """Bind a runtime agent session to its host worker handle."""
+        """把运行时 agent session 绑定到 host worker handle。"""
         return tools.search_bind_agent_handle(agent_session_id, handle)
 
     @mcp.tool()
     def search_get_agent_observability(
         agent_session_id: str,
     ) -> dict[str, Any]:
-        """Read normalized host metrics and artifacts for one agent session.
+        """读取一个 agent session 的规范化 host metric 和产物。
 
-        The schema is shared across hosts. Codex resolves its native session
-        JSONL when available; Pi normalizes bound `pi_metrics`. This call is
-        read-only and does not wait for, continue, or interrupt the worker.
-        Prompt, reasoning, and tool payload contents are never returned.
+        schema 跨 host 共享。可用时 Codex 解析原生 session JSONL；Pi 规范化已绑定的
+        `pi_metrics`。此调用只读，不会等待、继续或中断 worker。绝不返回 prompt、
+        reasoning 或工具 payload 正文。
         """
         return tools.search_get_agent_observability(agent_session_id)
 
@@ -228,11 +207,10 @@ def create_mcp(
         agent_session_id: str,
         worker_budget: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Return host launch fields for continuing a bound worker session.
+        """返回继续已绑定 worker session 所需的 host launch 字段。
 
-        Hosts with native continuation reuse the same worker handle. The
-        optional worker budget overrides only this continuation dispatch. The
-        continuation prompt is neutral: the worker chooses its next action.
+        支持原生 continuation 的 host 会复用相同 worker handle。可选 worker budget
+        只覆盖本次 continuation 派发。continuation prompt 保持中性，由 worker 选择下一步。
         """
         return tools.search_continue_agent_session(
             agent_session_id,
@@ -241,35 +219,54 @@ def create_mcp(
 
     @mcp.tool()
     def search_get_agent_context(agent_session_id: str) -> dict[str, Any]:
-        """Subagent first call. Authoritative ids and workspace.
+        """Subagent 的首次调用，返回权威 id 和工作区。
 
-        Returns run_id, candidate_id, workspace, candidate_task, history,
-        and the subagent's own iterations. Called by the subagent, not the
-        main agent. The subagent must treat prompt-supplied ids as labels
-        only and rely on this response as the source of truth.
+        返回 run_id、candidate_id、workspace、candidate_task 和 subagent 自己的
+        iterations/results。由 subagent 调用，不由主 agent 调用。subagent 必须把
+        prompt 提供的 id 只当作标签，并将此响应作为事实来源。
         """
         return tools.search_get_agent_context(agent_session_id)
+
+    @mcp.tool()
+    def search_get_global_plan(
+        agent_session_id: str,
+    ) -> list[dict[str, Any]]:
+        """返回当前 run 的窄 Global Plan 视图。
+
+        每项只包含 candidate_id、iteration、一句话 description、score、
+        keep/discard/failure disposition 和 verifier attempt commit。worker 每轮修改前
+        读取一次；需要代码级证据时可自行通过 commit 做只读 Git 比较。
+        """
+        return tools.search_get_global_plan(agent_session_id)
+
+    @mcp.tool()
+    def search_submit_iteration_plan(
+        agent_session_id: str,
+        description: Annotated[str, Field(min_length=1, max_length=240)],
+    ) -> dict[str, Any]:
+        """在修改代码前提交本轮不可变的一句话计划。
+
+        workspace 必须仍是 candidate-local settled HEAD 且 Git-clean。同一 iteration
+        重复提交相同描述是幂等的，不同描述不能覆盖。
+        """
+        return tools.search_submit_iteration_plan(agent_session_id, description)
 
     @mcp.tool()
     def search_run_verifier(
         run_id: str,
         candidate_id: str,
-        scope: str = "process",
+        scope: Literal["process", "promotion"] = "process",
         agent_session_id: str | None = None,
         hypothesis: str | None = None,
-        intervention_plan_id: str | None = None,
     ) -> dict[str, Any]:
-        """Subagent self-score with `agent_session_id`; main final verify without it.
+        """Subagent 带 `agent_session_id` 自评分；主流程最终验证不带它。
 
-        Subagents pass their own `agent_session_id` and a concise `hypothesis`
-        describing the tested design. The runtime records iteration provenance
-        and appends exactly one validated row to the inherited
-        `workspace/results.tsv`, then commits that runtime-owned ledger.
-        The main agent calls this without `agent_session_id`
-        after OpenCode Task completion to confirm the final score. A
-        `VerifierWorkspaceSideEffect` with
-        `candidate_action="stop_and_report"` is a frozen-verifier infrastructure
-        failure: workers must not clean verifier outputs or retry it.
+        subagent 传入自己的 `agent_session_id` 并省略 `scope`；运行时要求本轮已有
+        不可变 plan，并以 plan description 作为 iteration hypothesis。随后在继承的
+        `workspace/results.tsv` 中追加且只追加一条已验证记录并提交账本。主 agent
+        不带 `agent_session_id` 的内部复验不要求 plan；`promotion` 只属于主流程。带
+        `candidate_action="stop_and_report"` 的 `VerifierWorkspaceSideEffect` 是冻结
+        verifier 的基础设施失败：worker 不能清理 verifier 输出或重试。
         """
         return tools.search_run_verifier(
             run_id,
@@ -277,82 +274,29 @@ def create_mcp(
             scope,
             agent_session_id,
             hypothesis,
-            intervention_plan_id,
         )
-
-    @mcp.tool()
-    def search_space_open(
-        run_id: str,
-        mode: Literal["observe", "enforce", "b1", "b4"] = "enforce",
-        schema_path: str | None = None,
-        experiment_id: str | None = None,
-        reviewer_model: str = "gpt-5.6-sol",
-        reviewer_reasoning_effort: Literal["low", "medium", "high", "xhigh"] = "medium",
-        reviewer_timeout_seconds: Annotated[int, Field(gt=0, le=600)] = 180,
-        schema_consolidation_interval: Annotated[int, Field(ge=2, le=100)] = (
-            DEFAULT_SCHEMA_CONSOLIDATION_INTERVAL
-        ),
-    ) -> dict[str, Any]:
-        """Open run-scoped semantic plan admission.
-
-        Enforce mode applies SpaceAgent accept/reject decisions across all
-        candidates; observe mode records the same decisions without blocking.
-        B1/B4 retain the frozen serial experiment behavior. The reviewer only
-        discriminates duplicates and active collisions; it never directs work.
-        """
-        return tools.search_space_open(
-            run_id,
-            mode,
-            schema_path,
-            experiment_id,
-            reviewer_model,
-            reviewer_reasoning_effort,
-            reviewer_timeout_seconds,
-            schema_consolidation_interval,
-        )
-
-    @mcp.tool()
-    def search_space_propose(
-        agent_session_id: str,
-        proposal: SearchSpacePlanCard,
-    ) -> dict[str, Any]:
-        """Submit one minimal intervention card before mutation or evaluation.
-
-        Accept returns a plan id. Reject also returns the conflicting plan ids,
-        their minimal PlanCards, and whether each is completed coverage or an
-        active reservation. Reviewer rationale, overlap, and state features
-        remain private audit data. A rejected plan must not execute. Close an accepted plan with one
-        search_run_verifier call carrying its intervention_plan_id before
-        proposing another plan.
-        """
-        return tools.search_space_propose(agent_session_id, proposal)
-
-    @mcp.tool()
-    def search_space_status(run_id: str) -> dict[str, Any]:
-        """Read aggregate plan, rejection, reviewer-failure, and latency counts."""
-        return tools.search_space_status(run_id)
 
     @mcp.tool()
     def search_list_iterations(
         run_id: str,
         candidate_id: str,
     ) -> list[dict[str, Any]]:
-        """Read-only list of iteration records for a candidate."""
+        """返回一个候选的只读 iteration 记录列表。"""
         return tools.search_list_iterations(run_id, candidate_id)
 
     @mcp.tool()
     def search_select(run_id: str) -> dict[str, Any]:
-        """Pick the best evaluated candidate by score. Call after verifying candidates."""
+        """按分数选择最佳已评估候选。在验证候选后调用。"""
         return tools.search_select(run_id)
 
     @mcp.tool()
     def search_report(run_id: str) -> dict[str, str]:
-        """Generate final Markdown/HTML reports; linked Goal Plus must be terminal."""
+        """生成最终 Markdown/HTML 报告；已链接的 Goal Plus 必须处于终态。"""
         return tools.search_report(run_id)
 
     @mcp.tool()
     def search_promote(run_id: str, candidate_id: str) -> dict[str, str]:
-        """Export the selected candidate as a patch. Does not mutate the main source workspace."""
+        """将所选候选导出为 patch，不改变主源码工作区。"""
         return tools.search_promote(run_id, candidate_id)
 
     @mcp.tool()
@@ -361,12 +305,12 @@ def create_mcp(
         source_path: str | None = None,
         policy: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Create a goal-plus record from a raw user goal before triage."""
+        """triage 前根据原始用户目标创建 goal-plus 记录。"""
         return goal_tools.goal_plus_create(raw_goal, source_path, policy)
 
     @mcp.tool()
     def goal_plus_status(goal_plus_id: str) -> dict[str, Any]:
-        """Read goal-plus phase, status, linked search state, and evidence log."""
+        """读取 goal-plus phase、status、已链接 Search 状态和证据日志。"""
         return goal_tools.goal_plus_status(goal_plus_id)
 
     @mcp.tool()
@@ -376,7 +320,7 @@ def create_mcp(
         expected_revision: int,
         reason: str | None = None,
     ) -> dict[str, Any]:
-        """Replace the effective objective in-place and begin a new auditable revision."""
+        """原地替换实际目标，并开始新的可审计修订版。"""
         return goal_tools.goal_plus_update_goal(
             goal_plus_id,
             raw_goal,
@@ -389,7 +333,7 @@ def create_mcp(
         goal_plus_id: str,
         triage: dict[str, Any],
     ) -> dict[str, Any]:
-        """Record whether a goal should stay goal-like or upgrade toward search."""
+        """记录目标应保留 goal 形态，还是向 Search 升级。"""
         return goal_tools.goal_plus_record_triage(goal_plus_id, triage)
 
     @mcp.tool()
@@ -397,7 +341,7 @@ def create_mcp(
         goal_plus_id: str,
         spec_draft: GoalPlusSpecDraftInput,
     ) -> dict[str, Any]:
-        """Save the discovered frozen-spec candidate before search_freeze_spec."""
+        """在 search_freeze_spec 前保存发现的冻结 spec 候选。"""
         return goal_tools.goal_plus_save_spec_draft(goal_plus_id, spec_draft)
 
     @mcp.tool()
@@ -406,7 +350,7 @@ def create_mcp(
         frozen_spec_id: str,
         run_id: str,
     ) -> dict[str, Any]:
-        """Link an existing Search MCP run to a goal-plus record."""
+        """把现有 Search MCP run 链接到 goal-plus 记录。"""
         return goal_tools.goal_plus_link_search_run(goal_plus_id, frozen_spec_id, run_id)
 
     @mcp.tool()
@@ -418,7 +362,7 @@ def create_mcp(
         promotion_artifact_path: str | None = None,
         summary: str | None = None,
     ) -> dict[str, Any]:
-        """Record selected/promoted search evidence before final raw-goal audit."""
+        """最终原始目标审计前，记录已选择/提升的 Search 证据。"""
         return goal_tools.goal_plus_record_search_result(
             goal_plus_id,
             run_id,
@@ -433,7 +377,7 @@ def create_mcp(
         goal_plus_id: str,
         checker_host: Literal["codex", "pi"],
     ) -> dict[str, Any]:
-        """Create or resume the required final-check request and return a host launch payload."""
+        """创建或恢复必需的最终检查请求，并返回 host launch payload。"""
         return goal_tools.goal_plus_prepare_final_check(goal_plus_id, checker_host)
 
     @mcp.tool()
@@ -447,7 +391,7 @@ def create_mcp(
         evidence: list[dict[str, Any]] | None = None,
         checker_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Record an independent final-check verdict for an exact goal revision."""
+        """为准确目标修订版记录独立最终检查结论。"""
         return goal_tools.goal_plus_submit_final_check(
             goal_plus_id,
             check_id,
@@ -467,7 +411,7 @@ def create_mcp(
         evidence: list[dict[str, Any]] | None = None,
         next_action: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Set goal-plus status after evidence-based completion, block, or pause."""
+        """根据证据完成、阻塞或暂停后，设置 goal-plus 状态。"""
         return goal_tools.goal_plus_set_status(
             goal_plus_id,
             status,
@@ -482,7 +426,7 @@ def create_mcp(
         event: str,
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        """Return a hook-friendly allow/block decision for goal-plus flow control."""
+        """为 goal-plus 流程控制返回适合 hook 使用的 allow/block 决策。"""
         return goal_tools.goal_plus_gate(goal_plus_id, event, context)
 
     return mcp

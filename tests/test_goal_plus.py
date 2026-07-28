@@ -58,8 +58,8 @@ def test_create_goal_plus_record_writes_state_and_event(tmp_path) -> None:
         "Improve the README examples\n\n"
         + EXPLORATION_MODE_LINES["autonomous"]
     )
-    assert "resume every completed candidate in its existing workspace" in record.raw_goal
-    assert "score or rank must not cause replacement" in record.raw_goal
+    assert "在现有工作区恢复每个已完成候选" in record.raw_goal
+    assert "分数或排名不能导致替换" in record.raw_goal
     assert record.status == "active"
     assert record.phase == "intake"
     assert not hasattr(record, "mode_hint")
@@ -79,8 +79,8 @@ def test_create_goal_normalizes_explicit_exploration_mode(tmp_path) -> None:
         "Determine whether approach A is viable\n\n"
         + EXPLORATION_MODE_LINES["probe"]
     )
-    assert "resume the same candidate" in record.raw_goal
-    assert "score or rank must not cause a replacement" in record.raw_goal
+    assert "恢复同一个候选" in record.raw_goal
+    assert "分数或排名不能导致替换" in record.raw_goal
     with pytest.raises(ValueError, match="unsupported Goal Plus exploration mode"):
         runtime.create_goal("mode=fast Try approach A")
 
@@ -162,7 +162,7 @@ def test_required_final_check_blocks_stop_and_completes_only_after_pass(tmp_path
 
     gate = runtime.gate(record.goal_plus_id, event="stop", context={})
     assert gate.decision == "block"
-    assert "independent final check" in gate.continuation_prompt
+    assert "独立最终检查" in gate.continuation_prompt
     with pytest.raises(RuntimeError, match="requires a passing final check"):
         runtime.set_status(record.goal_plus_id, status="complete")
 
@@ -364,7 +364,7 @@ def test_goal_like_triage_blocks_stop_until_terminal_status(tmp_path) -> None:
 
     gate = runtime.gate(updated.goal_plus_id, event="stop", context={})
     assert gate.decision == "block"
-    assert "Full raw goal for this revision" in gate.continuation_prompt
+    assert "该修订版的完整原始目标" in gate.continuation_prompt
     assert "Tidy docs wording" in gate.continuation_prompt
     assert "created_at_utc" in gate.continuation_prompt
     assert "checked_at_utc" in gate.continuation_prompt
@@ -392,7 +392,7 @@ def test_spec_discovery_stop_gate_blocks_with_next_action(tmp_path) -> None:
 
     assert gate.decision == "block"
     assert gate.phase == "spec_discovery"
-    assert "Goal Plus is still active" in gate.continuation_prompt
+    assert "Goal Plus 仍处于 active" in gate.continuation_prompt
     assert "baseline command" in gate.continuation_prompt
 
 
@@ -495,7 +495,7 @@ def test_initial_search_ready_spec_autonomously_allows_freeze(tmp_path) -> None:
 
     stop_gate = runtime.gate(record.goal_plus_id, event="stop", context={})
     assert stop_gate.decision == "block"
-    assert "Autonomously freeze" in stop_gate.reason
+    assert "自主冻结" in stop_gate.reason
 
     allowed = runtime.gate(
         record.goal_plus_id,
@@ -609,7 +609,7 @@ def test_high_confidence_spec_draft_links_search_and_final_audit(tmp_path) -> No
 
     gate = runtime.gate(record.goal_plus_id, event="stop", context={})
     assert gate.decision == "block"
-    assert "Audit every requirement in the full raw goal" in gate.continuation_prompt
+    assert "对照持久证据审计完整原始目标中的每项要求" in gate.continuation_prompt
 
     completed = runtime.set_status(
         record.goal_plus_id,
@@ -867,7 +867,7 @@ def test_pre_tool_use_blocks_search_before_high_confidence_spec(tmp_path) -> Non
     )
 
     assert gate.decision == "block"
-    assert "frozen spec draft" in gate.reason
+    assert "冻结 spec draft" in gate.reason
 
 
 def test_pre_tool_use_blocks_mutation_before_triage(tmp_path) -> None:
@@ -881,8 +881,8 @@ def test_pre_tool_use_blocks_mutation_before_triage(tmp_path) -> None:
     )
 
     assert gate.decision == "block"
-    assert "before mutating tools" in gate.reason
-    assert "Classify whether the raw goal" in gate.reason
+    assert "使用变更类工具前" in gate.reason
+    assert "判断原始目标" in gate.reason
 
 
 def test_goal_mode_allows_mutation_after_triage(tmp_path) -> None:
@@ -929,7 +929,7 @@ def test_pre_tool_use_blocks_pi_worker_launch_before_search_ready(tmp_path) -> N
     )
 
     assert gate.decision == "block"
-    assert "frozen spec draft" in gate.reason
+    assert "冻结 spec draft" in gate.reason
 
 
 @pytest.mark.pi
@@ -954,7 +954,7 @@ def test_pre_tool_use_blocks_pi_pool_continue_before_search_ready(tmp_path) -> N
     )
 
     assert gate.decision == "block"
-    assert "frozen spec draft" in gate.reason
+    assert "冻结 spec draft" in gate.reason
 
 
 def test_pre_tool_use_accepts_camel_case_tool_name(tmp_path) -> None:
@@ -968,4 +968,4 @@ def test_pre_tool_use_accepts_camel_case_tool_name(tmp_path) -> None:
     )
 
     assert gate.decision == "block"
-    assert "frozen spec draft" in gate.reason
+    assert "冻结 spec draft" in gate.reason

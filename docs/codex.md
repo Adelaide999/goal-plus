@@ -35,15 +35,6 @@ submission is durable. Selection and final audit remain parent-owned.
 `PostToolUse(goal_plus_create)` is the fallback ownership-binding path. A
 candidate is blocked until its own verifier submission is durable. Ordinary subagents do not inherit the parent's next action.
 
-When run-scoped search-space admission is open, the same `PreToolUse` hook also
-requires a separately admitted three-field PlanCard before candidate mutation
-or evaluation. It blocks a Code Mode call that tries to propose and execute in
-one outer tool call. Multiple candidates share completed coverage and active
-reservations, while reviewer rationale and semantic aliases remain private.
-The runtime remains authoritative because `search_run_verifier` independently
-requires the accepted plan id. B1/B4 use this same visible flow for the frozen
-experiment.
-
 Use `/goal-plus mode=autonomous <goal>` for substantial renewable candidate
 exploration (the default), or `/goal-plus mode=probe <goal>` for short
 feasibility/potential/blocker probes. The runtime stores the choice only as the
@@ -92,9 +83,10 @@ The parent then:
 6. drains live agents before selection.
 
 Every launch message says the child owns one autonomous candidate loop, not
-global initial dispatch or final selection. It reads its context, chooses every
-later hypothesis/pivot/rebase, edits its workspace, verifies, and returns a
-research handoff. It must not create candidates, select, report, promote, or
+global initial dispatch or final selection. It reads its candidate-local
+context and the narrow Global Plan, submits an immutable one-line plan, chooses
+every later hypothesis/pivot/rebase, edits its workspace, verifies, and returns
+a research handoff. It must not create candidates, select, report, promote, or
 mutate Goal Plus state. Main never replaces it because of low score or one
 non-improving completion.
 

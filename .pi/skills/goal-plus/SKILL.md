@@ -1,430 +1,340 @@
 ---
 name: goal-plus
-description: Use when Pi receives a /goal-plus, /goal-plus edit, or /goal-plus-with-final-check request that may need Goal Mode, Spec Discovery Mode, bounded Search Mode, or an independent final reviewer.
+description: 当 Pi 收到可能需要 Goal Mode、Spec Discovery Mode、有界 Search Mode 或独立最终审查员的 /goal-plus、/goal-plus edit 或 /goal-plus-with-final-check 请求时使用。
 ---
 
-# Goal Plus For Pi
+# Pi 的 Goal Plus
 
-## Entry Contract
+## 入口契约
 
-The native Pi `/goal-plus` command creates the Goal Plus record before the model turn starts. `/goal-plus-with-final-check` creates it with `policy.final_check.mode="required"`. `/goal-plus edit <full revised goal>` calls `goal_plus_update_goal` for the active record and increments `goal_revision`; the latest raw goal supersedes older revisions. `/goal-plus resume` continues the same durable active revision after an interrupted Pi turn. If a compatibility prompt path is used and no active `goal_plus_id` is already present, the first tool call must be `goal_plus_create(raw_goal=...)`. Do not triage, search, or edit before the goal record exists. Except for loading the goal-plus skill, do not read or audit target files before `goal_plus_record_triage`.
+原生 Pi `/goal-plus` 命令会在模型轮次开始前创建 Goal Plus 记录。
+`/goal-plus-with-final-check` 创建记录时会设置 `policy.final_check.mode="required"`。
+`/goal-plus edit <完整的修订目标>` 对 active 记录调用 `goal_plus_update_goal` 并递增
+`goal_revision`；最新原始目标取代旧修订版。Pi 轮次中断后，`/goal-plus resume`
+会继续同一个持久化 active 修订版。如果使用兼容 prompt 路径且尚无 active 的
+`goal_plus_id`，第一次工具调用必须是 `goal_plus_create(raw_goal=...)`。
+目标记录存在之前，不要 triage、Search 或编辑。除了加载 goal-plus skill 之外，
+在 `goal_plus_record_triage` 前不要读取或审计目标文件。
 
-`/goal-plus mode=autonomous <goal>` selects substantial initial exploration
-(about 15 minutes when elapsed-time leases are available) and renewable
-same-candidate continuation, potentially up to about one hour.
-`/goal-plus mode=probe <goal>` selects short feasibility, potential, and
-blocker probes. Omitted mode defaults to `autonomous`; an edit without a mode
-preserves the current choice. The runtime stores it only as a canonical final
-line in `raw_goal`, not as a phase, Search strategy, or runtime field.
+`/goal-plus mode=autonomous <目标>` 选择充足的初始探索时间（支持耗时 lease 时约为
+15 分钟）和可续期的同候选 continuation，最长可能约一小时。
+`/goal-plus mode=probe <目标>` 选择短期可行性、潜力和阻塞因素探查。省略 mode 时默认
+使用 `autonomous`；未指定 mode 的编辑保留当前选择。运行时只把它存为 `raw_goal`
+的规范末行，不把它作为 phase、Search strategy 或运行时字段。
 
-Before resuming an active record, treat the latest user message as authoritative
-for this turn. Keep the current revision when the message only continues or
-steers the existing objective. If it changes the effective scope, deliverables,
-or success criteria, call `goal_plus_update_goal` with the complete revised
-objective and current `expected_revision`, then re-triage before further work.
-If it is unrelated, respond without changing the goal. If its relationship to
-the goal is unclear, clarify before revising or resuming; do not resume merely
-because the Goal Plus record is active.
+恢复 active 记录前，把最新用户消息视为本轮权威依据。消息只继续或引导现有目标时，
+保留当前修订版。如果它改变了实际范围、交付物或成功标准，使用完整修订目标和当前
+`expected_revision` 调用 `goal_plus_update_goal`，然后在继续工作前重新 triage。
+如果消息无关，直接回复而不改变目标。如果它与目标的关系不明确，在修订或恢复前先澄清；
+不要仅因 Goal Plus 记录处于 active 就恢复工作。
 
 ## Goal Mode
 
-Use Goal Mode when the request is not yet a verifiable optimization/search task. Record triage with `goal_plus_record_triage({ goal_plus_id, triage: { is_optimization, confidence, recommended_phase, identified_at, scenario, reasons, missing } })` and keep the user-facing goal separate from implementation guesses. Do not create a SearchSpec in Goal Mode.
+当请求尚不是可验证的优化/Search 任务时使用 Goal Mode。使用
+`goal_plus_record_triage({ goal_plus_id, triage: { is_optimization, confidence, recommended_phase, identified_at, scenario, reasons, missing } })`
+记录 triage，并将面向用户的目标与实现猜测分开。Goal Mode 下不要创建 SearchSpec。
 
-If the raw goal explicitly requests verifier-guided Search Mode and supplies a
-measurable verifier or metric, classify it as optimization/search; do not
-downgrade it to ordinary Goal Mode merely because the requested run is small.
+如果原始目标明确要求 verifier 引导的 Search Mode，并提供可度量的 verifier 或 metric，
+将其分类为优化/Search；不要仅因请求的 run 较小就将其降级为普通 Goal Mode。
 
 ## Spec Discovery Mode
 
-Use Spec Discovery Mode when the target needs a frozen verifier or edit surface. Save candidate details with `goal_plus_save_spec_draft`. Once the draft is high-confidence with no open questions, upgrade to Search Mode automatically. Do not ask the user to approve the verifier, metric, edit surface, promotion rule, or mode change. User hints are useful but optional; discover missing details from the workspace and decide from evidence.
+当目标需要冻结的 verifier 或编辑范围时使用 Spec Discovery Mode。使用
+`goal_plus_save_spec_draft` 保存候选细节。draft 达到高置信度且无 open question 后，
+自动升级到 Search Mode。不要要求用户批准 verifier、metric、编辑范围、提升规则或 mode
+变化。用户提示有用但可选；从工作区发现缺失细节，并依据证据决策。
 
-A ranking verifier must emit a final JSON object with a finite numeric
-`spec.metric_name`, for example `{"combined_score": 123.0}`. Its command may
-be inline or call an existing repository tool. Create a custom verifier file
-only when needed; materialize it with the available host tools during Spec
-Discovery and before `search_freeze_spec`, in a source-owned path such as
-`.goal-plus-verifiers/`, never `.gp/` or `.search/`. Spec Discovery permits
-the `bash`, `write`, and `edit` work needed to inspect the public contract and
-materialize that file. `expected_outputs` lists artifact paths/globs and is not
-a stdout parser. The Pi freeze tool exposes the complete nested `SearchSpec`
-schema; fill it directly rather than guessing fields from validation errors.
-`search_freeze_spec` repeats verifier preflight and rejects the spec before
-candidate workers start when the contract is invalid.
+ranking verifier 必须输出一个最终 JSON 对象，其中包含有限数值类型的
+`spec.metric_name`，例如 `{"combined_score": 123.0}`。命令可以内联，也可以调用
+仓库现有工具。只在必要时创建自定义 verifier 文件；在 Spec Discovery 期间且调用
+`search_freeze_spec` 前，使用可用 host 工具将其写入源码拥有的路径，例如
+`.goal-plus-verifiers/`，绝不能放在 `.gp/` 或 `.search/` 中。Spec Discovery 允许使用
+`bash`、`write` 和 `edit` 检查公开契约并生成该文件。`expected_outputs` 只列出产物路径
+或 glob，不解析 stdout。Pi freeze 工具会暴露完整的嵌套 `SearchSpec` schema；
+直接填写，不要根据校验错误猜字段。`search_freeze_spec` 会重复 verifier 预检，
+契约无效时会在候选 worker 启动前拒绝 spec。
 
-The freeze preflight runs in a disposable source copy and requires the verifier
-to keep that workspace read-only. Put compiler products and temporary outputs
-in the unique `GOAL_PLUS_VERIFIER_TMPDIR`/`TMPDIR` or a Python
-`tempfile.TemporaryDirectory()`. Never use one fixed `/tmp` pathname because
-the managed Pi pool may verify several candidates concurrently. A
-`VerifierWorkspaceSideEffect` must be repaired and refrozen before any Search
-run uses candidate budget.
+冻结预检在一次性源码副本中运行，并要求 verifier 保持该工作区只读。编译器产物和临时
+输出应放入唯一的 `GOAL_PLUS_VERIFIER_TMPDIR`/`TMPDIR` 或 Python
+`tempfile.TemporaryDirectory()`。绝不能使用固定 `/tmp` 路径，因为受管 Pi pool
+可能并发验证多个候选。任何 `VerifierWorkspaceSideEffect` 都必须修复并重新冻结，
+然后 Search run 才能使用候选预算。
 
-For an AscendC Direct Invoke operator goal described by semantics, approximate
-shapes/dtypes, and reference hints, record
-`scenario="ascendc_direct_invoke"` and read
-`examples/ascendc-direct-search/SPEC_DISCOVERY.md` completely. Follow its
-request schema and source template. Run its `materialize_knowledge.py` with
-`knowledge.sources.json` against exact pinned Git commits to generate the
-task-local `_skills/`; never copy a live Skill directory. Treat the curated AKG
-AscendC tree as primary knowledge and use only the declared CANNBot supplements
-for uncovered operator families. The main agent generates the Golden, cases,
-verifier, baseline, and SearchSpec. Before `search_freeze_spec`, use a JSON
-Schema validator to validate the generated `_task/operator_request.json`
-against `examples/ascendc-direct-search/request.schema.json`; JSON parsing or a
-manual field checklist is insufficient, and validation failure blocks
-freezing. Never require the user to run a task preparer, supply a task
-directory, or write a verifier. Support Direct Invoke only; the generated
-knowledge is read-only and cannot launch source Agent or Plugin workflows.
+对于用语义、大致 shape/dtype 和参考提示描述的 AscendC Direct Invoke 算子目标，
+记录 `scenario="ascendc_direct_invoke"`，并完整读取
+`examples/ascendc-direct-search/SPEC_DISCOVERY.md`。遵循其中的 request schema
+和源码模板。针对准确固定的 Git commit，使用 `knowledge.sources.json` 运行
+`materialize_knowledge.py` 生成任务局部 `_skills/`；绝不能复制 live Skill 目录。
+将精编的 AKG AscendC tree 作为主要知识，只对未覆盖的算子类别使用声明的 CANNBot
+补充。主 agent 生成 Golden、cases、verifier、baseline 和 SearchSpec。调用
+`search_freeze_spec` 前，使用 JSON Schema validator 按照
+`examples/ascendc-direct-search/request.schema.json` 校验生成的
+`_task/operator_request.json`；仅做 JSON 解析或手动字段清单检查不够，校验失败会阻止
+冻结。绝不能要求用户运行任务准备器、提供任务目录或编写 verifier。仅支持 Direct Invoke；
+生成的知识是只读的，不能启动源码 Agent 或 Plugin 工作流。
 
-This scenario is self-contained. Do not invoke an external AscendC Agent,
-plugin, or orchestration workflow.
+该场景自包含。不要调用外部 AscendC Agent、plugin 或编排工作流。
 
 ## Search Mode
 
-When the goal is search-ready:
+目标已准备好进入 Search 时：
 
-When the requested run enables SpaceAgent, call `search_space_open` once after
-`search_create` and before opening the Pi pool. `enforce` applies duplicate and
-active-reservation rejects; `observe` records the same decisions without
-blocking. SpaceAgent never supplies directions. Candidate workers follow
-`context.search_space`, submit their own three-field PlanCards, and pass the
-accepted plan id to the verifier.
+`origin="initial"` 和 `origin="in_progress"` 仅表示 provenance，遵循相同的自主准入规则。
 
-`origin="initial"` and `origin="in_progress"` are provenance only and follow
-the same autonomous admission rule.
+调用 `search_freeze_spec` 前，确保 SearchSpec strategy 设置
+`worker_host: "pi-rpc"` 和 `orchestration_mode: "parallel_loops"`。Pi Search Mode
+必须通过 Pi RPC driver 运行一组固定的初始自主候选循环。不能省略这些字段；旧运行时默认值
+不能表达该 policy。
 
-Before `search_freeze_spec`, ensure the SearchSpec strategy sets
-`worker_host: "pi-rpc"` and `orchestration_mode: "parallel_loops"`. Pi Search
-Mode must run a fixed initial
-set of autonomous candidate loops through the Pi RPC driver. Do not omit these
-fields; legacy runtime defaults do not express this policy.
+Pi 支持的 strategy name 仅限以下可移植内置子集：
 
-Pi-supported strategy names are limited to the portable builtin subset:
+- `agent_guided`、`agent` 或 `default`
+- `random` 或 `random_mode`
 
-- `agent_guided`, `agent`, or `default`
-- `random` or `random_mode`
+起草 Pi SearchSpec 时只能提供该子集中的名称。不要静默改写已经冻结但不受支持的 strategy；
+让运行时校验拒绝它，并在冻结前创建修正后的 draft。
 
-Only offer names from this subset when drafting a Pi SearchSpec. Do not silently
-rewrite an already frozen unsupported strategy; let runtime validation reject
-it and create a corrected draft before freezing instead.
+### Search Run 预算规划
 
-### Search Run Budget Planning
+调用 `search_freeze_spec` 前选择整个 run 的候选预算；预算一旦冻结，不能在该 run 内增长。
+普通 `parallel_loops` 执行中，将 `budget.max_candidates` 设为与
+`budget.max_parallel` 相同：每个初始候选工作区都是长期自主循环，不创建后续规划轮次
+或基于质量的替代项。
 
-Choose the whole-run candidate budget before `search_freeze_spec`; it is frozen
-and cannot grow inside that run. In normal `parallel_loops` execution, set
-`budget.max_candidates` equal to `budget.max_parallel`: every initial candidate
-workspace is one long-lived autonomous loop, and no later planning round or
-quality-based replacement is created.
+用户或外层 harness 提供 wall-clock、attempt 或 token 预算时：
 
-When the user or outer harness supplies a wall-clock, attempt, or token budget:
+1. 为主 agent 最终验证、选择、报告和提升预留时间。
+2. 选择 host 能支持的 `max_parallel`。没有更好的资源信号时，建议使用 4。
+3. 为每条初始循环提供足够的不间断时间，以创建真实产物和 verifier 证据。
+4. 根据外层剩余时间和最终收尾预留推导每份 continuation 预算，绝不能根据主 agent
+   是否喜欢该候选来决定。
+5. 没有全局停止事实时继续恢复。全局停止事实包括：显式成功标准、用户停止、run 失效，
+   或剩余时间不足以容纳另一个 worker 轮次和收尾。
 
-1. Reserve time for main-agent final verification, selection, reporting, and
-   promotion.
-2. Choose `max_parallel` that the host can support. When no better resource
-   signal exists, recommend 4.
-3. Give every initial loop enough uninterrupted time to create a real artifact
-   and verifier evidence.
-4. Derive each continuation budget from outer remaining time and final closeout
-   reserve, never from whether the main agent likes that candidate.
-5. Resume while no global stop fact is true. Global stop facts are an explicit
-   success criterion, user stop, invalidated run, or insufficient remaining
-   time for another worker turn plus closeout.
+subagent 负责其候选工作区内的瓶颈分析、假设选择、特性迁移、结构重启和 rebase 决策。
+主 agent 绝不发送偏好的技术方向。低分、一次没有改进的迭代或其他候选领先，
+都不是停止或替换条件。
 
-The subagent owns bottleneck analysis, hypothesis choice, feature transfer,
-structural restart, and rebase decisions within its candidate workspace. The
-main agent never sends a preferred technical direction. A low score, one
-non-improving turn, or another candidate leading is not a stop or replacement
-condition.
+遵循 `raw_goal` 中的探索模式末行。`probe` 模式下，全局 policy 可以在可行性、潜力和阻塞
+因素已经可信时停止。`autonomous` 模式下，只要还有外层时间，就为每个 active 候选提供
+可续期 lease。任何 worker lease 结束都不会完成 Goal Plus 记录。
 
-Follow the exploration line in `raw_goal`. In `probe` mode, the global policy
-may stop after feasibility, potential, and blockers are credible. In
-`autonomous` mode, give every active candidate renewable leases while outer
-time remains. No worker lease ending completes the Goal Plus record.
-
-1. `search_freeze_spec`, or reuse an existing `frozen_spec_id` when the later
-   cycle keeps the same verifier and edit contract
+1. 调用 `search_freeze_spec`；如果后续 cycle 保持相同 verifier 和编辑契约，
+   可复用现有 `frozen_spec_id`
 2. `search_create`
 3. `goal_plus_link_search_run`
-4. Call `search_plan_next(requested_k=budget.max_parallel)` exactly once and
-   `search_start_batch` exactly once to create all initial candidates. Runtime
-   rejects a second plan in `parallel_loops` mode.
-5. Call `pi_search_pool_open(run_id, candidate_ids, directive?,
-   worker_budgets?, final_verify=true, max_parallel=<budget.max_parallel>)`.
-   This starts detached managed workers and returns a durable `pool_id`
-   immediately.
-6. Call `pi_search_pool_wait_any(pool_id, timeout_seconds=...)`. Process every
-   returned event. `candidate_ready` means the driver has started/bound the
-   agent session and completed the main-agent final verifier; raw process exit
-   alone is not success.
-7. For every `candidate_ready`, read the prior and current best from
-   `search_list_history` or `goal_plus_monitor_snapshot`. The pool's
-   `final_verify=true` path has already run the parent completion verifier, so
-   the durable best candidate/score is current. Inspect
-   `handle.metadata.progress_handoff.model_handoff` and `verifier_assessment`
-   for recovery or a concrete verifier failure, but do not use them to choose a
-   next technical direction. Sparse diagnostics, a low score, or lack of
-   improvement are not grounds to refreeze, stop, or replace the candidate. If
-   the main agent confirms verifier contract,
-   coverage, determinism, target-alignment, or infrastructure failure, execute
-   this mandatory quiesce/refreeze sequence before any other search action:
-   1. call `search_invalidate_run` with a concrete reason, summary, and evidence;
-   2. call `pi_search_pool_close(pool_id, mode="interrupt")`;
-   3. poll the exact pool until `active_count=0`, preserving terminal handoffs;
-   4. repair or regenerate the source-owned verifier and freeze a new spec;
-   5. call `search_create(new_frozen_spec_id, source_run_id=old_run_id)` and
-      link the successor run under the same `goal_plus_id`.
-   Never select or promote the invalidated run. Its artifacts, scoped pitfalls,
-   and features remain research input, but every old score is historical and
-   every imported feature must be re-verified under the successor contract.
-8. After each validated terminal event, apply only the global stop policy. If it
-   is false, call `pi_search_pool_continue` for that exact `candidate_id` with a
-   budget that fits remaining time. The runtime supplies this fixed neutral
-   continuation prompt:
+4. 调用且只调用一次 `search_plan_next(requested_k=budget.max_parallel)`，再调用且只调用
+   一次 `search_start_batch`，创建全部初始候选。运行时会拒绝 `parallel_loops` 模式下的
+   第二份 plan。
+5. 调用 `pi_search_pool_open(run_id, candidate_ids, directive?, worker_budgets?, final_verify=true, max_parallel=<budget.max_parallel>)`。
+   它启动 detached 受管 worker，并立即返回持久化 `pool_id`。
+6. 调用 `pi_search_pool_wait_any(pool_id, timeout_seconds=...)`。处理每个返回事件。
+   `candidate_ready` 表示 driver 已启动并绑定 agent session，且完成主 agent 最终 verifier；
+   仅有原始进程退出不代表成功。
+7. 对每个 `candidate_ready`，从 `search_list_history` 或
+   `goal_plus_monitor_snapshot` 读取之前和当前的最佳结果。pool 的 `final_verify=true`
+   路径已运行父级完成 verifier，因此持久化最佳候选/分数是最新的。检查
+   `handle.metadata.progress_handoff.model_handoff` 和 `verifier_assessment` 以便恢复或
+   识别具体 verifier 失败，但不要用它们选择下一技术方向。诊断稀疏、分数低或没有改进，
+   都不是重新冻结、停止或替换候选的理由。如果主 agent 确认 verifier 契约、覆盖范围、
+   确定性、目标对齐或基础设施失败，在任何其他 Search action 前执行以下强制停止/重冻结序列：
+   1. 使用具体 reason、summary 和 evidence 调用 `search_invalidate_run`；
+   2. 调用 `pi_search_pool_close(pool_id, mode="interrupt")`；
+   3. 轮询准确 pool，直到 `active_count=0`，并保留终态 handoff；
+   4. 修复或重新生成源码拥有的 verifier，并冻结新 spec；
+   5. 调用 `search_create(new_frozen_spec_id, source_run_id=old_run_id)`，并把后继 run
+      链接到同一个 `goal_plus_id`。
+   绝不能选择或提升已失效的 run。其产物、限定范围的问题和特性仍可作为研究输入，
+   但每个旧分数都只是历史，每个导入特性都必须在后继契约下重新验证。
+8. 每个终态事件验证后，只执行全局停止 policy。如果 policy 为 false，使用能适应剩余时间的
+   预算，对该准确 `candidate_id` 调用 `pi_search_pool_continue`。运行时提供以下固定中性
+   continuation prompt：
 
    ```text
-   Continue the same autonomous search loop from the latest committed evidence.
-   Refresh runtime context, choose the next evidence-backed hypothesis yourself,
-   verify every material change, and keep working while the assigned budget remains.
+   根据最新提交的证据继续同一条自主搜索循环。
+   刷新运行时上下文，自行选择下一个有证据支持的假设，
+   验证每项实质变更，并在仍有分配预算时继续工作。
    ```
 
-   Pi continuation is cross-process native-session continuation: the supervisor
-   launches a fresh Pi process in the same workspace, but it calls
-   `search_continue_agent_session` and reloads the same persisted Pi session.
-   It preserves both `agent_session_id` and candidate identity. Do not call
-   `search_plan_next`, `search_start_batch`, or any new-candidate submission
-   after initial pool creation. Do not vary continuation
-   based on rank or improvement.
-   `pi_search_pool_snapshot(run_id=...)` rediscovers the pool after an
-   interrupted main Pi turn; use `pool_id` for later exact snapshots.
-9. Call `pi_search_pool_close(mode="drain")` before selection, or
-   `mode="interrupt"` when remaining work should be stopped. Then call
-   `search_select` and `search_promote` when promotion is requested.
-   `search_select` ranks verifier-recorded iterations, checks out the best
-   committed candidate `git_head`, and runs a main-agent final verifier on that
-   exact commit before recording the selected candidate.
-10. Call `goal_plus_record_search_result`. Do not call `search_report` yet;
-    result recording reserves the canonical report paths without generating
-    Markdown or HTML.
-11. Run the raw-goal audit. Keep the same run while its evaluation/edit contract
-    remains adequate. A new incumbent or low-performing route never opens a
-    replacement run. Create a successor only for a concrete spec/contract
-    revision or distinct measurable subproblem, using `source_run_id`; inherited
-    scores remain historical until reverified.
-12. Run the final raw-goal audit. For a normal record, finish with
-    `goal_plus_set_status`. If `policy.final_check.mode="required"`, instead:
-    - call `goal_plus_prepare_final_check(checker_host="pi")`
-    - pass the exact returned `launch` object to
-      `pi_goal_plus_run_final_check`
-    - let the stateless, read-only Pi reviewer call
-      `goal_plus_submit_final_check` itself
-    - address failed findings and prepare a fresh check
-    A passing required check atomically marks the record complete.
-13. Only after the Goal Plus record reaches a terminal status (`complete`,
-    `blocked`, or `abandoned`), call `search_report` exactly once for every
-    successfully recorded `run_id`. Never generate an intermediate Goal Plus
-    report. Return the final Markdown and HTML paths to the user.
+   Pi continuation 是跨进程原生 session continuation：supervisor 在同一工作区启动新的
+   Pi 进程，但会调用 `search_continue_agent_session` 并重新加载同一个持久化 Pi session。
+   它保留 `agent_session_id` 和候选身份。初始 pool 创建后，不要调用
+   `search_plan_next`、`search_start_batch` 或任何新候选提交。不要根据排名或改进情况
+   改变 continuation。
+   主 Pi 轮次中断后，使用 `pi_search_pool_snapshot(run_id=...)` 重新发现 pool；
+   后续准确 snapshot 使用 `pool_id`。
+9. 选择前调用 `pi_search_pool_close(mode="drain")`；需要停止剩余工作时使用
+   `mode="interrupt"`。然后按提升要求调用 `search_select` 和 `search_promote`。
+   `search_select` 对 verifier 记录的 iteration 排名，checkout 最佳已提交候选的
+   `git_head`，并在记录所选候选前对该准确 commit 运行主 agent 最终 verifier。
+10. 调用 `goal_plus_record_search_result`。此时不要调用 `search_report`；结果记录只预留
+    规范报告路径，不生成 Markdown 或 HTML。
+11. 执行原始目标审计。评估/编辑契约仍充分时保留同一个 run。新 incumbent 或低性能路线
+    绝不会开启替代 run。只有具体 spec/契约修订或不同的可度量子问题才能创建后继项，
+    并使用 `source_run_id`；继承分数在重新验证前仍只是历史。
+12. 执行最终原始目标审计。普通记录使用 `goal_plus_set_status` 完成。如果
+    `policy.final_check.mode="required"`，则：
+    - 调用 `goal_plus_prepare_final_check(checker_host="pi")`
+    - 把准确返回的 `launch` 对象传给 `pi_goal_plus_run_final_check`
+    - 让无状态、只读的 Pi 审查员自行调用 `goal_plus_submit_final_check`
+    - 处理失败发现并准备新检查
+    通过的必需检查会原子地把记录标记为 complete。
+13. 只有 Goal Plus 记录达到终态（`complete`、`blocked` 或 `abandoned`）后，才对每个
+    成功记录的 `run_id` 调用且只调用一次 `search_report`。绝不能生成中间 Goal Plus
+    报告。向用户返回最终 Markdown 和 HTML 路径。
 
-The top-level stop gate blocks every still-active Goal Plus record and returns
-the full current raw goal plus creation/check timestamps and elapsed time. Use
-that prompt to audit all requirements and any time condition already present
-in the goal. Continue if unfinished; otherwise record a truthful terminal
-status before stopping. Do not invent a separate Goal Plus deadline.
+顶层 stop gate 会阻止每条仍处于 active 的 Goal Plus 记录，并返回完整当前原始目标以及
+创建/检查时间戳和已用时间。使用该 prompt 审计全部要求和目标中已有的任何时间条件。
+未完成时继续；否则在停止前记录真实终态。不要编造单独的 Goal Plus deadline。
 
-### Post-result Spec Reassessment
+### 结果后的 Spec 重新评估
 
-After the first meaningful optimization result becomes available, do not infer
-that the current frozen spec is adequate merely because its score beats the
-baseline or improves by a large relative factor. Relative improvement is useful
-evidence, but it does not prove that the raw goal is close to being satisfied,
-that important failure modes are covered, or that deeper structural optimization
-is unavailable. When an absolute target, acceptance threshold, success
-criterion, or known upper bound is unavailable, state that uncertainty and
-explicitly consider whether the apparent improvement could still be far from
-useful success.
+首次获得有意义的优化结果后，不要仅因当前冻结 spec 的分数超过 baseline 或相对提升很大，
+就推断该 spec 已充分。相对改进是有用证据，但不能证明原始目标已接近满足、重要失败模式
+已覆盖，或不存在更深的结构优化。如果没有绝对目标、验收阈值、成功标准或已知上界，
+说明该不确定性，并明确考虑表面改进是否仍远未达到有用的成功。
 
-Use the existing raw-goal audit to consider the appropriate response. The
-default after a score improvement is to continue the current run; changing
-search direction, transferring a feature, or deepening an artifact does not
-require a new frozen spec.
+使用现有原始目标审计判断适当响应。分数提高后默认继续当前 run；改变搜索方向、迁移特性
+或深入优化产物都不需要新冻结 spec。
 
-- `upgrade_spec`: concrete evidence shows that the current verifier or edit
-  contract misrepresents the raw goal, or the measurable subproblem itself must
-  change. Save a stronger draft, freeze a new spec, and create a new Search run.
-  Never modify the prior frozen artifacts in place. Sparse diagnostics, low
-  scores, slow progress, or a better search idea are not sufficient evidence.
-- `keep_spec_with_justification`: the current spec remains a credible proxy for
-  the raw goal. State the evidence for keeping it and direct subsequent Search
-  remains available to every candidate loop; each subagent decides whether to
-  pursue deeper or structurally different approaches.
-- `revise_goal`: the effective scope, deliverables, or success criteria need to
-  change. Call `goal_plus_update_goal` with the complete revised raw goal and
-  current `expected_revision`, re-triage, then discover and freeze the spec for
-  that revision.
+- `upgrade_spec`：具体证据表明当前 verifier 或编辑契约错误表达了原始目标，或可度量子问题
+  本身必须改变。保存更强 draft，冻结新 spec，并创建新 Search run。绝不能原地修改旧冻结
+  产物。诊断稀疏、分数低、进展缓慢或更好的搜索思路都不是充分证据。
+- `keep_spec_with_justification`：当前 spec 仍是原始目标的可信 proxy。说明保留它的证据，
+  并继续 Search。每条候选循环都仍可探索更深或结构不同的方法；由各 subagent 自行决定。
+- `revise_goal`：实际范围、交付物或成功标准需要改变。使用完整修订后的原始目标和当前
+  `expected_revision` 调用 `goal_plus_update_goal`，重新 triage，然后为该修订版发现并冻结 spec。
 
-These labels describe a main-agent decision inside the existing raw-goal audit;
-they are not new runtime states, an additional workflow phase, or a user
-approval checkpoint.
+这些标签描述现有原始目标审计中的主 agent 决策；它们不是新的运行时状态、额外工作流 phase
+或用户审批 checkpoint。
 
-Every asynchronous completion may add a `verifier_assessment`. The main agent
-must review reported `concern` evidence promptly because one worker can discover
-an evaluation-contract defect while other workers remain live. Pause continuation
-while checking, but do not interrupt siblings on an unconfirmed worker opinion.
-Once confirmed, `search_invalidate_run` fences new plans, sessions, verifier
-records, selection, and promotion; then the main agent must interrupt and wait
-for every host worker before changing verifier files. An infrastructure failure
-follows the same mandatory path. A quality or coverage concern requires
-demonstrated ranking unreliability or missing raw-goal coverage; when a
-standardized evaluator agrees with the target judge, retain it and continue the
-same run.
+每个异步完成事件都可能添加 `verifier_assessment`。主 agent 必须及时审查报告的
+`concern` 证据，因为某个 worker 可能在其他 worker 仍 live 时发现评估契约缺陷。
+核查期间暂停 continuation，但不要因未经确认的 worker 意见中断其他 worker。一旦确认，
+`search_invalidate_run` 会阻止新 plan、session、verifier 记录、选择和提升；随后主 agent
+必须先中断并等待每个 host worker，再改变 verifier 文件。基础设施失败遵循同一强制路径。
+质量或覆盖问题需要证明排名不可靠或缺少原始目标覆盖；如果标准评估器与目标 judge 一致，
+则保留它并继续同一个 run。
 
-One Goal Plus record is the complete user task. `search_tasks` is its
-append-only search-task history; each item is one `run_id` over one frozen
-spec. `linked_search` is only the current-task compatibility view. A search
-task has one initial planning round in `parallel_loops` mode and may contain
-many same-candidate worker sessions and verifier iterations.
+一条 Goal Plus 记录就是完整用户任务。`search_tasks` 是其仅追加的 Search 任务历史；
+每项是一个冻结 spec 上的一个 `run_id`。`linked_search` 只是当前任务的兼容视图。
+`parallel_loops` 模式下，一项 Search 任务只有一轮初始规划，但可以包含多个同候选 worker
+session 和 verifier iteration。
 
-`goal_revisions` and `final_checks` are append-only histories. An interrupted
-Pi turn keeps the active Goal Plus id; the next session/turn restores it from
-native state. A checker process exit or timeout records that attempt as
-`interrupted`; call `goal_plus_prepare_final_check` to launch a fresh attempt.
-Editing the goal supersedes pending checks and
-requires fresh triage and a new check, while older Search tasks remain audit
-history only.
+`goal_revisions` 和 `final_checks` 是仅追加历史。中断的 Pi 轮次会保留 active Goal Plus id；
+下一 session/轮次从原生状态恢复。检查员进程退出或超时会把该尝试记录为 `interrupted`；
+调用 `goal_plus_prepare_final_check` 启动新尝试。编辑目标会使待处理检查失效，并要求重新
+triage 和新检查，而旧 Search 任务仅保留为审计历史。
 
-Never invent `frozen_spec_id`, `run_id`, `plan_id`, `candidate_id`, or
-`agent_session_id` values. Use only exact ids returned by the immediately
-preceding runtime tool. In particular, call `search_create` before
-`goal_plus_link_search_run` and link the exact returned `run_id`.
+绝不能编造 `frozen_spec_id`、`run_id`、`plan_id`、`candidate_id` 或
+`agent_session_id`。只使用紧邻的前序运行时工具返回的准确 id。尤其要先调用
+`search_create`，再调用 `goal_plus_link_search_run`，并链接准确返回的 `run_id`。
 
-The `pi_search_pool_*` tools are a host-owned supervisor, not Search runtime
-lifecycle APIs. Their durable state lives under `.gp/host-pools/pi/`. They
-enforce `max_parallel`, return `wait_any` events, and survive a main Pi turn
-disconnect. Each pool job internally performs the same chain:
-`search_start_agent_session`, foreground Pi RPC worker launch,
-`search_bind_agent_handle`, and the final `search_run_verifier` without
-`agent_session_id` when `final_verify=true`. These mechanical steps are not
-public Pi main-agent tools.
+`pi_search_pool_*` 工具是 host 拥有的 supervisor，不是 Search 运行时 lifecycle API。
+其持久化状态位于 `.gp/host-pools/pi/`。它们强制执行 `max_parallel`，返回 `wait_any`
+事件，并能在主 Pi 轮次断开后继续存在。每个 pool job 内部执行相同链条：
+`search_start_agent_session`、前台 Pi RPC worker 启动、`search_bind_agent_handle`，
+以及 `final_verify=true` 时不带 `agent_session_id` 的最终 `search_run_verifier`。
+这些机械步骤不是公开的 Pi 主 agent 工具。
 
-Do not call `search_start_agent_session`, `search_bind_agent_handle`, or
-`search_continue_agent_session` from the Pi main agent; the managed pool owns
-those mechanical steps. For another attempt on an existing candidate, call
-`pi_search_pool_continue`. The supervisor then uses
-`search_continue_agent_session` internally and records that step before
-launching the next process against the same native session.
+不要从 Pi 主 agent 调用 `search_start_agent_session`、`search_bind_agent_handle` 或
+`search_continue_agent_session`；受管 pool 负责这些机械步骤。对现有候选进行另一次尝试时，
+调用 `pi_search_pool_continue`。supervisor 随后在内部使用
+`search_continue_agent_session`，记录该步骤，再针对同一个原生 session 启动下一进程。
 
-Initial pool launch and continuation are non-blocking; the detached wrapper owns the foreground Pi
-RPC child and its cleanup. `worker_budget.max_runtime_seconds` is required and
-maps to the Pi RPC process watchdog. `worker_budget.max_turns` is only a prompt
-hint. There is no public synchronous candidate/batch runner or manual pool
-submit API.
+初始 pool 启动和 continuation 都是非阻塞的；detached wrapper 负责前台 Pi RPC 子进程及其
+清理。`worker_budget.max_runtime_seconds` 是必需字段，并映射到 Pi RPC 进程 watchdog。
+`worker_budget.max_turns` 只是 prompt 提示。没有公开的同步候选/batch runner 或手动 pool
+提交 API。
 
-Pi workers persist native session JSONL under `.gp/host-sessions/pi/`. If a
-worker times out, fails, or simply completes while the global stop policy is
-false, call `pi_search_pool_continue`. The driver starts another Pi process,
-reloads the same native session, preserves `agent_session_id`, and requests only
-entries after the last persisted metrics cursor. MCP history, verifier
-iterations, Git state, and bounded handoff remain authoritative recovery
-evidence if native session loading fails.
+Pi worker 把原生 session JSONL 持久化到 `.gp/host-sessions/pi/`。如果 worker 超时、失败，
+或在全局停止 policy 为 false 时正常完成，调用 `pi_search_pool_continue`。driver 启动另一
+Pi 进程，重新加载同一个原生 session，保留 `agent_session_id`，并且只请求上次持久化
+metrics cursor 之后的 entry。如果原生 session 加载失败，MCP history、verifier iteration、
+Git 状态和有界 handoff 仍是权威恢复证据。
 
-Each continuation launch starts a new dispatch-scoped budget. A deadline,
-closeout, or time advisory persisted in the native conversation from an earlier
-dispatch is historical; only warnings delivered after the latest launch apply.
+每次 continuation launch 都开始新的派发级预算。原生会话中早期派发保存的 deadline、
+closeout 或时间提示都只是历史；只遵守最新 launch 之后收到的警告。
 
-Exception: never redispatch after `failure_class=VerifierWorkspaceSideEffect`,
-`metrics.infrastructure_failure=true`, or
-`metrics.candidate_action=stop_and_report`. The worker must stop without
-cleaning or retrying, and the main agent must not resume candidates on the
-same `frozen_spec_id`. Repair the source-owned verifier, freeze a new spec, and
-create a new run. The host driver, not the MCP runtime, owns closing out any
-siblings that are still executing in the pool.
+例外：出现 `failure_class=VerifierWorkspaceSideEffect`、
+`metrics.infrastructure_failure=true` 或 `metrics.candidate_action=stop_and_report` 后，
+绝不能重新派发。worker 必须停止，不能清理或重试；主 agent 不能在同一个
+`frozen_spec_id` 上恢复候选。修复源码拥有的 verifier，冻结新 spec，并创建新 run。
+由 host driver 而不是 MCP 运行时负责结束 pool 中仍在执行的其他 worker。
 
-Each worker also leaves a bounded `progress_handoff` in its bound handle. It
-combines the optional `.tmp/handoff.json` recovery note with a runner-owned Git
-and verifier snapshot. `search_get_agent_context` exposes it under
-`context.resume`; use this explicit resume object for artifact and verifier
-facts. Native Pi conversation may preserve reasoning and continuation
-instructions, but it must never override durable evidence or top-N history.
+每个 worker 也会在其绑定 handle 中留下有界 `progress_handoff`。它将可选的
+`.tmp/handoff.json` 恢复记录与 runner 拥有的 Git 和 verifier snapshot 合并。
+`search_get_agent_context` 在 `context.resume` 下暴露它；使用该显式 resume 对象获取产物
+和 verifier 事实。原生 Pi 会话可以保留推理和 continuation 指令，但绝不能覆盖持久证据
+或 top-N history。
 
-When a candidate continues after its first dispatch, pass an explicit
-`worker_budget` to `pi_search_pool_continue`. This creates a fresh Pi process
-for the same native session and candidate workspace with a dispatch budget
-chosen from the outer remaining time; it does not mutate the frozen spec.
+候选在首次派发后继续时，向 `pi_search_pool_continue` 传入显式 `worker_budget`。
+这会为同一个原生 session 和候选工作区创建新 Pi 进程，其派发预算从外层剩余时间中选择；
+它不会改变冻结 spec。
 
-Do not redispatch only because the worker handle has `timed_out=true`. When the
-candidate already has a `process_passed=true` Git-backed iteration, that best
-iteration remains valid search evidence and eligible for later planning and
-selection. Official history reports that best evidence in `score` and
-`best_iteration`, while `latest_score` and `latest_process_passed` preserve a
-later timeout or regression for diagnosis.
+不要仅因 worker handle 含有 `timed_out=true` 就重新派发。如果候选已经有
+`process_passed=true` 且有 Git 支持的 iteration，该最佳 iteration 仍是有效 Search 证据，
+并符合后续规划和选择条件。正式 history 在 `score` 和 `best_iteration` 中报告该最佳证据，
+而 `latest_score` 和 `latest_process_passed` 保留后续 timeout 或 regression 供诊断。
 
-History is runtime-owned, not a local plan file. Workers must call
-`search_get_agent_context` first and use `context.resume`, `context.history`,
-`context.iterations`, `context.results`, and the inherited
-`context.results_tsv` as the resume source. Every verifier call supplies a
-concise `hypothesis`; the runtime validates the inherited workspace-root
-`results.tsv`, appends exactly one row for every returned report, and commits
-the ledger. Workers never edit it directly. Later-iteration history includes the
-latest structured `research_summary` when a worker supplied a handoff, so use
-its task-specific results and pitfalls rather than repeating failed variants.
+candidate-local history 由运行时拥有，不是本地 plan 文件。worker 必须先调用
+`search_get_agent_context`，并使用 `context.resume`、`context.iterations`、
+`context.results` 和继承的 `context.results_tsv` 作为恢复来源。每轮修改前读取
+`search_get_global_plan`，再从 settled、Git-clean workspace 用
+`search_submit_iteration_plan` 提交不可变的一句话计划。其他 candidate 的尝试只通过这个
+窄视图披露；仅在 worker 独立判断确有必要时，才在当前 workspace 使用
+`git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace。
+worker verifier 不再提交独立 `hypothesis`，plan description 是唯一描述。运行时校验工作区根目录
+`results.tsv`，为每份返回报告追加且只追加一条记录，并提交账本。worker 绝不直接编辑它。
+process verifier 同时返回 candidate-local `disposition`：严格改善为 `keep`，同分或退化
+为 `discard`，无有效排名证据为 `failure`。runtime 保留实际被测 commit，并在
+`discard`/`failure` 后恢复 candidate best；worker 不得自行 reset verifier-backed 状态。
+如果 worker 提供 handoff，后续 iteration history 会包含最新结构化 `research_summary`；
+应使用其中任务特定的结果和问题，避免重复失败变体。
 
-For optimization tasks, require workers to create a complete candidate artifact
-and run an early `search_run_verifier` before any long local optimization loop.
-For fix/target tasks, require the allowed-file edit before the verifier call; do
-not count verification of the unmodified starting point as worker evidence.
-`search_run_verifier` automatically commits changed candidate artifact files in
-the candidate workspace before running the verifier, so search progress must be
-visible as verifier-recorded runtime iterations with real `git_head` values, not
-hidden in the worker transcript or scratch scripts.
+对优化任务，要求 worker 在长时间本地优化循环前创建完整候选产物，并尽早运行
+`search_run_verifier`。对 fix/target 任务，要求先编辑允许文件再调用 verifier；
+不要把未修改初始状态的验证计为 worker 证据。`search_run_verifier` 会在运行 verifier 前
+自动提交候选工作区中已修改的候选产物文件，因此 Search 进展必须体现为带真实
+`git_head` 的 verifier 记录运行时 iteration，不能隐藏在 worker transcript 或临时脚本中。
 
-Pi RPC workers also check an advisory time estimate after completed worker
-tools. Once verifier evidence exists, the runner compares available worker or
-outer-task time with `(last subagent verifier - first candidate session) /
-subagent verifier count`, aggregated across sampled candidates. If one average
-submission no longer fits, it sends one informational `steer` to that Search
-candidate only. It does not stop the worker or replace the hard watchdog. Set
-`GOAL_PLUS_OUTER_DEADLINE_AT` in the outer harness to an RFC 3339 timestamp or
-Unix epoch when an end-to-end deadline is available.
+Pi RPC worker 还会在完成 worker 工具后检查提示性时间估算。存在 verifier 证据后，runner
+把可用 worker 或外层任务时间，与“最后一次 subagent verifier - 首个候选 session”的时间
+除以 subagent verifier 次数所得平均值进行比较，并在采样候选间汇总。如果剩余时间已无法
+容纳一次平均提交，它只向该 Search 候选发送一次提示性 `steer`。这不会停止 worker，
+也不会替代 hard watchdog。外层 harness 有端到端 deadline 时，将
+`GOAL_PLUS_OUTER_DEADLINE_AT` 设为 RFC 3339 时间戳或 Unix epoch。
 
-## Skill Boundary
+## Skill 边界
 
-Pi exposes `goal-plus` as the complete user-facing skill. Do not split Search
-Mode or scenario-specific optimization guidance into additional visible Pi
-skills. Keep domain constraints in the raw user goal, target workspace docs, or
-example documentation, and let Goal Plus discover the verifier-backed
-SearchSpec before opening Search Mode.
+Pi 将 `goal-plus` 暴露为完整的面向用户 skill。不要把 Search Mode 或特定场景优化指引拆成
+其他可见 Pi skill。将领域约束保留在原始用户目标、目标工作区文档或示例文档中，
+让 Goal Plus 在开启 Search Mode 前发现有 verifier 支持的 SearchSpec。
 
 ## Gates
 
-Before Search Mode tool use and main-agent mutating tools (`bash`, `edit`, and
-`write`), Pi's
-extension calls `goal_plus_gate(event="pre_tool_use")`. At turn end, the
-extension calls `goal_plus_gate(event="stop")`; if the gate blocks, it queues
-the continuation prompt and triggers another model turn. If the extension is
-unavailable, manually call the same gates and follow their allow/block
-decisions.
+使用 Search Mode 工具和主 agent 变更类工具（`bash`、`edit` 和 `write`）前，Pi extension
+调用 `goal_plus_gate(event="pre_tool_use")`。轮次结束时，extension 调用
+`goal_plus_gate(event="stop")`；如果 gate 阻止，它会把 continuation prompt 加入队列并
+触发另一个模型轮次。如果 extension 不可用，手动调用相同 gate 并遵循 allow/block 决策。
 
-## Monitoring
+## 监控
 
-For active or completed Goal Plus/Search runs, use
-`goal_plus_monitor_snapshot(goal_plus_id?, run_id?, stale_after_seconds?)`
-first. It is the primary read-only monitoring path.
+对 active 或已完成的 Goal Plus/Search run，首先使用
+`goal_plus_monitor_snapshot(goal_plus_id?, run_id?, stale_after_seconds?)`。
+它是主要只读监控路径。
 
-The monitor summarizes durable `.gp` evidence including goal status, all
-linked search tasks, per-task planning/started round counts, aggregate task,
-candidate, worker-session, verifier, and Pi cost counts, selected candidate,
-selected commit, report and promotion paths,
-candidate scores, per-iteration git heads, agent sessions, verifier iterations,
-one-shot time-advisory evidence, Pi RPC token/cost/context metrics, and
-stale/timed-out warnings. It does not
-start, wait for, or stop workers.
+monitor 汇总持久化 `.gp` 证据，包括目标状态、全部已链接 Search 任务、每项任务的规划/已启动
+轮次数、聚合任务、候选、worker session、verifier 和 Pi 成本计数、所选候选、所选 commit、
+报告与提升路径、候选分数、每个 iteration git head、agent session、verifier iteration、
+一次性时间提示证据、Pi RPC token/cost/context 指标以及 stale/timed-out 警告。
+它不会启动、等待或停止 worker。
 
-For one worker, use
-`search_get_agent_observability(agent_session_id)`. It returns the same
-versioned model/timing/terminal/usage/context/artifact/handoff schema across
-hosts and never returns prompt, reasoning, or tool payload bodies.
+对一个 worker 使用 `search_get_agent_observability(agent_session_id)`。它跨 host 返回相同的
+版本化 model/timing/terminal/usage/context/artifact/handoff schema，绝不返回 prompt、
+推理或工具 payload 正文。
 
-If the MCP tool is not directly exposed in the current host, use the matching
-Pi facade instead of manually tailing state files:
+如果当前 host 未直接暴露 MCP 工具，使用匹配的 Pi facade，不要手动 tail 状态文件：
 
 ```bash
 goal-plus-pi-tool goal_plus_monitor_snapshot \
@@ -433,6 +343,5 @@ goal-plus-pi-tool goal_plus_monitor_snapshot \
   --pretty
 ```
 
-Read raw `.gp/` files or host logs only when the monitor output is missing
-the field you need, or when debugging a specific transcript, verifier log, or
-host failure. Do not use manual file tailing as the primary monitoring path.
+只有 monitor 输出缺少所需字段，或调试特定 transcript、verifier log 或 host 失败时，
+才读取原始 `.gp/` 文件或 host log。不要把手动 tail 文件作为主要监控路径。

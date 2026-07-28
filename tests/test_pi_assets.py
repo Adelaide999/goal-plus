@@ -40,14 +40,15 @@ def test_pi_goal_plus_prompt_starts_with_create_call() -> None:
     assert 'worker_host: "pi-rpc"' in text
     assert 'worker_mode: "agent-session-pool"' not in text
     assert 'orchestration_mode: "parallel_loops"' in text
-    assert 'numeric `spec.metric_name`' in text
+    assert '有限数值类型的' in text
+    assert '`spec.metric_name`' in text
     assert ".goal-plus-verifiers/" in text
-    assert "`expected_outputs` lists artifact paths/globs only" in text
+    assert "`expected_outputs` 只列出产物路径或 glob" in text
     assert "GOAL_PLUS_VERIFIER_TMPDIR" in text
-    assert "fixed `/tmp`" in text
-    assert "do not read or audit target files before `goal_plus_record_triage`" in text
+    assert "固定的 `/tmp`" in text
+    assert "`goal_plus_record_triage` 之前不要读取或审计目标文件" in text
     assert ".goal-plus-verifiers/" in text
-    assert "`expected_outputs` lists" in text
+    assert "`expected_outputs` 只列出" in text
     assert "{{input}}" not in text
     assert text.index("goal_plus_create") < text.index("Goal Plus")
     assert text.index("goal_plus_create") < text.index("goal_plus_record_triage")
@@ -63,60 +64,60 @@ def test_pi_goal_plus_skill_records_modes_and_gate() -> None:
     assert "Goal Mode" in text
     assert "Spec Discovery Mode" in text
     assert "Search Mode" in text
-    assert "upgrade to Search Mode automatically" in text
-    assert "Do not ask the user" in text
-    assert "User hints are useful but optional" in text
+    assert "自动升级到 Search Mode" in text
+    assert "不要要求用户" in text
+    assert "用户提示有用但可选" in text
     assert "goal_plus_create" in text
     assert "goal_plus_gate" in text
     assert "goal_plus_monitor_snapshot" in text
-    assert "primary read-only monitoring path" in text
+    assert "主要只读监控路径" in text
     assert "goal-plus-pi-tool goal_plus_monitor_snapshot" in text
-    assert "Do not use manual file tailing as the primary monitoring path" in text
+    assert "不要把手动 tail 文件作为主要监控路径" in text
     assert "goal_plus_link_search_run" in text
     assert 'worker_host: "pi-rpc"' in text
     assert 'worker_mode: "agent-session-pool"' not in text
     assert 'orchestration_mode: "parallel_loops"' in text
-    assert "Pi-supported strategy names" in text
-    assert "`agent_guided`, `agent`, or `default`" in text
-    assert "`random` or `random_mode`" in text
-    assert "reuse an existing `frozen_spec_id`" in text
+    assert "Pi 支持的 strategy name" in text
+    assert "`agent_guided`、`agent` 或 `default`" in text
+    assert "`random` 或 `random_mode`" in text
+    assert "可复用现有 `frozen_spec_id`" in text
     assert "pi_search_pool_open" in text
     assert "max_parallel=<budget.max_parallel>" in text
     assert "pi_search_run_batch" not in text
     assert "pi_search_run_candidate" not in text
-    assert "final `search_run_verifier`" in text
+    assert "最终 `search_run_verifier`" in text
     assert "search_select" in text
     assert "search_report" in text
     assert "search_promote" in text
-    assert "cross-process native-session continuation" in text
+    assert "跨进程原生 session continuation" in text
     assert "search_continue_agent_session" in text
     assert "session_jsonl_restart" not in text
-    assert "early `search_run_verifier`" in text
-    assert "verification of the unmodified starting point" in text
-    assert "verifier-recorded runtime iterations" in text
-    assert "complete user-facing skill" in text
+    assert "尽早运行" in text
+    assert "未修改初始状态的验证" in text
+    assert "verifier 记录运行时 iteration" in text
+    assert "完整的面向用户 skill" in text
     assert "goal_plus_record_search_result" in text
-    assert "final raw-goal audit" in text
+    assert "最终原始目标审计" in text
     assert "/goal-plus-with-final-check" in text
     assert "goal_plus_update_goal" in text
-    assert "treat the latest user message as authoritative" in normalized
-    assert "scope, deliverables, or success criteria" in normalized
-    assert "clarify before revising or resuming" in normalized
-    assert "merely because the Goal Plus record is active" in normalized
+    assert "把最新用户消息视为本轮权威依据" in normalized
+    assert "范围、交付物或成功标准" in normalized
+    assert "在修订或恢复前先澄清" in normalized
+    assert "不要仅因 Goal Plus 记录处于 active" in normalized
     assert "goal_plus_prepare_final_check" in text
     assert "pi_goal_plus_run_final_check" in text
     assert "goal_plus_submit_final_check" in text
-    assert "Never generate an intermediate Goal Plus" in text
-    assert "Only after the Goal Plus record reaches a terminal status" in text
-    assert "native Pi `/goal-plus` command creates" in text
+    assert "绝不能生成中间 Goal Plus" in text
+    assert "只有 Goal Plus 记录达到终态" in text
+    assert "原生 Pi `/goal-plus` 命令会" in text
     assert "/goal-plus mode=autonomous" in text
     assert "/goal-plus mode=probe" in text
-    assert "canonical final line in `raw_goal`" in normalized
-    assert "No worker lease ending completes" in text
-    assert "Do not invent a separate Goal Plus deadline" in text
-    assert "queues" in text
-    assert "the continuation prompt" in text
-    assert "do not read or audit target files before `goal_plus_record_triage`" in text
+    assert "`raw_goal` 的规范末行" in normalized
+    assert "任何 worker lease 结束都不会完成" in text
+    assert "不要编造单独的 Goal Plus deadline" in text
+    assert "加入队列" in text
+    assert "continuation prompt" in text
+    assert "`goal_plus_record_triage` 前不要读取或审计目标文件" in text
 
 
 def test_pi_prompt_and_extension_defer_report_until_terminal_state() -> None:
@@ -127,9 +128,11 @@ def test_pi_prompt_and_extension_defer_report_until_terminal_state() -> None:
         encoding="utf-8"
     )
 
-    assert "Never call `search_report` during Search execution" in prompt
-    assert "terminal status, call `search_report` exactly once" in prompt
-    assert "Active linked Goal Plus records are rejected" in extension
+    assert "在 Search 执行" in prompt
+    assert "绝不能调用 `search_report`" in prompt
+    assert "Goal Plus 记录达到终态后" in prompt
+    assert "调用且只调用一次 `search_report`" in prompt
+    assert "active 的已链接 Goal Plus 记录会被拒绝" in extension
 
 
 def test_pi_goal_plus_skill_documents_parallel_loop_policy() -> None:
@@ -139,22 +142,23 @@ def test_pi_goal_plus_skill_documents_parallel_loop_policy() -> None:
     normalized = " ".join(text.split())
 
     assert 'orchestration_mode: "parallel_loops"' in text
-    assert "one long-lived autonomous loop" in normalized
-    assert "exactly once" in normalized
-    assert "Runtime rejects a second plan" in normalized
+    assert "每个初始候选工作区都是长期自主循环" in normalized
+    assert "调用且只调用一次" in normalized
+    assert "运行时会拒绝" in normalized
+    assert "第二份 plan" in normalized
     assert "pi_search_pool_wait_any" in text
     assert "pi_search_pool_continue" in text
     assert "pi_search_pool_submit" not in text
     assert "pi_search_pool_close" in text
     assert "worker_budgets" in text
-    assert "Continue the same autonomous search loop" in text
+    assert "继续同一条自主搜索循环" in text
     assert "candidate_ready" in text
-    assert "same workspace" in normalized
-    assert "preserves both `agent_session_id` and candidate identity" in normalized
-    assert "Do not call `search_plan_next`, `search_start_batch`, or" in normalized
-    assert "Do not vary continuation based on rank or improvement" in normalized
-    assert "low score" in normalized
-    assert "not a stop or replacement" in normalized
+    assert "同一工作区" in normalized
+    assert "保留 `agent_session_id` 和候选身份" in normalized
+    assert "不要调用 `search_plan_next`、`search_start_batch`" in normalized
+    assert "不要根据排名或改进情况" in normalized
+    assert "分数低" in normalized
+    assert "停止或替换" in normalized
     assert "source_run_id" in text
     assert "search_invalidate_run" in text
     assert "active_count=0" in text
@@ -169,31 +173,32 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     )
 
     assert "search_get_agent_context" in text
-    assert "search_space_propose" in text
-    assert "duplicate_plans" in text
-    assert "intervention_plan_id" in text
+    assert "search_get_global_plan" in text
+    assert "search_submit_iteration_plan" in text
     assert "search_run_verifier" in text
     assert "workspace/results.tsv" in text
-    assert "exactly one validated" in text
-    assert "hypothesis=" in text
-    assert "complete candidate artifact early" in text
-    assert "before any long optimization loop" in text
-    assert "one autonomous Pi Search loop" in text
-    assert "Do not wait for the main agent" in text
+    assert "且只追加一条已验证" in text
+    assert "plan description 是本轮唯一 hypothesis" in text
+    assert "git diff HEAD <commit> -- <allowed-file>" in text
+    assert "尽早创建完整候选产物" in text
+    assert "任何长优化循环前" in text
+    assert "一条自主 Pi Search 循环" in text
+    assert "不要等待主 agent" in text
     assert ".tmp/handoff.json" in text
     assert "key_results" in text
     assert "pitfalls" in text
     assert "condition" in text
     assert "failed_approach" in text
-    assert "assigned candidate idea as a hypothesis" in text
-    assert "Treat any promising direction" in text
-    assert "fixed artifact count" in text
-    assert "theoretical or structural limits" in text
+    assert "把分配的候选思路当作假设" in text
+    assert "把任何有希望的方向" in text
+    assert "不要自行 reset" in text
+    assert "disposition" in text
+    assert "固定产物数量" in text
+    assert "理论或结构限制" in text
     assert "10-15 distinct verifier-recorded artifacts" not in text
-    assert "verifier is an evaluator, not an analysis service" in text
+    assert "verifier 是评估器，不是分析服务" in text
     assert (
-        "Deadline, closeout, and time-advisory messages from an earlier dispatch "
-        "are historical"
+        "更早派发中的 deadline、closeout 和 time-advisory 消息都只是历史"
     ) in text
     assert "next_steps" in text
     assert "verifier_assessment" in text
@@ -205,21 +210,21 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     assert "feature_family" in text
     assert "evaluation_contract" in text
     assert "single_observation" in text
-    assert "edit the allowed candidate artifact first" in text
-    assert "verifying the unmodified starting point" in text
-    assert "valid baseline iteration first" in text
-    assert "verifier-recorded iterations" in text
-    assert "Stop starting new optimization iterations" in text
-    assert "final verifier" in text
-    assert "time advisory after a tool result is informational" in text
-    assert "trust direct reads and the runtime context" in text
-    assert "workspace only" in text
-    assert "runtime history" in text
-    assert "Native conversation context may preserve reasoning" in text
-    assert "must never override durable runtime evidence" in text
+    assert "先编辑允许的候选产物" in text
+    assert "验证未修改的初始状态" in text
+    assert "先记录一个有效 baseline iteration" in text
+    assert "由 verifier 记录的 iteration" in text
+    assert "停止启动新的优化 iteration" in text
+    assert "最终 verifier" in text
+    assert "工具结果后的时间提示仅供参考" in text
+    assert "以直接读取和运行时上下文为准" in text
+    assert "只能在候选工作区中工作" in text
+    assert "运行时历史" in text
+    assert "原生会话上下文可以保留推理" in text
+    assert "绝不能覆盖持久化运行时证据" in text
     assert "VerifierWorkspaceSideEffect" in text
     assert "candidate_action=stop_and_report" in text
-    assert "return immediately" in text
+    assert "立即返回" in text
     assert "candidate-local analysis scripts" not in text
 
 
@@ -229,11 +234,11 @@ def test_pi_skill_documents_post_tool_time_advisory() -> None:
     )
     normalized = " ".join(text.split())
 
-    assert "advisory time estimate after completed worker tools" in normalized
-    assert "last subagent verifier - first candidate session" in normalized
+    assert "完成 worker 工具后检查提示性时间估算" in normalized
+    assert "最后一次 subagent verifier - 首个候选 session" in normalized
     assert "GOAL_PLUS_OUTER_DEADLINE_AT" in text
-    assert "one informational `steer`" in text
-    assert "does not stop the worker" in text
+    assert "一次提示性 `steer`" in text
+    assert "不会停止 worker" in text
 
 
 def test_pi_extension_registers_role_tools_gate_and_workspace_guard() -> None:
@@ -246,14 +251,9 @@ def test_pi_extension_registers_role_tools_gate_and_workspace_guard() -> None:
     assert 'role === "worker"' in text
     assert "goal_plus_create" in text
     assert "search_get_agent_context" in text
-    assert "search_space_open" in text
-    assert "search_space_propose" in text
-    assert "search_space_status" in text
-    assert "schema_consolidation_interval" in text
-    assert "intervention_plan_id" in text
     assert "search_run_verifier" in text
     assert "workspace/results.tsv" in text
-    assert "exactly one validated row" in text
+    assert "且只追加一条已验证记录" in text
     assert "VerifierWorkspaceSideEffect" in text
     assert "GOAL_PLUS_VERIFIER_TMPDIR" in text
     assert "pi_rpc_run_worker" not in text
@@ -298,17 +298,17 @@ def test_pi_extension_registers_role_tools_gate_and_workspace_guard() -> None:
     assert "resumeGoalPlusStart" in text
     assert "/goal-plus resume" in text
     assert 'action: "resume"' in text
-    assert "do not downgrade it to ordinary Goal Mode" in text
-    assert "Treat the latest user message as authoritative" in text
-    assert "scope, deliverables, or success criteria" in text
-    assert "clarify ambiguous intent before resuming" in text
-    assert "Never invent frozen_spec_id" in text
+    assert "不要将其降级为普通 Goal Mode" in text
+    assert "以最新用户消息作为" in text
+    assert "范围、交付物或成功标准" in text
+    assert "恢复前澄清有歧义的意图" in text
+    assert "绝不能编造 frozen_spec_id" in text
     assert '"goal_plus_update_goal", "goal_plus_submit_final_check"' in text
     assert "activateGoal(pi, result.details, startEntryCount, canPersistPiState)" in text
     assert 'if (name === "goal_plus_create" && canPersistPiState)' not in text
     assert "activateGoal(pi, status, startEntryCount, canPersistGoalState(ctx.mode))" in text
     assert "await ctx.waitForIdle()" not in text
-    assert "do not read or audit target files before goal_plus_record_triage" in text
+    assert "在 goal_plus_record_triage 前不要读取或审计目标文件" in text
     assert "workspaceGuard" in text
     assert "resource_lock: Type.Optional(Type.String({ minLength: 1 }))" in text
     assert "MAIN_GATED_TOOLS" in text
@@ -319,7 +319,7 @@ def test_pi_extension_registers_role_tools_gate_and_workspace_guard() -> None:
     assert "block" in text
     assert 'role === "final-checker"' in text
     assert "registerPiFinalCheckTool" in text
-    assert "Final-check reviewers are read-only" in text
+    assert "最终检查审查员只能进行只读操作" in text
     assert 'verdict: "interrupted"' in text
     assert "timed out before submitting a verdict" in text
 
@@ -347,11 +347,11 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     assert "inherited_pitfall_limit" not in text
     assert "const RuntimeToolDescriptions" in text
     assert "RuntimeToolDescriptions[name]" in text
-    assert "Hard cap on total distinct candidate workspaces" in text
-    assert "This is not a per-round limit" in text
-    assert "Maximum candidates that search_plan_next may place in one planned batch" in text
-    assert "default 4 is a batch-size request, not a whole-run budget" in text
-    assert "planned_k is min(requested_k, remaining max_candidates, max_parallel)" in text
+    assert "不同候选工作区总数的硬上限" in text
+    assert "不是单轮限制" in text
+    assert "search_plan_next 在一个规划 batch 中最多可放置的候选数" in text
+    assert "默认值 4 是 batch size 请求，不是整个 run 的预算" in text
+    assert "planned_k 为 min(requested_k, 剩余 max_candidates, max_parallel)" in text
     freeze_schema = text.split("search_freeze_spec: Type.Object", 1)[1].split(
         "search_create: Type.Object", 1
     )[0]
@@ -440,11 +440,11 @@ def test_pi_goal_plus_skill_documents_multiple_search_tasks_and_monitoring() -> 
         encoding="utf-8"
     )
 
-    assert "same `goal_plus_id`" in text
-    assert "`search_tasks` is its" in text
-    assert "append-only search-task history" in text
-    assert "per-task planning/started round counts" in text
-    assert "aggregate task" in text
+    assert "同一个 `goal_plus_id`" in text
+    assert "`search_tasks` 是其" in text
+    assert "仅追加的 Search 任务历史" in text
+    assert "每项任务的规划/已启动" in text
+    assert "聚合任务" in text
     assert "search_tasks?: unknown[]" in extension
     assert "search_tasks_total?: number" in extension
     assert "status.search_tasks_total" in extension
@@ -460,16 +460,16 @@ def test_pi_goal_plus_reassesses_spec_after_real_result() -> None:
     combined = "\n".join([skill, prompt])
     flattened_skill = " ".join(skill.split())
 
-    assert "After the first meaningful optimization result" in combined
-    assert "large relative factor" in combined
-    assert "absolute target" in skill
-    assert "acceptance threshold" in skill
-    assert "success criterion" in flattened_skill
-    assert "deeper structural optimization" in skill
+    assert "首次获得有意义的优化结果后" in combined
+    assert "相对提升很大" in combined
+    assert "绝对目标" in skill
+    assert "验收阈值" in skill
+    assert "成功标准" in flattened_skill
+    assert "更深的结构优化" in skill
     assert "`upgrade_spec`" in skill
     assert "`keep_spec_with_justification`" in skill
     assert "`revise_goal`" in skill
     assert "goal_plus_update_goal" in skill
-    assert "not new runtime states" in skill
-    assert "not a new runtime phase" in prompt
+    assert "不是新的运行时状态" in skill
+    assert "不是新的运行时阶段" in prompt
     assert "bootstrap" not in combined.lower()

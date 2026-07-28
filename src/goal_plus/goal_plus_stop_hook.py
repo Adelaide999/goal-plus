@@ -661,24 +661,26 @@ def _autoresearch_lease_stop_context(
         requirements = []
         if not runtime_complete:
             requirements.append(
-                f"continue for at least {remaining_seconds:.1f} more seconds"
+                f"至少再继续 {remaining_seconds:.1f} 秒"
             )
         if not verifier_complete:
             requirements.append(
-                f"complete {min_verifier_runs - verifier_runs} more "
-                "search_run_verifier iteration(s)"
+                f"再完成 {min_verifier_runs - verifier_runs} 次 "
+                "search_run_verifier iteration"
             )
         reason = (
-            f"AutoResearch lease for Search candidate {session.agent_session_id} "
-            f"is still active: {' and '.join(requirements)}. Do not return to "
-            "the parent. Read results.tsv, choose a distinct evidence-backed "
-            "hypothesis, implement it, run search_run_verifier with this "
-            "agent_session_id, compare the result with the incumbent, and "
-            "continue the loop. After each additional verifier iteration, "
-            "immediately attempt to finish again; this hook will either block "
-            "or release that attempt. Do not estimate the clock. Do not sleep "
-            "or busy-wait. The parent watchdog has a separate closeout window "
-            "after this lease."
+            f"Search 候选 {session.agent_session_id} 的 AutoResearch lease 仍处于 active："
+            f"{'，并且'.join(requirements)}。不要返回父级。先使用此 agent_session_id 调用 "
+            "search_get_agent_context 刷新 candidate-local 证据，再调用 search_get_global_plan；"
+            "若下一 iteration 已有计划，沿用它且不要重新调用 search_submit_iteration_plan；"
+            "否则选择不同且有证据支持的假设，在修改代码前调用 "
+            "search_submit_iteration_plan 提交一句话计划。然后实现该计划，并使用同一 "
+            "agent_session_id 运行 search_run_verifier，省略 scope 以使用 process verifier，"
+            "将结果与当前最佳项比较并继续深度搜索。不要因为完成一次 iteration、暂时没有"
+            "改进或一次失败就尝试结束，也不要通过重复返回来轮询此 hook。只要 lease 仍"
+            "处于 active，就必须把局部饱和视为转向信号，重新评估瓶颈并选择与已有尝试"
+            "不同的实质方向；只有收到父级 closeout/deadline 后才准备收尾。不要自行估算时间，"
+            "不要休眠或忙等。父级 watchdog 在该 lease 之后另有 closeout 窗口。"
         )
 
     return {
@@ -804,6 +806,7 @@ def _search_candidate_stop_context(
     return {
         "goal_plus_subagent_role": "search_candidate",
         "search_candidate_agent_session_id": agent_session_id,
+        "search_candidate_run_id": session.run_id,
         "search_candidate_id": session.candidate_id,
         "search_candidate_verifier_runs": verifier_runs,
         "search_candidate_verifier_complete": verifier_runs > 0,
@@ -948,6 +951,15 @@ def _select_session_goal_id(search_root: Path, session_id: str | None) -> str | 
     return None
 
 
+def _select_search_goal_id(search_root: Path, run_id: Any) -> str | None:
+    if not isinstance(run_id, str) or not run_id:
+        return None
+    for record in _active_records(search_root):
+        if any(task.run_id == run_id for task in record.search_tasks):
+            return record.goal_plus_id
+    return None
+
+
 def _select_hook_goal_id(search_root: Path, hook_input: dict[str, Any]) -> str | None:
     return _select_explicit_goal_id(search_root, hook_input) or _select_session_goal_id(
         search_root,
@@ -960,23 +972,22 @@ def _goal_context(record: Any) -> str:
     next_action_text = (
         f"{next_action.kind}: {next_action.description}"
         if next_action is not None
-        else "none"
+        else "无"
     )
     return (
-        f"Goal Plus is active for this Codex session: goal_plus_id={record.goal_plus_id}.\n"
-        "The runtime record already exists; do not call goal_plus_create again.\n"
-        f"Current goal revision: {record.goal_revision}.\n"
-        f"Current raw goal: {record.raw_goal}\n"
-        f"Final-check policy: {record.policy.get('final_check', {'mode': 'disabled'})}.\n"
-        f"Current phase: {record.phase}; next action: {next_action_text}\n"
-        "Load and follow the goal-plus skill for this turn.\n"
-        "Treat the latest user message as authoritative for whether to continue, revise, "
-        "or discuss something unrelated; do not resume merely because Goal Plus is active.\n"
-        "If it changes the effective scope, deliverables, or success criteria, call "
-        "goal_plus_update_goal with the complete revised raw goal and current expected "
-        "revision, then re-triage. Otherwise keep the revision unchanged and clarify "
-        "ambiguous intent before resuming.\n"
-        "Use the goal_plus_* tools and the linked Search runtime as authoritative."
+        f"此 Codex session 的 Goal Plus 处于 active：goal_plus_id={record.goal_plus_id}。\n"
+        "运行时记录已经存在；不要再次调用 goal_plus_create。\n"
+        f"当前目标修订版：{record.goal_revision}。\n"
+        f"当前原始目标：{record.raw_goal}\n"
+        f"最终检查 policy：{record.policy.get('final_check', {'mode': 'disabled'})}。\n"
+        f"当前 phase：{record.phase}；next action：{next_action_text}\n"
+        "本轮加载并遵循 goal-plus skill。\n"
+        "以最新用户消息作为判断继续、修订或讨论无关内容的权威依据；不要仅因 Goal Plus "
+        "处于 active 就恢复工作。\n"
+        "如果消息改变了实际范围、交付物或成功标准，使用完整修订后的原始目标和当前预期"
+        "修订版调用 goal_plus_update_goal，然后重新 triage。否则保持修订版不变，"
+        "并在恢复前澄清有歧义的意图。\n"
+        "以 goal_plus_* 工具和已链接的 Search 运行时作为权威依据。"
     )
 
 
@@ -1092,7 +1103,7 @@ def _emit_terminal_stats(record: Any) -> None:
         else "none"
     )
     message = (
-        "Goal Plus stats: "
+        "Goal Plus 统计："
         f"goal_plus_id={record.goal_plus_id}; "
         f"status={record.status}; "
         f"phase={record.phase}; "
@@ -1174,31 +1185,14 @@ def _handle_pre_tool_use(
     search_root: Path,
     hook_input: dict[str, Any],
 ) -> None:
-    if _is_subagent_context(hook_input):
-        agent_session_id = _search_candidate_agent_session_id(
-            search_root,
-            hook_input,
-        )
-        if agent_session_id is not None:
-            from goal_plus.space_agent import candidate_pre_tool_block_reason
-
-            reason = candidate_pre_tool_block_reason(
-                search_root,
-                agent_session_id,
-                _tool_name(hook_input),
-                _raw_tool_input(hook_input),
-            )
-            if reason is not None:
-                _emit_pre_tool_block(reason)
-        return
-    if not _should_gate_tool(_tool_name(hook_input)):
+    if _is_subagent_context(hook_input) or not _should_gate_tool(_tool_name(hook_input)):
         return
     goal_id = _select_hook_goal_id(search_root, hook_input)
     if goal_id is None:
         return
     gate = runtime.gate(goal_id, event="pre_tool_use", context=hook_input)
     if gate.decision == "block":
-        _emit_pre_tool_block(gate.reason or "Goal Plus blocked this tool call.")
+        _emit_pre_tool_block(gate.reason or "Goal Plus 阻止了此工具调用。")
 
 
 def _handle_stop_event(
@@ -1208,7 +1202,15 @@ def _handle_stop_event(
     *,
     event: str,
 ) -> None:
+    candidate_context = None
+    if event == "subagent_stop" and not _is_final_checker_context(hook_input):
+        candidate_context = _search_candidate_stop_context(search_root, hook_input)
     goal_id = _select_hook_goal_id(search_root, hook_input)
+    if goal_id is None and candidate_context is not None:
+        goal_id = _select_search_goal_id(
+            search_root,
+            candidate_context.get("search_candidate_run_id"),
+        )
     if goal_id is None:
         current_session_id = _session_id(hook_input)
         active = _active_records(search_root)
@@ -1234,11 +1236,10 @@ def _handle_stop_event(
                 check_id=latest.check_id,
                 goal_revision=record.goal_revision,
                 verdict="interrupted",
-                summary="Codex final checker stopped before submitting a verdict.",
+                summary="Codex 最终检查员在提交结论前停止。",
                 checker_metadata={"hook_event": "SubagentStop"},
             )
     elif event == "subagent_stop":
-        candidate_context = _search_candidate_stop_context(search_root, hook_input)
         if candidate_context is not None:
             gate_context = {**hook_input, **candidate_context}
             agent_session_id = candidate_context.get(
@@ -1268,7 +1269,7 @@ def _handle_stop_event(
         _emit_block(
             gate.continuation_prompt
             or gate.reason
-            or "Goal Plus is still active; continue before stopping."
+            or "Goal Plus 仍处于 active；停止前继续完成任务。"
         )
     elif event == "stop" and gate.status != "active":
         _emit_terminal_stats(runtime.status(goal_id))
