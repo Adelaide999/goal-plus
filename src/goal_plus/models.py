@@ -514,7 +514,6 @@ class PromotionEvidence(SearchModel):
 class IterationRecord(SearchModel):
     iteration: int
     agent_session_id: str | None = None
-    intervention_plan_id: str | None = None
     score: float | None = None
     process_passed: bool | None = None
     git_head: str | None = None
