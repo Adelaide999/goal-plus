@@ -10,9 +10,7 @@ from goal_plus.agent_hosts import (
 
 
 def test_get_agent_host_adapter_returns_all_supported_hosts() -> None:
-    assert get_agent_host_adapter("opencode").name == "opencode"
     assert get_agent_host_adapter("codex").name == "codex"
-    assert get_agent_host_adapter("claude-code").name == "claude-code"
     assert get_agent_host_adapter("pi-rpc").name == "pi-rpc"
 
 
@@ -29,28 +27,6 @@ def test_portable_strategy_mode_classifies_all_builtin_aliases() -> None:
         assert portable_strategy_mode(name) is True
     for name in ("independent_branches", "evolve", "openevolve", "mcts"):
         assert portable_strategy_mode(name) is False
-
-
-def test_opencode_adapter_builds_existing_task_payload() -> None:
-    adapter = get_agent_host_adapter("opencode")
-
-    payload = adapter.build_launch_payload(
-        worker_agent_type="SearchCandidateAgent",
-        candidate_id="cand_0001",
-        agent_session_id="agent_0001",
-        short_intent="try a new branch",
-        one_paragraph_idea="goal: try a new branch",
-    )
-
-    assert payload == {
-        "subagent_type": "SearchCandidateAgent",
-        "description": "cand_0001 try a new branch",
-        "prompt": (
-            "agent_session_id=agent_0001; "
-            "candidate_id=cand_0001; "
-            "思路：goal: try a new branch"
-        ),
-    }
 
 
 @pytest.mark.codex
@@ -355,43 +331,6 @@ def test_pi_rpc_adapter_builds_cross_process_native_session_continuation() -> No
     assert "continue_existing_agent_session=true" in payload["prompt"]
     assert "这条 launch 消息开始一次新的 host 派发" in payload["prompt"]
     assert "属于上一次派发，已不再生效" in payload["prompt"]
-
-
-def test_claude_adapter_builds_foreground_agent_payload() -> None:
-    adapter = get_agent_host_adapter("claude-code")
-
-    payload = adapter.build_launch_payload(
-        worker_agent_type=None,
-        candidate_id="cand_0001",
-        agent_session_id="agent_0001",
-        short_intent="try",
-        one_paragraph_idea="try",
-    )
-
-    assert payload["tool"] == "Agent"
-    assert payload["agent_type"] == "search-candidate-agent"
-    assert payload["background"] is False
-    assert "agent_session_id=agent_0001" in payload["message"]
-
-
-def test_claude_adapter_builds_turn_budget_payload() -> None:
-    adapter = get_agent_host_adapter("claude-code")
-
-    payload = adapter.build_launch_payload(
-        worker_agent_type="search-candidate-agent-deep",
-        candidate_id="cand_0001",
-        agent_session_id="agent_0001",
-        short_intent="try",
-        one_paragraph_idea="try",
-        worker_budget={"max_turns": 16, "on_exceed": "interrupt"},
-    )
-
-    assert payload["agent_type"] == "search-candidate-agent-deep"
-    assert payload["budget_control"] == {
-        "mode": "host_turn_limit",
-        "max_turns": 16,
-        "on_exceed": "interrupt",
-    }
 
 
 @pytest.mark.codex

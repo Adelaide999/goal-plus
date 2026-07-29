@@ -29,16 +29,8 @@ Scenario-specific `extra` fields:
 
 | scenario | extra fields |
 |---|---|
-| circle_packing_continue | `agent_session_id`, `opencode_session_id`, `verifier_scores: [number, number]`, `score_delta: number` |
-| circle_packing_two_batch | (none beyond defaults) |
-| circle_packing_random | `parent_candidate_id: string` (batch-2 parent from strategy_trace) |
-| k_module_smoke | (none) |
-| k_module_then_circle_packing | `run1_run_id: string`, `run1_candidates: integer`, `run1_best_score: number\|null`, `run2_run_id: string`, `run2_candidates: integer`, `run2_best_score: number\|null`, `run_ids_distinct: boolean` |
-| signal_processing_multi | `batches: integer` |
-| swe_bench_20212 | `fail_to_pass: array<string>`, `pass_to_pass: array<string>` |
 | codex_redispatch | `host: "codex"`, `model: string`, `candidate_id: string`, `first_agent_session_id: string`, `redispatch_agent_session_id: string`, `same_candidate: boolean`, `redispatch_budget_control_mode: "parent_watchdog"`, `task_names: array<string>`, `verifier_scores: array<number\|null>` |
 | codex_circle_packing_cycle | `host: "codex"`, `model: "gpt-5.6-terra"`, `rounds: 2`, `batch_sizes: [2, 2]`, `agent_session_ids: array of four distinct strings`, `task_names: array<string>`, `round_2_parent_candidate_ids: array<string>` |
 | codex_rolling_followup | `host: "codex"`, `model: "gpt-5.6-terra"`, `wait_mode: "wait_any"`, two initial session ids/task names, first/continued candidate ids, unchanged continued session id, `continue_tool: "followup_task"`, `same_worker_continuation: true` |
 | codex_parallel_loop_cycle | `host: "codex"`, `model: "gpt-5.6-luna"`, `observed_worker_models: ["gpt-5.6-luna"]`, `orchestration_mode: "parallel_loops"`, one plan, two initial sessions, same-worker continuation, observed best, zero new candidates |
 | codex_autoresearch_lease | `host: "codex"`, `model: "gpt-5.6-terra"`, `agent_session_id: string`, `min_runtime_seconds: 300`, `max_runtime_seconds: 420`, `parent_closeout_after_seconds: 375` |
-| claude_k_module_smoke | `host: "claude-code"` |

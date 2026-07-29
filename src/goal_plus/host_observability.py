@@ -111,11 +111,6 @@ def _base_observability(session: AgentSessionRecord) -> dict[str, Any]:
     }
 
 
-def collect_metadata_observability(session: AgentSessionRecord) -> dict[str, Any]:
-    """Normalize the portable evidence already bound to a host handle."""
-    return _base_observability(session)
-
-
 def _pi_usage(value: Any, *, scope: str) -> dict[str, Any]:
     usage = value if isinstance(value, dict) else {}
     input_tokens = _number(usage.get("input"))

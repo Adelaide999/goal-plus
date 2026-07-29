@@ -244,7 +244,7 @@ The control loop is shared; only the pool adapter changes.
 | Confirmed verifier invalidation | `search_invalidate_run`, interrupt every live agent, wait until terminal | `search_invalidate_run`, `pi_search_pool_close(mode="interrupt")`, wait for `active_count=0` |
 | Close | drain/interrupt native agents | `pi_search_pool_close` |
 
-See [Agent Host Adapters](agent-host-adapters.md) for all hosts.
+See [Agent Host Adapters](agent-host-adapters.md) for both hosts.
 
 ## Resume Semantics
 

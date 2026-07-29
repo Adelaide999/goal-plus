@@ -68,15 +68,6 @@ from goal_plus.workspaces import (
 )
 
 
-CLAUDE_CODE_KNOWN_AGENT_TURN_BUDGETS = {
-    "search-candidate-agent-flash": 4,
-    "search-candidate-agent": 8,
-    "search-candidate-agent-deep": 16,
-}
-CLAUDE_CODE_AGENT_TYPE_BY_TURN_BUDGET = {
-    turns: agent_type
-    for agent_type, turns in CLAUDE_CODE_KNOWN_AGENT_TURN_BUDGETS.items()
-}
 VERIFIER_PHASE_ENV = "GOAL_PLUS_VERIFIER_PHASE"
 VERIFIER_DIAGNOSTICS_ENV = "GOAL_PLUS_VERIFIER_DIAGNOSTICS_DIR"
 VERIFIER_RESOURCE_ENV = "GOAL_PLUS_VERIFIER_RESOURCE"
@@ -1095,7 +1086,6 @@ class FileSearchRuntime:
         worker_budget_override = self._resolve_worker_budget_for_dispatch(
             frozen=frozen,
             candidate_record=candidate_record,
-            worker_agent_type=selected_worker_agent_type,
             worker_budget_override=worker_budget,
         )
         previous_session_ids = [
@@ -1144,13 +1134,8 @@ class FileSearchRuntime:
             workspace = candidate_record.task.workspace
 
             if worker_budget_override is not None:
-                selected_worker_agent_type = (
-                    worker_agent_type_override
-                    or self._candidate_worker_agent_type(frozen, candidate_record)
-                )
                 worker_budget_override = self._normalize_worker_budget_override(
                     worker_host=frozen.spec.strategy.worker_host,
-                    worker_agent_type=selected_worker_agent_type,
                     worker_budget=worker_budget_override,
                 )
 
@@ -1280,13 +1265,12 @@ class FileSearchRuntime:
                 "metadata": metadata,
             }
         )
-        update: dict[str, Any] = {
-            "host_handle": updated_handle,
-            "updated_at": utc_timestamp(),
-        }
-        if session.host == "opencode" and updated_handle.external_id:
-            update["opencode_session_id"] = updated_handle.external_id
-        updated = session.model_copy(update=update)
+        updated = session.model_copy(
+            update={
+                "host_handle": updated_handle,
+                "updated_at": utc_timestamp(),
+            }
+        )
         self._write_agent_session(updated)
         return updated
 
@@ -1341,13 +1325,8 @@ class FileSearchRuntime:
                 f"cannot continue candidate in status {candidate_record.status}"
             )
 
-        worker_agent_type = self._candidate_worker_agent_type(
-            frozen,
-            candidate_record,
-        )
         worker_budget_override = self._normalize_worker_budget_override(
             worker_host=session.host,
-            worker_agent_type=worker_agent_type,
             worker_budget=worker_budget,
         )
         try:
@@ -2369,7 +2348,6 @@ class FileSearchRuntime:
             session.host_handle.external_id
             or session.host_handle.task_name
             or session.host_handle.nickname
-            or session.opencode_session_id
             or ""
         )
 
@@ -2377,14 +2355,8 @@ class FileSearchRuntime:
         self._validate_worker_launch_for_host(strategy)
         self._validate_worker_budget_for_host(
             worker_host=strategy.worker_host,
-            worker_agent_type=strategy.worker_agent_type,
             worker_budget=strategy.worker_budget,
         )
-        if strategy.worker_host not in {"codex", "pi-rpc"}:
-            raise ValueError(
-                f"{strategy.worker_host} is not a maintained worker host; "
-                "use codex or pi-rpc"
-            )
         if not portable_strategy_mode(strategy.name):
             raise ValueError(
                 f"{strategy.worker_host} worker_host does not support strategy "
@@ -2414,7 +2386,6 @@ class FileSearchRuntime:
         self,
         *,
         worker_host: str,
-        worker_agent_type: str | None,
         worker_budget: WorkerBudget | None,
     ) -> None:
         if worker_host == "pi-rpc" and (
@@ -2443,31 +2414,6 @@ class FileSearchRuntime:
                 "codex worker_budget requires max_runtime_seconds so the "
                 "parent agent can enforce a watchdog deadline"
             )
-        if worker_host == "claude-code" and worker_budget.max_turns is None:
-            raise ValueError(
-                "claude-code worker_budget requires max_turns so the "
-                "subagent definition can enforce a turn budget"
-            )
-        if worker_host != "claude-code":
-            return
-
-        turns = worker_budget.max_turns
-        configured_agent = worker_agent_type
-        if configured_agent in CLAUDE_CODE_KNOWN_AGENT_TURN_BUDGETS:
-            expected = CLAUDE_CODE_KNOWN_AGENT_TURN_BUDGETS[configured_agent]
-            if turns != expected:
-                raise ValueError(
-                    "known claude-code worker_agent_type "
-                    f"{configured_agent!r} has maxTurns {expected}, "
-                    f"not requested worker_budget.max_turns {turns}"
-                )
-        elif configured_agent is None and turns not in CLAUDE_CODE_AGENT_TYPE_BY_TURN_BUDGET:
-            supported = sorted(CLAUDE_CODE_AGENT_TYPE_BY_TURN_BUDGET)
-            raise ValueError(
-                "claude-code worker_budget.max_turns without an explicit "
-                "custom worker_agent_type must be one of "
-                f"{supported}"
-            )
 
     def _worker_budget_dict(self, strategy: StrategySpec) -> dict[str, Any] | None:
         if strategy.worker_budget is None:
@@ -2484,22 +2430,11 @@ class FileSearchRuntime:
         worker_agent_type = strategy.worker_agent_type
         worker_budget = self._worker_budget_dict(strategy)
         worker_launch = self._worker_launch_dict(strategy)
-        if (
-            strategy.worker_host == "claude-code"
-            and worker_agent_type is None
-            and strategy.worker_budget is not None
-            and strategy.worker_budget.max_turns is not None
-        ):
-            worker_agent_type = CLAUDE_CODE_AGENT_TYPE_BY_TURN_BUDGET[
-                strategy.worker_budget.max_turns
-            ]
         return {
             "host": strategy.worker_host,
             "worker_agent_type": worker_agent_type,
-            "subagent_type": worker_agent_type,
             "worker_budget": worker_budget,
             "worker_launch": worker_launch,
-            "continuation": adapter.capabilities.continuation,
             "pool": adapter.capabilities.pool.as_dict(),
             "reason": (
                 f"主 agent 使用 search_start_agent_session 返回的 launch payload，"
@@ -2515,23 +2450,17 @@ class FileSearchRuntime:
         base_policy = self._worker_policy(strategy)
         policy = {**base_policy, **(worker_policy or {})}
         selected = (
-            policy.get("subagent_type")
-            or policy.get("worker_agent_type")
+            policy.get("worker_agent_type")
             or strategy.worker_agent_type
             or self._default_worker_agent_type(strategy.worker_host)
         )
         policy["worker_agent_type"] = selected
-        policy["subagent_type"] = selected
         return policy
 
     def _default_worker_agent_type(self, host: str) -> str:
         if host == "codex":
             return "search_candidate_agent"
-        if host == "claude-code":
-            return "search-candidate-agent"
-        if host == "pi-rpc":
-            return "search-candidate-worker"
-        return "SearchCandidateAgent"
+        return "search-candidate-worker"
 
     def _candidate_worker_agent_type(
         self,
@@ -2540,8 +2469,7 @@ class FileSearchRuntime:
     ) -> str:
         worker_policy = candidate_record.task.strategy_metadata.get("worker_policy", {})
         selected = (
-            worker_policy.get("subagent_type")
-            or worker_policy.get("worker_agent_type")
+            worker_policy.get("worker_agent_type")
             or frozen.spec.strategy.worker_agent_type
             or self._default_worker_agent_type(frozen.spec.strategy.worker_host)
         )
@@ -2573,7 +2501,6 @@ class FileSearchRuntime:
         self,
         *,
         worker_host: str,
-        worker_agent_type: str | None,
         worker_budget: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
         if worker_budget is None:
@@ -2581,7 +2508,6 @@ class FileSearchRuntime:
         parsed = WorkerBudget.model_validate(worker_budget)
         self._validate_worker_budget_for_host(
             worker_host=worker_host,
-            worker_agent_type=worker_agent_type,
             worker_budget=parsed,
         )
         return parsed.model_dump(mode="json")
@@ -2591,7 +2517,6 @@ class FileSearchRuntime:
         *,
         frozen: FrozenSpec,
         candidate_record: CandidateRecord,
-        worker_agent_type: str | None,
         worker_budget_override: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
         worker_budget = (
@@ -2601,7 +2526,6 @@ class FileSearchRuntime:
         )
         return self._normalize_worker_budget_override(
             worker_host=frozen.spec.strategy.worker_host,
-            worker_agent_type=worker_agent_type,
             worker_budget=worker_budget,
         )
 
@@ -2683,7 +2607,7 @@ class FileSearchRuntime:
             worker_agent_type=worker_agent_type,
             candidate_id=session.candidate_id,
             agent_session_id=session.agent_session_id,
-            external_id=session.host_handle.external_id or session.opencode_session_id,
+            external_id=session.host_handle.external_id,
             task_name=session.host_handle.task_name,
             short_intent=short_intent,
             one_paragraph_idea=directive_text,
@@ -2860,9 +2784,10 @@ class FileSearchRuntime:
             "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
             "Global Plan 只展示 peer 的计划、分数、disposition 和 attempt commit。仅在你独立判断代码级证据确有必要时，在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；不要访问其他 candidate 的 workspace。",
         ]
-        if plan.worker_policy.get("subagent_type"):
+        if plan.worker_policy.get("worker_agent_type"):
             instructions.append(
-                f"对受管 agent session 使用 subagent_type={plan.worker_policy['subagent_type']!r}。"
+                "对受管 agent session 使用 "
+                f"worker_agent_type={plan.worker_policy['worker_agent_type']!r}。"
             )
         instructions.extend(proposal.instructions)
 
@@ -4444,7 +4369,6 @@ class FileSearchRuntime:
                 "host": session.host,
                 "host_handle": session.host_handle.model_dump(mode="json"),
                 "host_handle_display": self._display_host_handle(session),
-                "opencode_session_id": session.opencode_session_id,
                 "created_at": session.created_at,
                 "updated_at": session.updated_at,
                 "directive": session.directive,

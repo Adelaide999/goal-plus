@@ -10,24 +10,19 @@ from tests.st.hosts import (
     link_host_assets,
     st_host_from_marker_names,
 )
-from tests.st.helpers.claude_runner import ClaudeRunner
 from tests.st.helpers.codex_runner import CodexRunner
-from tests.st.helpers.opencode_runner import OpenCodeRunner
 
 
 def test_st_host_markers_select_one_agent() -> None:
-    assert HOST_BY_MARKER["st_opencode"].kind == "opencode"
     assert HOST_BY_MARKER["st_codex"].kind == "codex"
-    assert HOST_BY_MARKER["st_claude"].kind == "claude-code"
     assert HOST_BY_MARKER["st_pi_rpc"].kind == "pi-rpc"
 
     assert st_host_from_marker_names(["st", "st_codex"]) == "codex"
-    assert st_host_from_marker_names(["st", "st_opencode"]) == "opencode"
     assert st_host_from_marker_names(["st", "st_pi_rpc"]) == "pi-rpc"
-    assert st_host_from_marker_names(["st"]) == "opencode"
+    assert st_host_from_marker_names(["st"]) == "codex"
 
     with pytest.raises(ValueError, match="multiple ST host markers"):
-        st_host_from_marker_names(["st", "st_codex", "st_claude"])
+        st_host_from_marker_names(["st", "st_codex", "st_pi_rpc"])
 
 
 @pytest.mark.codex
@@ -56,54 +51,23 @@ def test_codex_runner_uses_exec_with_terra_model(tmp_path: Path) -> None:
     assert "run the prompt" in cmd[-1]
 
 
-def test_claude_runner_uses_print_mode_with_project_mcp(tmp_path: Path) -> None:
-    runner = ClaudeRunner(project_root=tmp_path / "project", log_dir=tmp_path)
-
-    cmd = runner._build_cmd("run the prompt")
-
-    assert cmd[:2] == ["claude", "-p"]
-    assert "--mcp-config" in cmd
-    assert str(tmp_path / "project" / ".mcp.json") in cmd
-    assert "--permission-mode" in cmd
-    assert "bypassPermissions" in cmd
-    assert "do not run pytest" in cmd[-1]
-    assert "Claude Code /goal-plus system test" in cmd[-1]
-    assert "Decide autonomously whether Search adds value" in cmd[-1]
-    assert "Do not ask for or wait for user confirmation" in cmd[-1]
-
-
-def test_opencode_runner_requires_autonomous_search_admission(tmp_path: Path) -> None:
-    runner = OpenCodeRunner(project_root=tmp_path / "project", log_dir=tmp_path)
-
-    cmd = runner._build_cmd("run the prompt")
-
-    assert "Decide autonomously whether Search adds value" in cmd[-1]
-    assert "Do not ask for or wait for user confirmation" in cmd[-1]
-
-
 def test_st_active_env_guard_name_is_stable() -> None:
     assert ST_ACTIVE_ENV == "GOAL_PLUS_ST_ACTIVE"
 
 
-def test_link_host_assets_supports_all_agent_hosts(tmp_path: Path) -> None:
+def test_link_host_assets_supports_maintained_hosts(tmp_path: Path) -> None:
     source = tmp_path / "repo"
     source.mkdir()
-    for name in ("opencode.json", ".codex", ".mcp.json", ".claude", ".pi"):
+    for name in (".codex", ".pi"):
         path = source / name
-        if name in {".codex", ".claude", ".pi"}:
-            path.mkdir()
-        else:
-            path.write_text("{}", encoding="utf-8")
+        path.mkdir()
     project = tmp_path / "run"
     project.mkdir()
-    (project / ".agents").symlink_to(source / ".agents", target_is_directory=True)
 
     link_host_assets(project, source)
 
-    for name in ("opencode.json", ".codex", ".mcp.json", ".claude", ".pi"):
+    for name in (".codex", ".pi"):
         assert (project / name).exists()
-    assert not (project / ".agents").is_symlink()
-    assert not (project / ".agents").exists()
 
 
 @pytest.mark.codex
@@ -200,7 +164,8 @@ def test_codex_circle_packing_cycle_assertion_requires_complete_cycle() -> None:
         assertion(wrong_batches)
 
 
-def test_st_scenario_cases_cover_all_agent_hosts() -> None:
+@pytest.mark.codex
+def test_st_scenario_cases_cover_codex() -> None:
     from tests.st.test_st_scenarios import SCENARIO_CASES
 
     marker_names = {
@@ -209,7 +174,7 @@ def test_st_scenario_cases_cover_all_agent_hosts() -> None:
         for mark in case.marks
     }
 
-    assert {"st_opencode", "st_codex", "st_claude"} <= marker_names
+    assert marker_names == {"st", "st_codex"}
 
 
 @pytest.mark.pi

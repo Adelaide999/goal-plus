@@ -837,7 +837,7 @@ def test_worker_policy_documents_host_launch_contract(tmp_path: Path) -> None:
         project,
         {
             "name": "random",
-            "worker_agent_type": "SearchCandidateAgent",
+            "worker_agent_type": "search_candidate_agent",
         },
         max_candidates=1,
     )
@@ -847,7 +847,7 @@ def test_worker_policy_documents_host_launch_contract(tmp_path: Path) -> None:
     tasks = runtime.start_batch(run_id, plan.plan_id)
 
     assert plan.worker_policy["host"] == "codex"
-    assert plan.worker_policy["subagent_type"] == "SearchCandidateAgent"
+    assert plan.worker_policy["worker_agent_type"] == "search_candidate_agent"
     assert "worker_mode" not in tasks[0].strategy_metadata
     assert any(
         "把 context.agent_session_id 传给 search_run_verifier" in instruction
@@ -1319,7 +1319,6 @@ def test_worker_policy_uses_pi_rpc_native_session_resume(tmp_path: Path) -> None
     plan = runtime.plan_next(run_id, requested_k=1)
 
     assert plan.worker_policy["host"] == "pi-rpc"
-    assert plan.worker_policy["continuation"] == "native_session"
     assert plan.worker_policy["pool"]["launch_mode"] == "async"
     assert plan.worker_policy["pool"]["wait_mode"] == "wait_any"
     assert plan.worker_policy["pool"]["continuation_mode"] == "native_session"
@@ -1334,7 +1333,7 @@ def test_start_agent_session_creates_context_handle_and_launch_payload(tmp_path:
         project,
         {
             "name": "random",
-            "worker_agent_type": "SearchCandidateAgent",
+            "worker_agent_type": "search_candidate_agent",
         },
         max_candidates=1,
     )
@@ -1351,7 +1350,7 @@ def test_start_agent_session_creates_context_handle_and_launch_payload(tmp_path:
     assert session.candidate_id == tasks[0].candidate_id
     assert session.workspace == tasks[0].workspace
     assert session.agent_session_id.startswith("agent_")
-    assert session.launch["agent_type"] == "SearchCandidateAgent"
+    assert session.launch["agent_type"] == "default"
     assert session.host == "codex"
     assert session.host_handle.host == "codex"
     assert session.agent_session_id in session.launch["message"]
@@ -1748,168 +1747,6 @@ def test_pi_rpc_rejects_unsupported_worker_service_tier(tmp_path: Path) -> None:
         runtime.plan_next(run_id, requested_k=1)
 
 
-def test_start_agent_session_returns_claude_foreground_launch_payload(tmp_path: Path) -> None:
-    project = make_project(tmp_path)
-    runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_host(project, "claude-code", strategy_name="random", max_candidates=1)
-    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
-    run_id = runtime.create_run(frozen.frozen_spec_id)
-    plan = runtime.plan_next(run_id, requested_k=1)
-    task = runtime.start_batch(run_id, plan.plan_id)[0]
-
-    session = runtime.start_agent_session(run_id, task.candidate_id)
-
-    assert session.host == "claude-code"
-    assert session.host_handle.host == "claude-code"
-    assert session.launch["tool"] == "Agent"
-    assert session.launch["agent_type"] == "search-candidate-agent"
-    assert session.launch["background"] is False
-    assert "agent_session_id=" in session.launch["message"]
-
-
-def test_redispatch_candidate_overrides_claude_tier_and_budget(tmp_path: Path) -> None:
-    project = make_project(tmp_path)
-    runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_host(project, "claude-code", strategy_name="random", max_candidates=1)
-    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
-    run_id = runtime.create_run(frozen.frozen_spec_id)
-    plan = runtime.plan_next(run_id, requested_k=1)
-    task = runtime.start_batch(run_id, plan.plan_id)[0]
-
-    redispatched = runtime.redispatch_candidate(
-        run_id,
-        task.candidate_id,
-        {"goal": "resume with deep budget"},
-        worker_agent_type="search-candidate-agent-deep",
-        worker_budget={"max_turns": 16, "on_exceed": "interrupt"},
-    )
-
-    assert redispatched.launch["agent_type"] == "search-candidate-agent-deep"
-    assert redispatched.launch["budget_control"] == {
-        "mode": "host_turn_limit",
-        "max_turns": 16,
-        "on_exceed": "interrupt",
-    }
-
-
-def test_redispatch_candidate_rejects_claude_tier_budget_mismatch(tmp_path: Path) -> None:
-    project = make_project(tmp_path)
-    runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_strategy(
-        project,
-        {
-            "name": "random",
-            "worker_host": "claude-code",
-            "worker_agent_type": "search-candidate-agent-flash",
-            "worker_budget": {
-                "max_turns": 4,
-                "on_exceed": "interrupt",
-            },
-        },
-        max_candidates=1,
-    )
-    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
-    run_id = runtime.create_run(frozen.frozen_spec_id)
-    plan = runtime.plan_next(run_id, requested_k=1)
-    task = runtime.start_batch(run_id, plan.plan_id)[0]
-
-    with pytest.raises(ValueError, match="known claude-code worker_agent_type"):
-        runtime.redispatch_candidate(
-            run_id,
-            task.candidate_id,
-            {"goal": "resume deeper"},
-            worker_agent_type="search-candidate-agent-deep",
-        )
-
-
-def test_claude_worker_budget_flows_to_turn_limit_launch_payload(tmp_path: Path) -> None:
-    project = make_project(tmp_path)
-    runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_strategy(
-        project,
-        {
-            "name": "random",
-            "worker_host": "claude-code",
-            "worker_agent_type": "search-candidate-agent-deep",
-            "worker_budget": {
-                "max_turns": 16,
-                "on_exceed": "interrupt",
-            },
-        },
-        max_candidates=1,
-    )
-    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
-    run_id = runtime.create_run(frozen.frozen_spec_id)
-    plan = runtime.plan_next(run_id, requested_k=1)
-    task = runtime.start_batch(run_id, plan.plan_id)[0]
-
-    session = runtime.start_agent_session(run_id, task.candidate_id)
-
-    assert plan.worker_policy["worker_budget"] == {
-        "max_runtime_seconds": None,
-        "max_turns": 16,
-        "on_exceed": "interrupt",
-        "min_runtime_seconds": None,
-        "min_verifier_runs": None,
-    }
-    assert session.launch["agent_type"] == "search-candidate-agent-deep"
-    assert session.launch["budget_control"] == {
-        "mode": "host_turn_limit",
-        "max_turns": 16,
-        "on_exceed": "interrupt",
-    }
-
-
-def test_claude_worker_budget_selects_known_turn_budget_agent(tmp_path: Path) -> None:
-    project = make_project(tmp_path)
-    runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_strategy(
-        project,
-        {
-            "name": "random",
-            "worker_host": "claude-code",
-            "worker_budget": {
-                "max_turns": 4,
-                "on_exceed": "interrupt",
-            },
-        },
-        max_candidates=1,
-    )
-    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
-    run_id = runtime.create_run(frozen.frozen_spec_id)
-    plan = runtime.plan_next(run_id, requested_k=1)
-    task = runtime.start_batch(run_id, plan.plan_id)[0]
-
-    session = runtime.start_agent_session(run_id, task.candidate_id)
-
-    assert plan.worker_policy["worker_agent_type"] == "search-candidate-agent-flash"
-    assert session.launch["agent_type"] == "search-candidate-agent-flash"
-    assert session.launch["budget_control"]["max_turns"] == 4
-
-
-def test_claude_worker_budget_rejects_mismatched_known_agent_type(tmp_path: Path) -> None:
-    project = make_project(tmp_path)
-    runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_strategy(
-        project,
-        {
-            "name": "random",
-            "worker_host": "claude-code",
-            "worker_agent_type": "search-candidate-agent",
-            "worker_budget": {
-                "max_turns": 16,
-                "on_exceed": "interrupt",
-            },
-        },
-        max_candidates=1,
-    )
-    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
-    run_id = runtime.create_run(frozen.frozen_spec_id)
-
-    with pytest.raises(ValueError, match="known claude-code worker_agent_type"):
-        runtime.plan_next(run_id, requested_k=1)
-
-
 def test_host_worker_budget_rejects_unenforceable_limits(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
@@ -1928,21 +1765,6 @@ def test_host_worker_budget_rejects_unenforceable_limits(tmp_path: Path) -> None
     with pytest.raises(ValueError, match="codex worker_budget requires max_runtime_seconds"):
         runtime.plan_next(run_id, requested_k=1)
 
-    claude_runtime = FileSearchRuntime(tmp_path / ".search-claude")
-    claude_spec = spec_with_strategy(
-        project,
-        {
-            "name": "random",
-            "worker_host": "claude-code",
-            "worker_budget": {"max_runtime_seconds": 600},
-        },
-        max_candidates=1,
-    )
-    frozen = claude_runtime.freeze_spec(claude_spec, [project / "evaluator.py"])
-    run_id = claude_runtime.create_run(frozen.frozen_spec_id)
-    with pytest.raises(ValueError, match="claude-code worker_budget requires max_turns"):
-        claude_runtime.plan_next(run_id, requested_k=1)
-
     pi_runtime = FileSearchRuntime(tmp_path / ".search-pi")
     pi_spec = spec_with_strategy(
         project,
@@ -1957,28 +1779,6 @@ def test_host_worker_budget_rejects_unenforceable_limits(tmp_path: Path) -> None
     run_id = pi_runtime.create_run(frozen.frozen_spec_id)
     with pytest.raises(ValueError, match="pi-rpc worker_budget requires max_runtime_seconds"):
         pi_runtime.plan_next(run_id, requested_k=1)
-
-    opencode_runtime = FileSearchRuntime(tmp_path / ".search-opencode-lease")
-    opencode_spec = spec_with_strategy(
-        project,
-        {
-            "name": "random",
-            "worker_host": "opencode",
-            "worker_budget": {
-                "min_runtime_seconds": 300,
-                "max_runtime_seconds": 420,
-            },
-        },
-        max_candidates=1,
-    )
-    frozen = opencode_runtime.freeze_spec(
-        opencode_spec,
-        [project / "evaluator.py"],
-    )
-    run_id = opencode_runtime.create_run(frozen.frozen_spec_id)
-    with pytest.raises(ValueError, match="currently supported only for codex"):
-        opencode_runtime.plan_next(run_id, requested_k=1)
-
 
 @pytest.mark.codex
 def test_bind_agent_handle_records_codex_task_name(tmp_path: Path) -> None:
@@ -1999,9 +1799,6 @@ def test_bind_agent_handle_records_codex_task_name(tmp_path: Path) -> None:
     assert updated.host == "codex"
     assert updated.host_handle.task_name == "search_agent_0001"
     assert updated.host_handle.nickname == "search worker"
-    assert updated.opencode_session_id is None
-
-
 @pytest.mark.codex
 def test_bind_agent_handle_harvests_workspace_handoff_into_history(tmp_path: Path) -> None:
     project = make_project(tmp_path)
@@ -2083,27 +1880,6 @@ def test_codex_continue_agent_session_uses_bound_worker_and_budget(tmp_path: Pat
     assert "返回前，在候选工作区创建 `.tmp/handoff.json`" in continued.launch["message"]
 
 
-def test_claude_continue_agent_session_uses_send_message_payload(tmp_path: Path) -> None:
-    project = make_project(tmp_path)
-    runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_host(project, "claude-code", strategy_name="random", max_candidates=1)
-    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
-    run_id = runtime.create_run(frozen.frozen_spec_id)
-    plan = runtime.plan_next(run_id, requested_k=1)
-    task = runtime.start_batch(run_id, plan.plan_id)[0]
-    session = runtime.start_agent_session(run_id, task.candidate_id)
-    runtime.bind_agent_handle(
-        session.agent_session_id,
-        {"host": "claude-code", "external_id": "agent_123"},
-    )
-
-    continued = runtime.continue_agent_session(session.agent_session_id)
-
-    assert continued.launch["tool"] == "SendMessage"
-    assert continued.launch["agent"] == "agent_123"
-    assert "continue_existing_agent_session=true" in continued.launch["message"]
-
-
 @pytest.mark.pi
 def test_pi_rpc_continue_agent_session_reuses_native_session(tmp_path: Path) -> None:
     project = make_project(tmp_path)
@@ -2159,89 +1935,6 @@ def test_pi_rpc_continue_agent_session_reuses_native_session(tmp_path: Path) -> 
     report = runtime.report(run_id).read_text(encoding="utf-8")
     assert "| Session | Host | Candidate | Verifier Runs |" in report
     assert "| Session | Host | Handle | Candidate | Verifier Runs |" not in report
-
-
-def test_bind_and_continue_agent_session_reuses_existing_opencode_session(
-    tmp_path: Path,
-) -> None:
-    project = make_project(tmp_path)
-    runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_strategy(
-        project,
-        {
-            "name": "random",
-            "worker_agent_type": "SearchCandidateAgent",
-        },
-        max_candidates=1,
-    )
-    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
-    run_id = runtime.create_run(frozen.frozen_spec_id)
-    plan = runtime.plan_next(run_id, requested_k=1)
-    task = runtime.start_batch(run_id, plan.plan_id)[0]
-    session = runtime.start_agent_session(
-        run_id,
-        task.candidate_id,
-        {"goal": "try one concrete variant"},
-    )
-
-    bound = runtime.bind_opencode_session(
-        session.agent_session_id,
-        " opencode_session_001 ",
-    )
-    assert bound.opencode_session_id == "opencode_session_001"
-
-    repeated = runtime.bind_opencode_session(
-        session.agent_session_id,
-        "opencode_session_001",
-    )
-    assert repeated.opencode_session_id == "opencode_session_001"
-
-    continued = runtime.continue_agent_session(
-        session.agent_session_id,
-        {"goal": "keep improving the same node"},
-    )
-
-    assert continued.agent_session_id == session.agent_session_id
-    assert continued.candidate_id == task.candidate_id
-    assert continued.workspace == task.workspace
-    assert continued.opencode_session_id == "opencode_session_001"
-    assert continued.directive == {"goal": "keep improving the same node"}
-    assert continued.launch["task_id"] == "opencode_session_001"
-    assert continued.launch["subagent_type"] == "SearchCandidateAgent"
-    assert "required" not in continued.launch
-    assert continued.agent_session_id in continued.launch["prompt"]
-    assert task.candidate_id in continued.launch["prompt"]
-    assert "search_get_agent_context" in continued.launch["prompt"]
-    assert str(task.workspace) not in continued.launch["prompt"]
-
-    context = runtime.get_agent_context(session.agent_session_id)
-    assert context["candidate_id"] == task.candidate_id
-    assert context["workspace"] == str(task.workspace)
-
-    history = runtime.list_history(run_id)
-    candidate = history["candidates"][0]
-    assert candidate["agent_sessions"][0]["opencode_session_id"] == "opencode_session_001"
-
-    report = runtime.report(run_id).read_text(encoding="utf-8")
-    assert "| Session | Host | Handle | Candidate | Verifier Runs |" in report
-    assert "Handle / OpenCode Session" not in report
-    assert "opencode_session_001" in report
-
-    with pytest.raises(ValueError, match="different OpenCode session"):
-        runtime.bind_opencode_session(session.agent_session_id, "opencode_session_002")
-
-
-def test_continue_agent_session_requires_bound_opencode_session(tmp_path: Path) -> None:
-    project = make_project(tmp_path)
-    runtime = FileSearchRuntime(tmp_path / ".search")
-    frozen = runtime.freeze_spec(spec_for(project, max_candidates=1), [project / "evaluator.py"])
-    run_id = runtime.create_run(frozen.frozen_spec_id)
-    plan = runtime.plan_next(run_id, requested_k=1)
-    task = runtime.start_batch(run_id, plan.plan_id)[0]
-    session = runtime.start_agent_session(run_id, task.candidate_id)
-
-    with pytest.raises(RuntimeError, match="no bound OpenCode session id"):
-        runtime.continue_agent_session(session.agent_session_id)
 
 
 def test_plan_next_caps_batch_size_to_max_parallel(tmp_path: Path) -> None:
@@ -2573,18 +2266,6 @@ def test_random_strategy_name_normalizes_case_and_dash(
     ("host", "strategy_name", "requires_proposals", "expected_launch"),
     [
         (
-            "opencode",
-            "agent_guided",
-            True,
-            {"subagent_type": "SearchCandidateAgent"},
-        ),
-        (
-            "opencode",
-            "random",
-            False,
-            {"subagent_type": "SearchCandidateAgent"},
-        ),
-        (
             "codex",
             "default",
             True,
@@ -2596,29 +2277,10 @@ def test_random_strategy_name_normalizes_case_and_dash(
             False,
             {"tool": "spawn_agent", "agent_type": "default"},
         ),
-        (
-            "claude-code",
-            "agent",
-            True,
-            {
-                "tool": "Agent",
-                "agent_type": "search-candidate-agent",
-                "background": False,
-            },
-        ),
-        (
-            "claude-code",
-            "random_mode",
-            False,
-            {
-                "tool": "Agent",
-                "agent_type": "search-candidate-agent",
-                "background": False,
-            },
-        ),
     ],
 )
-def test_all_hosts_create_sessions_for_portable_strategy_modes(
+@pytest.mark.codex
+def test_codex_creates_sessions_for_portable_strategy_modes(
     tmp_path: Path,
     host: str,
     expected_launch: dict[str, object],
@@ -2657,40 +2319,25 @@ def test_all_hosts_create_sessions_for_portable_strategy_modes(
 
 @pytest.mark.parametrize(
     "strategy_name",
-    ["evolve", "openevolve", "mcts"],
+    ["independent_branches", "openevolve"],
 )
-def test_opencode_accepts_existing_builtin_strategy_modes(
+@pytest.mark.codex
+def test_codex_rejects_non_portable_strategies(
     tmp_path: Path,
     strategy_name: str,
 ) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_host(project, "opencode", strategy_name=strategy_name, max_candidates=1)
+    spec = spec_with_host(
+        project,
+        "codex",
+        strategy_name=strategy_name,
+        max_candidates=1,
+    )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
 
-    plan = runtime.plan_next(run_id, requested_k=1)
-
-    assert plan.worker_policy["host"] == "opencode"
-    assert plan.strategy.name == strategy_name
-
-
-@pytest.mark.parametrize(
-    ("host", "strategy_name"),
-    [("codex", "independent_branches"), ("claude-code", "openevolve")],
-)
-def test_non_opencode_hosts_reject_non_portable_strategies(
-    tmp_path: Path,
-    host: str,
-    strategy_name: str,
-) -> None:
-    project = make_project(tmp_path)
-    runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_host(project, host, strategy_name=strategy_name, max_candidates=1)
-    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
-    run_id = runtime.create_run(frozen.frozen_spec_id)
-
-    with pytest.raises(ValueError, match=f"{host}.*{strategy_name}"):
+    with pytest.raises(ValueError, match=f"codex.*{strategy_name}"):
         runtime.plan_next(run_id, requested_k=1)
 
 
@@ -2881,7 +2528,7 @@ def test_run_verifier_records_iteration_with_agent_session_id(
         project,
         {
             "name": "random",
-            "worker_agent_type": "SearchCandidateAgent",
+            "worker_agent_type": "search_candidate_agent",
         },
         max_candidates=1,
     )
@@ -2921,7 +2568,7 @@ def test_run_verifier_without_agent_session_id_is_main_final_verify(
         project,
         {
             "name": "random",
-            "worker_agent_type": "SearchCandidateAgent",
+            "worker_agent_type": "search_candidate_agent",
         },
         max_candidates=1,
     )
@@ -2957,7 +2604,6 @@ def test_removed_runtime_methods_are_absent() -> None:
         "update_agent_status",
         "list_agent_status",
         "sync_host_agent_sessions",
-        "_observe_opencode_session",
         "_finish_agent_session_from_host",
         "_host_observation_reason",
         "finish_agent_session",
@@ -2977,13 +2623,6 @@ def test_removed_runtime_methods_are_absent() -> None:
         assert not hasattr(FileSearchRuntime, name), (
             f"FileSearchRuntime.{name} should be removed"
         )
-
-
-def test_constructor_does_not_accept_opencode_db_path() -> None:
-    import inspect
-
-    signature = inspect.signature(FileSearchRuntime.__init__)
-    assert "opencode_db_path" not in signature.parameters
 
 
 def test_run_verifier_parses_subprocess_metrics_with_mock(
@@ -3825,7 +3464,7 @@ def test_run_verifier_works_without_session_and_records_iterations(
         project,
         {
             "name": "random",
-            "worker_agent_type": "SearchCandidateAgent",
+            "worker_agent_type": "search_candidate_agent",
         },
         max_candidates=1,
     )
@@ -3951,7 +3590,7 @@ def test_history_and_report_include_agent_sessions(tmp_path: Path) -> None:
         project,
         {
             "name": "random",
-            "worker_agent_type": "SearchCandidateAgent",
+            "worker_agent_type": "search_candidate_agent",
         },
         max_candidates=1,
     )

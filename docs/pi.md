@@ -34,7 +34,7 @@ At terminal state, Pi writes a visible `Goal Plus stats` custom entry with
 elapsed time, messages, tool calls, token use, and estimated cost. It is not an
 LLM message and does not trigger another assistant turn.
 
-## How Pi Differs From Other Hosts
+## How Pi Differs From Codex
 
 The main agent uses extension events rather than project hook files. Candidate
 workers are Pi RPC processes supervised by a durable host-local pool. Each

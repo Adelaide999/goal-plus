@@ -86,11 +86,11 @@ class EditSurface(SearchModel):
     max_file_changes: int | None = Field(default=None, gt=0)
 
 
-AgentHostKind = Literal["opencode", "codex", "claude-code", "pi-rpc"]
+AgentHostKind = Literal["codex", "pi-rpc"]
 
 
 class AgentHostHandle(SearchModel):
-    host: AgentHostKind = "opencode"
+    host: AgentHostKind = "codex"
     external_id: str | None = None
     task_name: str | None = None
     nickname: str | None = None
@@ -631,8 +631,7 @@ class AgentSessionRecord(SearchModel):
     agent_session_id: str
     run_id: str
     candidate_id: str
-    opencode_session_id: str | None = None
-    host: AgentHostKind = "opencode"
+    host: AgentHostKind = "codex"
     host_handle: AgentHostHandle = Field(default_factory=AgentHostHandle)
     created_at: str
     updated_at: str

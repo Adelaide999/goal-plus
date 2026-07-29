@@ -6,8 +6,7 @@ Goal Plus 是面向长时间 agent 任务的宿主中立运行时。`/goal-plus`
 普通目标；遇到可度量的优化任务时，它会升级到 Search Mode：冻结评价合同、在隔离
 候选中探索，并提升经过 verifier 验证的最佳结果。
 
-Pi 和 Codex 是当前维护的宿主路径。仓库仍保留 OpenCode 和 Claude Code 资产作为
-不受支持的参考实现，但不提供兼容性保证，默认测试也不会运行它们。
+Pi 和 Codex 是当前支持的宿主路径。
 
 ## 快速开始
 
@@ -55,8 +54,6 @@ Codex 和 Pi 还提供：
 |---|---|---|---|
 | Pi | `.pi/` | `/goal-plus` 或 `pi -p "/goal-plus ..."` | 持久化 Pi RPC pool；参阅 [Pi](docs/pi.md) |
 | Codex | `.codex/` | `goal-plus` skill 或 `/goal-plus` 提示 | 固定 parallel loops 与原生同 worker continuation；参阅 [Codex](docs/codex.md) |
-| Claude Code | `.mcp.json`、`.claude/` | 不受支持的参考资产 | 当前不维护；参阅 [Claude Code](docs/claude-code.md) |
-| OpenCode | `opencode.json`、`.opencode/` | 不受支持的参考资产 | 当前不维护；参阅 [OpenCode](docs/opencode.md) |
 
 Codex 需要将 `.codex/config.example.toml` 复制为被忽略的本地文件
 `.codex/config.toml`。宿主差异和策略覆盖见
@@ -117,5 +114,4 @@ git diff --check
 ```
 
 Pi 和 Codex 当前维护的策略集合是 `agent_guided`
-（`agent`/`default`）和 `random`（`random_mode`）。OpenCode/Claude 测试是显式
-opt-in slice，不会在 `python -m pytest -q` 中运行。
+（`agent`/`default`）和 `random`（`random_mode`）。

@@ -425,10 +425,6 @@ search_state_policy:
   不承担方向选择；
 - Codex hooks 继续负责 Goal Plus session binding/stop/pre-tool gate，不承担 reservation lease 或 SearchState 更新。
 
-### 暂不支持的 hosts
-
-OpenCode/Claude 的 spec 可以继续 `disabled`；runtime 新记录必须保持 host-neutral 可读，但不要求首轮资产、hook 或真实 smoke parity。
-
 ## 测试结构
 
 - `tests/test_models.py`：strict schema、legacy defaults、provenance；

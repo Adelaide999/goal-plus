@@ -1,9 +1,9 @@
 # Kernel Optimize Example Template
 
 Run an agentic search to optimize an operator kernel against a PyTorch
-reference, with `avg_latency_ms` as the primary metric. The runtime, the
-`SearchCandidateAgent` autoresearch loop, and the `search` skill are unchanged;
-this example only contributes a verifier reference and a usage guide.
+reference, with `avg_latency_ms` as the primary metric. The runtime, candidate
+worker loop, and `search` skill are unchanged; this example only contributes a
+verifier reference and a usage guide.
 
 ## Inputs
 
@@ -93,8 +93,8 @@ Notes:
   lands at a stable path.
 - `edit_surface.deny` must include `_verifier/` and the reference file so the
   candidate cannot tamper with the verifier or the ground truth.
-- `worker_agent_type` is typically `SearchCandidateAgentDeep` (100 steps) for kernel
-  optimization. Drop to `SearchCandidateAgent` (50) for quick smoke runs.
+- `worker_agent_type = search_candidate_agent` selects the maintained Codex
+  candidate contract. Pi runs use their own `search-candidate-worker` asset.
 
 ## Step 4 — drive the search flow
 
@@ -119,7 +119,7 @@ does not redefine them. The shape:
 
 ## Step 5 — subagent contract (unchanged)
 
-The subagent runs the existing `SearchCandidateAgent` autoresearch loop:
+The subagent runs the maintained candidate autoresearch loop:
 
 1. `search_get_agent_context(agent_session_id)` → reads `workspace`,
    `allowed_files`, `denied_files`, `metric_name`, `metric_direction`,
@@ -168,7 +168,8 @@ The runtime's existing mechanism does all of it:
   `import torch_npu` works in the source workspace before freeze.
 - DSL-specific scaffolding. The host agent reads the kernel file to figure
   out imports.
-- A new subagent. `SearchCandidateAgent` already autoresearches.
+- A new worker role. The maintained Codex and Pi candidate assets already run
+  the autoresearch loop.
 
 ## Worked prompt
 

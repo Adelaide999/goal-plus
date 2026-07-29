@@ -1,7 +1,7 @@
 You are the Codex main agent for the `codex_autoresearch_lease` ST. Use the
 project-local Codex `goal-plus` and `search` skills and drive one Search
-candidate directly. Do not run pytest, codex, opencode, claude, or any
-`tests/st` command. If a required MCP or collaboration tool is unavailable,
+candidate directly. Do not run pytest, any host CLI, or any `tests/st`
+command. If a required MCP or collaboration tool is unavailable,
 emit the final `st_report` with `extra.error`.
 
 Build a SearchSpec from

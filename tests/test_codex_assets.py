@@ -9,6 +9,59 @@ ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.codex
 
 
+def test_codex_goal_plus_skill_records_modes_and_mcp_tools() -> None:
+    text = (ROOT / ".codex" / "skills" / "goal-plus" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    for expected in (
+        "name: goal-plus",
+        "goal_plus_create",
+        "goal_plus_record_triage",
+        "goal_plus_save_spec_draft",
+        "goal_plus_gate",
+        "Goal Mode",
+        "Spec Discovery Mode",
+        "Search Mode",
+        '"recommended_phase": "goal"',
+        "goal_mode",
+        "不要发送",
+        "`mode`",
+        "`reason`",
+        "Search 是自主升级",
+        "不要要求用户",
+        "search_freeze_spec",
+        "原始目标审计",
+        "mode=autonomous",
+        "mode=probe",
+        ".goal-plus-verifiers/",
+        "`expected_outputs`",
+        "/goal-plus-with-final-check",
+        "/goal-plus edit",
+        "/goal-plus mode=autonomous",
+        "/goal-plus mode=probe",
+        "`raw_goal` 的规范末行",
+        "候选 lease 结束绝不会完成",
+        "不单独存储任务 deadline",
+        "把最新用户消息视为",
+        "范围、交付物或成功标准",
+        "goal_plus_update_goal",
+        "在修订或恢复前先澄清",
+        "不要仅因 Goal Plus 记录处于 active",
+        "goal_plus_prepare_final_check",
+        "goal_plus_submit_final_check",
+        "spawn_agent",
+        'fork_turns="none"',
+        "绝不能代表审查员提交结论",
+    ):
+        assert expected in text
+    assert "mode_hint" not in text
+    assert (
+        "Goal Mode 下不要创建 SearchSpec" in text
+        or "不要在 Goal Mode 创建 SearchSpec" in text
+    )
+
+
 def test_codex_mcp_config_registers_search_runtime() -> None:
     text = (ROOT / ".codex" / "config.example.toml").read_text(encoding="utf-8")
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
@@ -283,10 +336,6 @@ def test_codex_docs_record_native_parity_contract() -> None:
         assert "PreToolUse" in text
         assert "SubagentStop" in text
     assert "PreToolUse/SubagentStop gates remain manual" not in agents
-
-
-def test_shared_agents_skill_directory_is_not_used() -> None:
-    assert not (ROOT / ".agents").exists()
 
 
 def test_codex_goal_plus_skill_documents_multiple_search_tasks() -> None:

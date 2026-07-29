@@ -189,7 +189,7 @@ def test_post_tool_use_goal_plus_create_ignores_subagent_context(tmp_path: Path)
             "hook_event_name": "PostToolUse",
             "session_id": "session-main",
             "agent_id": "agent-sub",
-            "agent_type": "search-candidate-agent",
+            "agent_type": "search_candidate_agent",
             "agent_transcript_path": "/tmp/subagent.jsonl",
             "tool_name": "mcp__goal-plus__goal_plus_create",
             "tool_response": {"goal_plus_id": record.goal_plus_id},
@@ -208,7 +208,7 @@ def test_stop_hook_blocks_only_current_bound_session(tmp_path: Path) -> None:
     runtime.activate_session(
         record.goal_plus_id,
         {
-            "host": "claude-code",
+            "host": "codex",
             "session_id": "session-a",
             "transcript_path": "/tmp/session-a.jsonl",
         },

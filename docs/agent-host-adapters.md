@@ -51,8 +51,7 @@ charge; `usage.cost_estimate` retains the catalog, coverage, and billing note.
 Unknown models keep `cost_usd` unavailable instead of applying a guessed rate.
 
 The accepted initial planners are `agent_guided`/`agent`/`default` and
-`random`/`random_mode`. OpenCode and Claude Code assets are retained only as
-unsupported references and are outside this contract.
+`random`/`random_mode`.
 
 ## Parallel Loops
 
@@ -143,9 +142,6 @@ scores cannot be promoted or reused by the successor.
 | Pi managed pool | `pi_rpc_managed_pool_wait_any`: two detached real Pi workers, pool rediscovery, candidate-ready events, drain |
 | Pi parallel-loop cycle | `pi_rpc_parallel_loop_cycle`: one initial plan, same-candidate redispatch with a new session, best update, final selection/report |
 
-OpenCode and Claude Code compatibility tests are opt-in historical checks; they
-are not support evidence for the current runtime.
-
 Fast tests prove schemas and adapter mappings. Only the opt-in real-host tests
 prove native launch, waiting, continuation, hooks, and provider behavior.
 
@@ -161,6 +157,6 @@ An adapter may:
 It must not create candidate workspaces, execute/rank verifiers, plan the next
 hypothesis, generate reports, or export promotion patches.
 
-To add a host, register an adapter in `src/goal_plus/agent_hosts.py`, add local
-assets and docs, cover launch/bind/budget/continuation in unit tests, and add a
-real multi-round smoke before claiming end-to-end support.
+Host integrations are limited to Codex and Pi. Changes to either adapter must
+update its local assets and docs, cover launch/bind/budget/continuation in unit
+tests, and retain a real multi-round smoke path.

@@ -15,8 +15,7 @@ Read only the page that owns the question:
 - [docs/agent-host-adapters.md](docs/agent-host-adapters.md): capability matrix
   and shared host-pool contract.
 - [docs/debugging-runtime.md](docs/debugging-runtime.md): state and host logs.
-- [docs/opencode.md](docs/opencode.md), [docs/codex.md](docs/codex.md), and
-  [docs/claude-code.md](docs/claude-code.md), and [docs/pi.md](docs/pi.md):
+- [docs/codex.md](docs/codex.md) and [docs/pi.md](docs/pi.md):
   host-specific setup and behavior.
 - [examples/README.md](examples/README.md): example specs, strategy modes, and
   scenario prompts.
@@ -121,8 +120,8 @@ When building or running such benchmarks:
 - `src/goal_plus/runtime.py`: file-backed Search Mode state
   machine for workspace copy, verifier execution, selection, reports, and
   promotion.
-- `src/goal_plus/agent_hosts.py`: maintained Codex/Pi adapters plus unsupported
-  OpenCode/Claude reference adapters. Keep host launch/continue/budget mapping here.
+- `src/goal_plus/agent_hosts.py`: maintained Codex/Pi adapters. Keep host
+  launch/continue/budget mapping here.
 - `src/goal_plus/tools.py`: JSON-friendly facade used by tests and
   MCP.
 - `src/goal_plus/server.py`: FastMCP stdio server.
@@ -130,14 +129,11 @@ When building or running such benchmarks:
   `src/goal_plus/pi_worker.py`: Pi extension facade and Pi RPC
   worker runner. `src/goal_plus/pi_pool.py` is the durable host-local pool
   supervisor.
-- `.opencode/`: OpenCode goal-plus/search skills, commands, and worker agents.
 - `.codex/`: Codex goal-plus/search skills and worker agent assets.
-- `.claude/`: Claude Code goal-plus/search skills and worker agents.
 - `.pi/`: Pi prompt templates, skills, and extension tools.
 - `docs/`: design, adapter, host, debug, and strategy documentation.
 - `examples/`: example SearchSpec files.
-- `tests/`: unit/integration tests, asset tests, fixtures, and opt-in
-  OpenCode system tests.
+- `tests/`: unit/integration tests, asset tests, fixtures, and system tests.
 
 Generated or local-only state:
 
@@ -154,9 +150,6 @@ Keep runtime behavior host-neutral. Host-specific behavior belongs in
 
 Current host expectations:
 
-- OpenCode and Claude Code are unsupported reference hosts. Their assets and
-  adapters are not maintained, receive no compatibility guarantee, and their
-  tests are excluded from the default gate with `opencode`/`claude` markers.
 - Codex supports the portable builtin strategy subset. `worker_budget` requires
   `max_runtime_seconds` and is enforced by parent watchdog metadata:
   an initial `wait_agent`, one `send_message` closeout, a final wait, then
@@ -234,10 +227,10 @@ observation, submit, abort, and host-sync APIs must not reappear in host assets.
 
 ## Testing
 
-`pytest.ini` registers markers and defaults to `-n 4 --dist=load` with
-`not opencode and not claude`. The default gate runs maintained fast tests in
-parallel; `integration`, `example`, `st`, and `st_pi` tests are skipped unless
-named in `-m`. See [tests/README.md](tests/README.md) for the full marker matrix.
+`pytest.ini` registers markers and defaults to `-n 4 --dist=load`. The default
+gate runs maintained fast tests in parallel; `integration`, `example`, `st`,
+and `st_pi` tests are skipped unless named in `-m`. See
+[tests/README.md](tests/README.md) for the full marker matrix.
 
 Default verification:
 
@@ -376,12 +369,8 @@ remain `Not observed`/unavailable in the report.
 
 Host log sources:
 
-- OpenCode: `~/.local/share/opencode/opencode.db` and
-  `~/.local/share/opencode/log/opencode.log`.
 - Codex: `codex exec --json`, `${CODEX_HOME:-~/.codex}/sessions/...`, and
   optional `RUST_LOG=debug codex -c log_dir=./.codex-log`.
-- Claude Code: `claude -p --output-format stream-json`, `--debug-file`, and
-  `~/.claude/projects/<encoded-project>/...`.
 - Pi RPC: metadata-only `.gp/host-logs/pi-rpc-<agent_session_id>.jsonl` and,
   only when raw logging is explicitly enabled,
   `.gp/host-logs/pi-rpc-<agent_session_id>.txt`.

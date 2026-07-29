@@ -29,7 +29,7 @@
   "strategy": {
     "name": "random",
     "worker_host": "codex",
-    "worker_agent_type": "SearchCandidateAgentFlash"
+    "worker_agent_type": "search_candidate_agent"
   },
   "workspace": {
     "backend": "git_worktree"

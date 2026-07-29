@@ -20,13 +20,13 @@ EXAMPLE_SPECS = [
         "circle_packing_search_spec.json",
         ["tests/fixtures/circle_packing/evaluator.py"],
         "combined_score",
-        {"max_candidates": 4, "max_parallel": 2, "worker_agent_type": "SearchCandidateAgentFlash"},
+        {"max_candidates": 4, "max_parallel": 2, "worker_agent_type": "search_candidate_agent"},
     ),
     (
         "signal_processing_search_spec.json",
         ["tests/fixtures/signal_processing/evaluator.py"],
         "overall_score",
-        {"max_candidates": 8, "max_parallel": 4, "worker_agent_type": "SearchCandidateAgent"},
+        {"max_candidates": 8, "max_parallel": 4, "worker_agent_type": "search_candidate_agent"},
     ),
     (
         "edgebench_ad_placement_search_spec.json",

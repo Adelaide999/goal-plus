@@ -24,6 +24,5 @@ The final stdout line is JSON containing candidate scores, branch names,
 parent and child revisions, selection, report path, and whether every candidate
 resolved to the same Git common directory.
 
-This is a runtime E2E. It does not launch a real OpenCode, Codex, Claude Code,
-or Pi worker and therefore is not evidence for host lifecycle or `/goal-plus`
-hook behavior.
+This is a runtime E2E. It does not launch a real Codex or Pi worker and
+therefore is not evidence for host lifecycle or `/goal-plus` hook behavior.

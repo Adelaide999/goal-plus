@@ -14,7 +14,7 @@ P1 AtomicPlan generation contract
        └─> P6 transactional core
               -> P7 Pi/Codex integration
 
-P8 latent/cross-task/other hosts: deferred
+P8 latent/cross-task: deferred
 ```
 
 P5 不是 P6/P7 的前置条件。冻结 schema 可以先支持事务和 host 集成。
@@ -189,7 +189,6 @@ P5 不是 P6/P7 的前置条件。冻结 schema 可以先支持事务和 host �
 - 跨 run/domain schema 迁移；
 - schema/normalizer 训练；
 - controller 自修改；
-- OpenCode/Claude strict parity；
 - distributed/multi-machine transaction store。
 
 ## 每阶段公共交付物

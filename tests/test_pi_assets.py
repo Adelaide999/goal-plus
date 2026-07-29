@@ -413,7 +413,7 @@ def test_pi_docs_record_runner_logs_and_native_stop_gate() -> None:
     assert ".pi/skills/goal-plus/" in combined
     assert "pi_search_pool_open" in combined
     assert "pi_search_pool_continue" in combined
-    assert "How Pi Differs From Other Hosts" in combined
+    assert "How Pi Differs From Codex" in combined
     assert "Pi currently supports the portable builtin strategies only" in combined
     assert "pre-model `/goal-plus` creation" in combined
     assert "pi -p" in combined

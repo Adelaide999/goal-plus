@@ -71,8 +71,7 @@ Candidate worker 继续在自己的 workspace 中修改、验证、保留或回�
 
 ### 首批只支持 Pi 与 Codex
 
-共享数据模型保持 host-neutral。OpenCode/Claude 的旧 run 必须继续可读，但不
-要求首批 strict admission 或 reservation asset parity。
+共享数据模型保持 host-neutral，但持久化 host 枚举只接受 Pi 与 Codex。
 
 ## 首轮不做
 
@@ -80,7 +79,6 @@ Candidate worker 继续在自己的 workspace 中修改、验证、保留或回�
 - 跨 run/domain ontology 迁移；
 - distributed transaction store；
 - runtime-owned wait/abort/heartbeat；
-- OpenCode/Claude strict mode；
 - 将 raw logs、transcript 或完整 diff 写入 SearchState。
 
 ---

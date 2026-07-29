@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "goal-plus": {
-      "command": "goal-plus",
-      "args": ["--root", ".gp"]
-    }
-  }
-}

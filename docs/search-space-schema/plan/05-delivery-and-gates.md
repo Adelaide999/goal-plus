@@ -129,15 +129,15 @@ Semantic overlap 默认不进入硬拒绝；exact duplicate 可以作为独立�
 
 ## Host 支持矩阵
 
-| 阶段 | Runtime | Pi | Codex | OpenCode | Claude Code |
-|---|---|---|---|---|---|
-| P1 | typed plan readable | plan generation | contract parity | legacy | legacy |
-| P2 | event shadow | readable | readable | compatible records | compatible records |
-| P3 | state shadow | reference | parity | disabled | disabled |
-| P4 | serial admission | supported | supported | strict mode unsupported | strict mode unsupported |
-| P5 | schema revision | same runtime | same runtime | unsupported | unsupported |
-| P6 | transaction core | no host parallel | no host parallel | unsupported | unsupported |
-| P7 | admitted task execution | opt-in | opt-in | deferred | deferred |
+| 阶段 | Runtime | Pi | Codex |
+|---|---|---|---|
+| P1 | typed plan readable | plan generation | contract parity |
+| P2 | event shadow | readable | readable |
+| P3 | state shadow | reference | parity |
+| P4 | serial admission | supported | supported |
+| P5 | schema revision | same runtime | same runtime |
+| P6 | transaction core | no host parallel | no host parallel |
+| P7 | admitted task execution | opt-in | opt-in |
 
 ## Definition of Done
 
@@ -159,7 +159,6 @@ Semantic overlap 默认不进入硬拒绝；exact duplicate 可以作为独立�
 
 - 所需 Pi/Codex asset 与 runtime contract 同步；
 - design、flow、api、debugging、monitor 和报告同步；
-- OpenCode/Claude 支持状态不被夸大。
 
 ## 当前建议顺序
 
