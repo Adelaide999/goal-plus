@@ -14,11 +14,6 @@ benchmarks/runs/
 docs/superpowers/
 .superpowers/
 .superdesign/tmp/
-.opencode/node_modules/
-.opencode/package.json
-.opencode/package-lock.json
-.opencode/bun.lock
-.opencode/.gitignore
 .codex/agents/search_candidate_agent_flash.toml
 .codex/agents/search_candidate_agent_deep.toml
 .codex/config.toml

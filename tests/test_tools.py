@@ -100,7 +100,7 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         updated_at="2026-06-24T00:00:00Z",
         workspace=Path("/tmp/c001"),
         launch={
-            "subagent_type": "SearchCandidateAgent",
+            "agent_type": "search_candidate_agent",
             "description": "c001 try one",
             "prompt": "agent_session_id=agent_001; candidate_id=c001; idea: try one",
         },
@@ -163,7 +163,7 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         update={
             "agent_session_id": "agent_002",
             "launch": {
-                "subagent_type": "SearchCandidateAgentDeep",
+                "agent_type": "search_candidate_agent_deep",
                 "description": "c001 resume",
                 "prompt": "state_level_resume=true; agent_session_id=agent_002",
             },
@@ -179,7 +179,7 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         update={
             "launch": {
                 "task_name": "search_agent_001",
-                "subagent_type": "SearchCandidateAgent",
+                "agent_type": "search_candidate_agent",
                 "description": "c001 continue try one",
                 "prompt": "continue_existing_agent_session=true; agent_session_id=agent_001",
             }
@@ -245,11 +245,11 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
     redispatched = tools.search_redispatch_candidate(
         "run_1",
         "c001",
-        worker_agent_type="SearchCandidateAgentDeep",
+        worker_agent_type="search_candidate_agent_deep",
         worker_budget={"max_turns": 16},
     )
     assert redispatched["agent_session_id"] == "agent_002"
-    assert redispatched["launch"]["subagent_type"] == "SearchCandidateAgentDeep"
+    assert redispatched["launch"]["agent_type"] == "search_candidate_agent_deep"
     assert tools.search_bind_agent_handle(
         "agent_001",
         {"host": "codex", "task_name": "search_agent_001"},
@@ -316,7 +316,7 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
     runtime.redispatch_candidate.assert_called_once_with(
         run_id="run_1",
         candidate_id="c001",
-        worker_agent_type="SearchCandidateAgentDeep",
+        worker_agent_type="search_candidate_agent_deep",
         worker_budget={"max_turns": 16},
     )
     runtime.bind_agent_handle.assert_called_once_with(

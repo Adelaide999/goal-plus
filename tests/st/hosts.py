@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 
-HostKind = Literal["opencode", "codex", "claude-code", "pi-rpc"]
+HostKind = Literal["codex", "pi-rpc"]
 
 
 @dataclass(frozen=True)
@@ -21,13 +21,6 @@ class StHost:
 
 
 HOSTS: dict[HostKind, StHost] = {
-    "opencode": StHost(
-        kind="opencode",
-        marker="st_opencode",
-        display_name="OpenCode",
-        binary="opencode",
-        model_env="ST_OPENCODE_MODEL",
-    ),
     "codex": StHost(
         kind="codex",
         marker="st_codex",
@@ -35,13 +28,6 @@ HOSTS: dict[HostKind, StHost] = {
         binary="codex",
         model_env="ST_CODEX_MODEL",
         default_model="gpt-5.6-terra",
-    ),
-    "claude-code": StHost(
-        kind="claude-code",
-        marker="st_claude",
-        display_name="Claude Code",
-        binary="claude",
-        model_env="ST_CLAUDE_MODEL",
     ),
     "pi-rpc": StHost(
         kind="pi-rpc",
@@ -53,7 +39,7 @@ HOSTS: dict[HostKind, StHost] = {
 }
 
 HOST_BY_MARKER = {host.marker: host for host in HOSTS.values()}
-DEFAULT_ST_HOST: HostKind = "opencode"
+DEFAULT_ST_HOST: HostKind = "codex"
 ST_ACTIVE_ENV = "GOAL_PLUS_ST_ACTIVE"
 
 
@@ -91,12 +77,5 @@ def _link_if_present(project_root: Path, source_root: Path, name: str) -> None:
 
 def link_host_assets(project_root: Path, source_root: Path) -> None:
     """Expose project-local host configs inside an isolated ST workdir."""
-    _replace_path(project_root / ".agents")
-    for name in (
-        "opencode.json",
-        ".codex",
-        ".mcp.json",
-        ".claude",
-        ".pi",
-    ):
+    for name in (".codex", ".pi"):
         _link_if_present(project_root, source_root, name)

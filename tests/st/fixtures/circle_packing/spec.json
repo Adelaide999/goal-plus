@@ -40,7 +40,7 @@
   },
   "strategy": {
     "name": "random",
-    "worker_agent_type": "SearchCandidateAgentFlash"
+    "worker_agent_type": "search_candidate_agent"
   },
   "constraints": {
     "suggested_batch_size": 4,

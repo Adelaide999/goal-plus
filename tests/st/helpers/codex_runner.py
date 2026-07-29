@@ -56,8 +56,8 @@ class CodexRunner:
             "autonomously whether Search adds value, discover any missing "
             "verifier/spec details, and enter Search when the draft is ready. "
             "Do not ask for or wait for user confirmation. "
-            "You are already inside the ST harness: do not run pytest, codex, "
-            "opencode, claude, or any tests/st command. Drive the goal-plus "
+            "You are already inside the ST harness: do not run pytest, any "
+            "host CLI, or any tests/st command. Drive the goal-plus "
             "MCP tools directly, and only launch workers through the project "
             "host-pool contract from runtime launch payloads.\n\n"
             + prompt

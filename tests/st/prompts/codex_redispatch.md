@@ -1,6 +1,6 @@
 You are the Codex main agent for the `codex_redispatch` ST. Use the Codex
 `goal-plus` and `search` skills, but drive Search Mode directly once the spec
-is clear. Do not run pytest, codex, opencode, claude, or any `tests/st`
+is clear. Do not run pytest, any host CLI, or any `tests/st`
 command; doing so would recursively start this same ST instead of testing the
 runtime. If the required MCP or foreground-worker tools are unavailable, emit
 the final `st_report` with `extra.error` instead of launching another test.

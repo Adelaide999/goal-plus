@@ -1,6 +1,6 @@
 You are the Codex main agent for the `codex_rolling_followup` ST. Use the
 project-local Codex `search` skill and drive the Search MCP runtime directly.
-Do not run pytest, codex, opencode, claude, or any `tests/st` command. If a
+Do not run pytest, any host CLI, or any `tests/st` command. If a
 required MCP or collaboration tool is unavailable, emit the final `st_report`
 with `extra.error`.
 

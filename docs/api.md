@@ -95,9 +95,8 @@ tokens include input, cache read/write, and output tokens, while Codex uses its
 native total-token counter because cached input is already included. Codex
 reads its native subagent session JSONL (bound by `SubagentStop` or discovered
 from the unique task name); Pi normalizes `metadata.pi_metrics`. Legacy
-OpenCode and Claude Code records remain readable when they already contain
-bound metadata. The call never returns prompt, reasoning, tool arguments, or
-tool output content,
+records may still contain bound metadata. The call never returns prompt,
+reasoning, tool arguments, or tool output content,
 and never waits for or controls a worker. `goal_plus_monitor_snapshot` embeds
 the same object under each `subagents[].observability` while retaining legacy
 Pi fields for backward compatibility.

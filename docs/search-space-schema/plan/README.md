@@ -30,7 +30,7 @@ resume 原 subagent，不重新判断方向或派发“下一轮”。本文档�
    workspace 内连续提交 `AtomicPlan`。
 4. 先建立不可变事件和版本化状态，再让状态影响准入。
 5. runtime 不接管 worker 启动、等待、终止、heartbeat 或 host lifecycle。
-6. Pi 先接入，Codex 使用同一 runtime 数据语义；OpenCode/Claude 延后。
+6. 只支持 Pi 与 Codex，并让两者使用同一 runtime 数据语义。
 7. 每增加一种持久化事实，都要同步补充 monitor、统计和 HTML 报告读取。
 
 ## 实施顺序
@@ -44,7 +44,7 @@ resume 原 subagent，不重新判断方向或派发“下一轮”。本文档�
 | P5 | schema revision、split/merge/re-index | advisory |
 | P6 | reservation、幂等提交和 crash recovery | simulator/disabled |
 | P7 | Pi/Codex host 集成 | opt-in |
-| P8 | latent view、跨任务迁移和其他 hosts | deferred |
+| P8 | latent view 与跨任务迁移 | deferred |
 
 P5 不阻塞 P6/P7。动态 schema 未启用时，事务与 host 集成可以使用冻结 schema。
 

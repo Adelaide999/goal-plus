@@ -193,9 +193,7 @@ def test_search_spec_requires_structured_strategy() -> None:
 
 
 def test_strategy_spec_accepts_supported_worker_hosts() -> None:
-    assert StrategySpec(worker_host="opencode").worker_host == "opencode"
     assert StrategySpec(worker_host="codex").worker_host == "codex"
-    assert StrategySpec(worker_host="claude-code").worker_host == "claude-code"
     assert StrategySpec(worker_host="pi-rpc").worker_host == "pi-rpc"
 
     with pytest.raises(ValidationError):
@@ -311,16 +309,16 @@ def test_agent_session_record_is_context_handle_with_required_candidate() -> Non
         workspace=Path("/tmp/c001"),
         directive={"goal": "try one direction"},
         launch={
-            "subagent_type": "SearchCandidateAgent",
+            "agent_type": "search_candidate_agent",
             "description": "c001 try one direction",
             "prompt": "agent_session_id=agent_001; candidate_id=c001; idea: try one direction",
         },
         counters={"verifier_runs": 0},
     )
     assert session.candidate_id == "c001"
-    assert session.host == "opencode"
-    assert session.host_handle == AgentHostHandle(host="opencode")
-    assert session.launch["subagent_type"] == "SearchCandidateAgent"
+    assert session.host == "codex"
+    assert session.host_handle == AgentHostHandle(host="codex")
+    assert session.launch["agent_type"] == "search_candidate_agent"
 
     # candidate_id is now required - a subagent session without a candidate
     # has no useful role in this runtime.

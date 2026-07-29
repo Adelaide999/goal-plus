@@ -8,7 +8,6 @@ from typing import Any, Protocol
 from goal_plus.agent_pool import HostPoolContract
 from goal_plus.host_observability import (
     collect_codex_observability,
-    collect_metadata_observability,
     collect_pi_observability,
 )
 from goal_plus.models import AgentHostKind, AgentSessionRecord
@@ -30,10 +29,6 @@ class UnsupportedHostCapability(RuntimeError):
 
 @dataclass(frozen=True)
 class HostCapabilities:
-    supports_bind_handle: bool
-    supports_same_worker_continue: bool
-    uses_background_workers: bool = False
-    continuation: str | None = None
     supports_soft_closeout: bool = False
     supports_model_override: bool = False
     supports_reasoning_effort: bool = False
@@ -196,82 +191,9 @@ def _codex_budget_control(
     return budget_control
 
 
-class OpenCodeAdapter:
-    name: AgentHostKind = "opencode"
-    capabilities = HostCapabilities(
-        supports_bind_handle=True,
-        supports_same_worker_continue=True,
-    )
-
-    def collect_observability(self, session: AgentSessionRecord) -> dict[str, Any]:
-        return collect_metadata_observability(session)
-
-    def build_launch_payload(
-        self,
-        *,
-        worker_agent_type: str | None,
-        candidate_id: str,
-        agent_session_id: str,
-        short_intent: str,
-        one_paragraph_idea: str,
-        worker_budget: dict[str, Any] | None = None,
-        worker_launch: dict[str, Any] | None = None,
-        root: str | None = None,
-        cwd: str | None = None,
-        worker_prompt: str | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "subagent_type": worker_agent_type or "SearchCandidateAgent",
-            "description": f"{candidate_id} {short_intent}",
-            "prompt": (
-                f"agent_session_id={agent_session_id}; "
-                f"candidate_id={candidate_id}; "
-                f"思路：{one_paragraph_idea}"
-            ),
-        }
-
-    def build_continue_payload(
-        self,
-        *,
-        worker_agent_type: str | None,
-        candidate_id: str,
-        agent_session_id: str,
-        external_id: str | None,
-        task_name: str | None,
-        short_intent: str,
-        one_paragraph_idea: str,
-        root: str | None = None,
-        cwd: str | None = None,
-        worker_prompt: str | None = None,
-        worker_budget: dict[str, Any] | None = None,
-        worker_launch: dict[str, Any] | None = None,
-        host_metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        if not external_id:
-            raise UnsupportedHostCapability(
-                "opencode continuation requires a bound OpenCode session id"
-            )
-        return {
-            "task_id": external_id,
-            "subagent_type": worker_agent_type or "SearchCandidateAgent",
-            "description": f"{candidate_id} 继续 {short_intent}",
-            "prompt": (
-                "continue_existing_agent_session=true; "
-                f"agent_session_id={agent_session_id}; "
-                f"candidate_id={candidate_id}; "
-                "编辑前刷新 search_get_agent_context 和 search_get_global_plan，"
-                "并提交 search_submit_iteration_plan；"
-                "继续同一个 candidate 和 workspace；"
-                f"指令：{one_paragraph_idea}"
-            ),
-        }
-
-
 class CodexAdapter:
     name: AgentHostKind = "codex"
     capabilities = HostCapabilities(
-        supports_bind_handle=True,
-        supports_same_worker_continue=True,
         supports_soft_closeout=True,
         supports_model_override=True,
         supports_reasoning_effort=True,
@@ -390,91 +312,9 @@ class CodexAdapter:
         return payload
 
 
-class ClaudeCodeAdapter:
-    name: AgentHostKind = "claude-code"
-    capabilities = HostCapabilities(
-        supports_bind_handle=True,
-        supports_same_worker_continue=True,
-        uses_background_workers=False,
-    )
-
-    def collect_observability(self, session: AgentSessionRecord) -> dict[str, Any]:
-        return collect_metadata_observability(session)
-
-    def build_launch_payload(
-        self,
-        *,
-        worker_agent_type: str | None,
-        candidate_id: str,
-        agent_session_id: str,
-        short_intent: str,
-        one_paragraph_idea: str,
-        worker_budget: dict[str, Any] | None = None,
-        worker_launch: dict[str, Any] | None = None,
-        root: str | None = None,
-        cwd: str | None = None,
-        worker_prompt: str | None = None,
-    ) -> dict[str, Any]:
-        payload = {
-            "tool": "Agent",
-            "agent_type": worker_agent_type or "search-candidate-agent",
-            "description": f"{candidate_id} {short_intent}",
-            "background": False,
-            "message": (
-                f"agent_session_id={agent_session_id}; "
-                f"candidate_id={candidate_id}; "
-                f"思路：{one_paragraph_idea}"
-            ),
-        }
-        if worker_budget:
-            payload["budget_control"] = {
-                "mode": "host_turn_limit",
-                "max_turns": worker_budget.get("max_turns"),
-                "on_exceed": worker_budget.get("on_exceed", "interrupt"),
-            }
-        return payload
-
-    def build_continue_payload(
-        self,
-        *,
-        worker_agent_type: str | None,
-        candidate_id: str,
-        agent_session_id: str,
-        external_id: str | None,
-        task_name: str | None,
-        short_intent: str,
-        one_paragraph_idea: str,
-        root: str | None = None,
-        cwd: str | None = None,
-        worker_prompt: str | None = None,
-        worker_budget: dict[str, Any] | None = None,
-        worker_launch: dict[str, Any] | None = None,
-        host_metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        target = external_id or task_name
-        if not target:
-            raise UnsupportedHostCapability(
-                "claude-code continuation requires a bound agent id or name"
-            )
-        return {
-            "tool": "SendMessage",
-            "agent": target,
-            "message": (
-                "continue_existing_agent_session=true; "
-                f"agent_session_id={agent_session_id}; "
-                f"candidate_id={candidate_id}; "
-                f"思路：{one_paragraph_idea}"
-            ),
-        }
-
-
 class PiRpcAdapter:
     name: AgentHostKind = "pi-rpc"
     capabilities = HostCapabilities(
-        supports_bind_handle=True,
-        supports_same_worker_continue=True,
-        uses_background_workers=False,
-        continuation="native_session",
         supports_soft_closeout=True,
         supports_model_override=True,
         supports_reasoning_effort=True,
@@ -654,9 +494,7 @@ class PiRpcAdapter:
 
 
 _ADAPTERS: dict[AgentHostKind, AgentHostAdapter] = {
-    "opencode": OpenCodeAdapter(),
     "codex": CodexAdapter(),
-    "claude-code": ClaudeCodeAdapter(),
     "pi-rpc": PiRpcAdapter(),
 }
 

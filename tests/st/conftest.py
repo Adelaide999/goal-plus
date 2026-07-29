@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from .helpers.claude_runner import ClaudeRunner, find_claude
 from .helpers.codex_runner import CodexRunner, find_codex
-from .helpers.opencode_runner import OpenCodeRunner, find_opencode
 from .hosts import (
     HOSTS,
     HostKind,
@@ -41,34 +38,8 @@ def _run(
         return None
 
 
-def _opencode_available() -> bool:
-    return find_opencode() is not None
-
-
 def _codex_available() -> bool:
     return find_codex() is not None
-
-
-def _claude_available() -> bool:
-    return find_claude() is not None
-
-
-def _opencode_mcp_runtime_connected() -> tuple[bool, str]:
-    """Verify goal-plus MCP server shows up as connected in `opencode mcp list`."""
-    if not _opencode_available():
-        return False, "opencode binary not on PATH"
-    proc = _run(["opencode", "mcp", "list"], timeout=20, cwd=ROOT)
-    if proc is None:
-        return False, "opencode mcp list timed out or failed to launch"
-    if proc.returncode != 0:
-        return False, f"opencode mcp list exited {proc.returncode}: {proc.stderr.strip()[:200]}"
-    if not re.search(r"goal-plus.*connected", proc.stdout):
-        return False, (
-            "goal-plus MCP server not connected. "
-            "Check opencode.json in project root, or run: "
-            "opencode mcp add goal-plus --command 'goal-plus --root .search'"
-        )
-    return True, ""
 
 
 def _codex_mcp_runtime_connected() -> tuple[bool, str]:
@@ -81,19 +52,6 @@ def _codex_mcp_runtime_connected() -> tuple[bool, str]:
         return False, f"codex mcp list exited {proc.returncode}: {proc.stderr.strip()[:200]}"
     if "goal-plus" not in proc.stdout:
         return False, "goal-plus MCP server not configured for Codex"
-    return True, ""
-
-
-def _claude_mcp_runtime_connected() -> tuple[bool, str]:
-    if not _claude_available():
-        return False, "claude binary not on PATH"
-    proc = _run(["claude", "mcp", "list"], timeout=30, cwd=ROOT)
-    if proc is None:
-        return False, "claude mcp list timed out or failed to launch"
-    if proc.returncode != 0:
-        return False, f"claude mcp list exited {proc.returncode}: {proc.stderr.strip()[:200]}"
-    if "goal-plus" not in proc.stdout or "Connected" not in proc.stdout:
-        return False, "goal-plus MCP server not connected for Claude Code"
     return True, ""
 
 
@@ -120,28 +78,6 @@ def _pi_console_scripts_available() -> list[tuple[bool, str]]:
     return checks
 
 
-def _model_available(model: str) -> tuple[bool, str]:
-    """Verify the configured model appears in `opencode models` output.
-
-    Only called when the user explicitly sets ST_OPENCODE_MODEL. When unset,
-    we don't pass -m to opencode and skip this check entirely — opencode picks
-    its own default model.
-    """
-    if not _opencode_available():
-        return False, "opencode not on PATH, cannot list models"
-    proc = _run(["opencode", "models"], timeout=20)
-    if proc is None:
-        return False, "opencode models timed out"
-    if proc.returncode != 0:
-        return False, f"opencode models exited {proc.returncode}: {proc.stderr.strip()[:200]}"
-    if model not in proc.stdout:
-        return False, (
-            f"ST_OPENCODE_MODEL='{model}' not in `opencode models` output. "
-            "Unset ST_OPENCODE_MODEL to let opencode pick its default, or pick a listed model."
-        )
-    return True, ""
-
-
 def _fixtures_present() -> tuple[bool, str]:
     """Verify the ST-local fixture specs and evaluators exist.
 
@@ -153,8 +89,6 @@ def _fixtures_present() -> tuple[bool, str]:
     for scenario in [
         "circle_packing",
         "k_module_problem",
-        "signal_processing",
-        "swe_bench_20212",
     ]:
         for fname in ("spec.json", "evaluator.py", "initial_program.py", "config.yaml"):
             rel = f"tests/st/fixtures/{scenario}/{fname}"
@@ -195,19 +129,9 @@ def _host_checks(host: HostKind) -> list[tuple[bool, str]]:
         binary_ok, binary_msg = _mcp_server_binary_available()
         checks.append((binary_ok, binary_msg or "goal-plus on PATH"))
 
-    if host == "opencode" and _opencode_available():
-        mcp_ok, mcp_msg = _opencode_mcp_runtime_connected()
-        checks.append((mcp_ok, mcp_msg or "goal-plus MCP connected for OpenCode"))
-        model = os.environ.get("ST_OPENCODE_MODEL")
-        if model:
-            model_ok, model_msg = _model_available(model)
-            checks.append((model_ok, model_msg or f"model {model} available"))
-    elif host == "codex" and _codex_available():
+    if host == "codex" and _codex_available():
         mcp_ok, mcp_msg = _codex_mcp_runtime_connected()
         checks.append((mcp_ok, mcp_msg or "goal-plus MCP configured for Codex"))
-    elif host == "claude-code" and _claude_available():
-        mcp_ok, mcp_msg = _claude_mcp_runtime_connected()
-        checks.append((mcp_ok, mcp_msg or "goal-plus MCP connected for Claude Code"))
 
     fixtures_ok, fixtures_msg = _fixtures_present()
     checks.append((fixtures_ok, fixtures_msg or "fixtures/specs present"))
@@ -286,41 +210,14 @@ def st_log_dir(request: pytest.FixtureRequest) -> Path:
 
 
 @pytest.fixture()
-def opencode_runner(st_project_root: Path, st_log_dir: Path) -> OpenCodeRunner:
-    return OpenCodeRunner(
-        project_root=st_project_root,
-        log_dir=st_log_dir,
-        default_timeout=int(os.environ.get("ST_OPENCODE_TIMEOUT", "1800")),
-    )
-
-
-@pytest.fixture()
-def st_host(request: pytest.FixtureRequest) -> HostKind:
-    return _item_host(request.node)
-
-
-@pytest.fixture()
 def st_runner(
-    st_host: HostKind,
     st_project_root: Path,
     st_log_dir: Path,
 ):
-    if st_host == "opencode":
-        return OpenCodeRunner(
-            project_root=st_project_root,
-            log_dir=st_log_dir,
-            default_timeout=int(os.environ.get("ST_OPENCODE_TIMEOUT", "1800")),
-        )
-    if st_host == "codex":
-        return CodexRunner(
-            project_root=st_project_root,
-            log_dir=st_log_dir,
-            default_timeout=int(os.environ.get("ST_CODEX_TIMEOUT", "1800")),
-        )
-    return ClaudeRunner(
+    return CodexRunner(
         project_root=st_project_root,
         log_dir=st_log_dir,
-        default_timeout=int(os.environ.get("ST_CLAUDE_TIMEOUT", "1800")),
+        default_timeout=int(os.environ.get("ST_CODEX_TIMEOUT", "1800")),
     )
 
 

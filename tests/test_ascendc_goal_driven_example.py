@@ -497,11 +497,9 @@ def test_ascendc_request_schema_closes_direct_invoke_v1_contract() -> None:
     assert "scoring" in reference_roles
 
 
-def test_all_goal_plus_hosts_route_ascendc_to_dynamic_spec_discovery() -> None:
+def test_maintained_hosts_route_ascendc_to_dynamic_spec_discovery() -> None:
     skill_paths = (
         ".codex/skills/goal-plus/SKILL.md",
-        ".opencode/skills/goal-plus/SKILL.md",
-        ".claude/skills/goal-plus/SKILL.md",
         ".pi/skills/goal-plus/SKILL.md",
     )
     for relative in skill_paths:

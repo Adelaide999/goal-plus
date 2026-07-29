@@ -50,7 +50,7 @@ Promotion 只允许增加非门禁诊断。把这个 Smoke 范围明确记录到
 `pi_search_pool_open(run_id, candidate_ids=["c001", "c002"],
 final_verify=true, max_parallel=2)` 并发运行两个 Pi Candidate。通过
 `pi_search_pool_wait_any` 处理两个 candidate-ready 事件，最后 drain pool。主 Host 和
-Candidate 都使用 Pi；禁止调用 OpenCode 或创建 OpenCode Worker。
+Candidate 都使用 Pi；禁止调用其他宿主或创建非 Pi Worker。
 
 每个 Candidate 的 Search 精度证据必须包含 `passed_case_ids`、`cases_sha256` 和精确
 Candidate `artifact_hash`。所有 Performance Case 都必须包含在 `passed_case_ids` 中；

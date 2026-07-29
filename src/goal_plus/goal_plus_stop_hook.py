@@ -897,11 +897,8 @@ def _search_candidate_time_advisory(
 
 def _host_kind(hook_input: dict[str, Any]) -> str:
     value = hook_input.get("host")
-    if value in {"opencode", "codex", "claude-code"}:
+    if value in {"codex", "pi-rpc"}:
         return value
-    transcript = _transcript_path(hook_input) or ""
-    if os.environ.get("CLAUDE_PROJECT_DIR") or ".claude" in transcript:
-        return "claude-code"
     return "codex"
 
 

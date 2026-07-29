@@ -4,26 +4,17 @@ How to inspect a running or finished `/goal-plus` run after it enters Search
 Mode — what the agents are doing, what scores they have produced, and where to
 look when something goes wrong.
 
-This doc covers the project-specific runtime surface plus maintained Codex and
-Pi RPC logs. OpenCode and Claude Code sections are retained only for diagnosing
-old records.
+This doc covers the project-specific runtime surface plus Codex and Pi RPC
+logs.
 
 ## Two Layers of State
 
-```
-OpenCode process
-  ├─ SQLite DB (~/.local/share/opencode/opencode.db)   ← agent actions, tool calls, bash cmds, child-session lifecycle
-  ├─ Log file  (~/.local/share/opencode/log/opencode.log) ← permission decisions, errors
-  └─ MCP server subprocess
-       └─ .gp/  ← runtime-owned durable state (this project)
-```
-
 The runtime owns goal-plus records, specs, plans, candidate workspaces,
-iteration history, verifier scoring, reports, and promotion patches. OpenCode
-owns subagent lifecycle — start, run, step cap, stop/interrupt, Task return.
+iteration history, verifier scoring, reports, and promotion patches. Codex or
+the Pi supervisor owns worker launch, lifecycle, deadlines, and interruption.
 The MCP runtime does not maintain lifecycle status, host-sync state, or process
-cancellation. Debugging lifecycle state belongs in OpenCode; debugging
-goal/search state belongs in `.gp/`.
+cancellation. Debug host lifecycle through native logs and goal/search state
+through `.gp/`.
 
 Goal-plus records live under `.gp/goal-plus/<goal_plus_id>/`. One Goal Plus
 record may append multiple search tasks; each task points to one Search run
@@ -31,10 +22,8 @@ under `.gp/runs/<run_id>/`. New Pi/Codex `parallel_loops` runs contain one
 initial plan under `plans/` and may contain many same-candidate sessions and
 verifier iterations. Legacy runs may contain multiple plans.
 
-For Codex, Claude Code, and Pi RPC, substitute the host-native JSONL/debug files below
-for the OpenCode process layer. The same rule still applies: host logs explain
-what the worker did, while `.gp/` records goal/search facts such as
-candidates, iterations, scores, and verifier output.
+Host logs explain what the worker did, while `.gp/` records goal/search facts
+such as candidates, iterations, scores, and verifier output.
 
 ## Host-Native Log Inspection
 
@@ -47,34 +36,7 @@ payload:
 
 - `agent_session_id`
 - `candidate_id`
-- `host_handle.external_id`, `host_handle.task_name`, or the OpenCode
-  `opencode_session_id`
-
-### OpenCode
-
-OpenCode is still the baseline host for the most complete inspection path:
-
-- Agent actions and child-session lifecycle: `~/.local/share/opencode/opencode.db`
-- OpenCode errors and permission/runtime decisions:
-  `~/.local/share/opencode/log/opencode.log`
-- Project runtime state: `.gp/runs/<run_id>/...`
-
-Useful checks:
-
-```bash
-sqlite3 ~/.local/share/opencode/opencode.db \
-  "SELECT id, parent_id, title FROM session ORDER BY time_updated DESC LIMIT 20;"
-
-sqlite3 ~/.local/share/opencode/opencode.db \
-  "SELECT json_extract(data, '$.tool'), count(*)
-   FROM part
-   WHERE session_id='<SID>' AND json_extract(data, '$.type')='tool'
-   GROUP BY 1;"
-```
-
-Use OpenCode logs when a Task returned but `.gp` has no iteration, when a
-worker hit its `steps` cap, or when a worker used Bash instead of
-`search_run_verifier`.
+- `host_handle.external_id` or `host_handle.task_name`
 
 ### Codex
 
@@ -144,64 +106,6 @@ the next required action. A Search candidate SubagentStop block should name its
 `agent_session_id` and ask for its own verifier call. Once that session's
 `counters.verifier_runs` is positive, parent-only selection/report/promotion
 must not block the candidate return.
-
-### Claude Code
-
-For scripted or reproducible runs, capture both the stream output and the debug
-file:
-
-```bash
-mkdir -p .gp/host-logs
-claude -p --verbose --output-format stream-json \
-  --debug-file ".gp/host-logs/claude-debug-$(date +%Y%m%d-%H%M%S).log" \
-  "<search prompt>" \
-  > ".gp/host-logs/claude-$(date +%Y%m%d-%H%M%S).jsonl"
-```
-
-Add `--include-hook-events` when diagnosing the shipped Goal Plus host hooks or
-externally supplied hooks, or `--include-partial-messages` when token-level
-streaming matters. For Claude Code this repository ships
-`goal-plus --goal-plus-host-hook` for
-`PostToolUse(goal_plus_create)` session binding and session-scoped `Stop`
-gating; its PreToolUse and SubagentStop remain manual gate calls.
-`--debug-file` implicitly enables debug mode. Use `--debug api,mcp` for a
-narrower debug filter when API or MCP traffic is the focus.
-
-Claude Code persists application data under `~/.claude` unless disabled with
-`--no-session-persistence` in print mode or
-`CLAUDE_CODE_SKIP_PROMPT_HISTORY`. The safest way to locate all state for this
-project is a dry run:
-
-```bash
-claude project purge "$PWD" --dry-run
-```
-
-Do not run the purge without `--dry-run` unless you really intend to delete
-local Claude Code state for the project.
-
-Important locations:
-
-- Parent transcripts:
-  `~/.claude/projects/<encoded-project>/<session>.jsonl`
-- Subagent transcripts:
-  `~/.claude/projects/<encoded-project>/<session>/subagents/`
-- Large tool outputs:
-  `~/.claude/projects/<encoded-project>/<session>/tool-results/`
-- Per-session task lists: `~/.claude/tasks/<session>/`
-- Debug logs: `~/.claude/debug/` or the path passed to `--debug-file`
-- File edit history: `~/.claude/file-history/<session>/`
-
-Useful search patterns for this adapter:
-
-```bash
-rg -n "agent_session_id|candidate_id|task_started|task_progress|task_notification|subagent_type|Reached max turns limit|Agent:" \
-  .gp/host-logs/claude-*.jsonl .gp/host-logs/claude-debug-*.log
-```
-
-The current adapter uses foreground `Agent` launches, not Claude Code
-background sessions. If you manually experiment with background sessions,
-Claude Code also exposes `claude agents --json`, `claude logs <id>`, and
-`claude stop <id>`, but those commands are outside the normal adapter path.
 
 ### Pi RPC
 
@@ -334,7 +238,7 @@ guard events, stop continuation messages, and `.gp/goal-plus/...`.
     │   ├── .git/                                 # agent and runtime ledger Git history
     │   ├── results.tsv                           # committed, runtime-owned inherited append-only ledger
     │   └── <allowed_files>
-    ├── agent_sessions/<agent_session_id>.json    # AgentSessionRecord: candidate/OpenCode binding, launch payload, counters
+    ├── agent_sessions/<agent_session_id>.json    # AgentSessionRecord: candidate/host binding, launch payload, counters
     ├── report.md / report.html                   # text and self-contained audit reports
     └── promotion/                                # selected patch outputs
 ```
@@ -359,7 +263,8 @@ bounded `stdout_tail` and `stderr_tail` metrics to the caller. Complete output
 stays in the unique per-call log, and each `iterations[]` entry records its
 `log_paths`, so a later verifier run does not overwrite earlier failure evidence.
 
-There is no `agent_events/` or `observations/` directory. The session record carries optional `opencode_session_id`, `launch` (the OpenCode Task fields), `directive`, and `counters.verifier_runs`.
+There is no `agent_events/` or `observations/` directory. The session record
+carries `host_handle`, `launch`, `directive`, and `counters.verifier_runs`.
 
 ## Quick Diagnostic Queries
 
@@ -490,29 +395,20 @@ candidate and plan counts:
 `plans_count` is a compatibility alias for the selected run's
 `planning_rounds_total`. Maintained runs have exactly one initial plan.
 
-## Checking OpenCode Step Count
-
-OpenCode enforces the per-agent `steps` cap (defined in each `.opencode/agents/*.md` frontmatter). Step count lives in OpenCode's session inspection tools (see the `inspecting-opencode-runs` skill), not in `.gp/`. The runtime does not sync host state into MCP records.
-
-When the step cap is reached OpenCode injects a system prompt instructing the agent to summarize and stop. Tools may be disabled during that final summary. OpenCode then notifies the main agent that the Task returned; the main agent runs `search_run_verifier` (without `agent_session_id`) to record the final score.
-
 ## Common Failure Modes
 
-### Subagent appears idle in OpenCode but no iteration history
+### Worker appears idle but has no iteration history
 
-- **Look at**: `.gp/runs/<run_id>/candidates/<id>/candidate.json` `iterations` and OpenCode SQLite `session` / `part` rows containing the `agent_session_id`.
-- **Cause**: The subagent never called `search_run_verifier`. Inspect OpenCode SQLite for what it actually did (bash commands, tool calls).
-- **Verification**: Confirm the OpenCode child session exists and ran to step cap or self-decision. The runtime only records what verifier calls actually happened.
+- **Look at**: `.gp/runs/<run_id>/candidates/<id>/candidate.json` `iterations`
+  and the matching Codex/Pi native log selected by `agent_session_id`.
+- **Cause**: The worker never called `search_run_verifier`.
+- **Verification**: Confirm the native worker session exists and inspect its
+  tool calls. The runtime only records verifier calls that actually happened.
 
 ### Agent ran evaluator via bash (MCP bypass)
 
-- **Look at**: SQLite `part` table for the session
-  ```sql
-  SELECT json_extract(data, '$.tool'), count(*)
-  FROM part WHERE session_id='<SID>' AND json_extract(data, '$.type')='tool'
-  GROUP BY 1;
-  ```
-- **Symptom**: `bash` count high, `goal-plus_search_run_verifier` count 0 or low
+- **Look at**: the matching Codex rollout or Pi event log.
+- **Symptom**: evaluator commands appear, but `search_run_verifier` is absent.
 - **Cause**: Agent didn't trust MCP path, or prompt was unclear about MCP being the official scorer
 - **Verification**: Look at bash command contents — if `python evaluator.py` appears, agent bypassed MCP
 
@@ -524,8 +420,10 @@ When the step cap is reached OpenCode injects a system prompt instructing the ag
 
 ### Subagent is still running but I want to stop it
 
-- **Cause**: Stopping a running subagent is an OpenCode/user interruption concern. There is no MCP abort tool.
-- **Action**: Interrupt the OpenCode Task from the OpenCode UI or kill the OpenCode child session directly. The runtime does not need to be notified.
+- **Cause**: Worker interruption belongs to the host. There is no MCP abort tool.
+- **Action**: Use `interrupt_agent` for Codex or
+  `pi_search_pool_close(mode="interrupt")` for Pi. The Search runtime does not
+  need a separate lifecycle update.
 
 ### Verifier fails with "EditSurfaceViolation"
 
@@ -552,7 +450,7 @@ When the step cap is reached OpenCode injects a system prompt instructing the ag
   side effects in the same verifier call and attempts to restore the candidate
   workspace; check `cleanup_failures` before reusing any candidate state.
 
-## MCP APIs for Inspection (no SQLite needed)
+## MCP APIs for Inspection
 
 These tools are safe to call anytime — they're read-only:
 
@@ -571,8 +469,8 @@ When something goes wrong, cross-reference both layers:
 1. **Host-native transcript/log** — what the agent *did* (tool calls, bash commands, messages) and what the host lifecycle did (start, step cap or turn cap, stop/interrupt)
 2. **`.gp/` runtime state** — what the runtime *recorded* (scores, iterations, verifier logs)
 
-Example: "OpenCode child session finished but the candidate shows no score"
-- Host logs show: matching OpenCode child session has equal `step-start` / `step-finish` counts and the agent never called `search_run_verifier`
+Example: "Worker session finished but the candidate shows no score"
+- Host logs show: the matching worker never called `search_run_verifier`
 - Runtime shows: `candidate.json` with empty `iterations`
 
 → Diagnosis: the subagent did not self-score. Have the main agent run `search_run_verifier(run_id, candidate_id, "process")` (without `agent_session_id`) to record the final score against the workspace state the subagent left behind.

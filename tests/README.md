@@ -15,16 +15,15 @@ the only evidence that a real host can complete the user-visible workflow.
 | Runtime-focused | `pytest tests/test_runtime_unit.py` | Search state machine without a host |
 | Real-host ST | `pytest -m "(st and (st_codex or st_pi_rpc)) or st_pi" -v -s` | maintained native launch, hooks/events, worker lifecycle, final evidence |
 
-Default tests must never launch OpenCode, Codex, Claude Code, or Pi. A host
-behavior claim requires the matching ST; if it cannot run, report that gap.
+Default tests must never launch Codex or Pi. A host behavior claim requires
+the matching ST; if it cannot run, report that gap.
 With the `dev` extra installed, `pytest -n 2 --dist=load -q` runs the default
 gate with two workers. Keep real-host ST serial so host processes, model calls,
 and machine resources do not interfere with one another.
 
 `integration` and `example` tests are skipped by default via
-`tests/conftest.py`. OpenCode and Claude tests are historical, explicitly
-marked `opencode`/`claude`, and excluded by the default `pytest.ini` expression.
-Add a marker name to `-m` only when intentionally auditing that slice.
+`tests/conftest.py`. Add a marker name to `-m` only when intentionally auditing
+that slice.
 
 ## System-Test Markers
 
@@ -33,9 +32,6 @@ Add a marker name to `-m` only when intentionally auditing that slice.
 | `st_codex` | `codex exec` | `gpt-5.6-terra` or `ST_CODEX_MODEL` |
 | `st_pi_rpc` | `goal-plus-pi-worker` + Pi RPC | host default or `ST_PI_MODEL` |
 | `st_pi` | native Pi `/goal-plus` print/TUI | host default or `ST_PI_MODEL` |
-
-The registered `st_opencode` and `st_claude` markers remain only so historical
-tests can be selected explicitly; they are not maintained support slices.
 
 Every `tests/st/` case has `st` plus exactly one host marker. Native Pi command
 tests live in `tests/st_pi/`. `-s` is required so failure log paths remain
@@ -113,7 +109,7 @@ tests/
   st/
     conftest.py             # host preflight and prompt loading
     hosts.py                # marker-to-runner mapping
-    helpers/                # Codex/Claude/OpenCode runners and report parser
+    helpers/                # Codex runner and report parser
     prompts/                # scenario contracts
     test_st_*.py            # real host-worker scenarios
   st_pi/

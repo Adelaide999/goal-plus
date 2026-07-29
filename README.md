@@ -7,9 +7,7 @@ handles ordinary goals directly and upgrades measurable optimization tasks to
 Search Mode: freeze the evaluation contract, explore isolated candidates, and
 promote the best verifier-backed result.
 
-Pi and Codex are the maintained host paths. OpenCode and Claude Code assets
-remain in the repository as unsupported references; they receive no
-compatibility guarantee and are excluded from the default test gate.
+Pi and Codex are the supported host paths.
 
 ## Quick Start
 
@@ -59,8 +57,6 @@ stored as guidance in the final line of `raw_goal`, not as a scheduler state.
 |---|---|---|---|
 | Pi | `.pi/` | `/goal-plus` or `pi -p "/goal-plus ..."` | durable Pi RPC pool; see [Pi](docs/pi.md) |
 | Codex | `.codex/` | `goal-plus` skill or `/goal-plus` prompt | fixed parallel loops with native same-worker continuation; Codex 0.144.1+ hooks cover `UserPromptSubmit`, `PreToolUse`, and `SubagentStop`; see [Codex](docs/codex.md) |
-| Claude Code | `.mcp.json`, `.claude/` | unsupported reference assets | not maintained; see [Claude Code](docs/claude-code.md) |
-| OpenCode | `opencode.json`, `.opencode/` | unsupported reference assets | not maintained; see [OpenCode](docs/opencode.md) |
 
 For Codex, copy `.codex/config.example.toml` to the ignored local
 `.codex/config.toml`. Host differences and strategy coverage are summarized in
@@ -127,5 +123,4 @@ git diff --check
 ```
 
 The maintained strategy set for Pi and Codex is `agent_guided`
-(`agent`/`default`) and `random` (`random_mode`). OpenCode/Claude tests are
-explicit opt-in slices and do not run in `python -m pytest -q`.
+(`agent`/`default`) and `random` (`random_mode`).

@@ -1,6 +1,6 @@
 You are the Codex main agent for the `codex_circle_packing_cycle` ST. Use the
 project-local Codex `search` skill and drive the Search MCP runtime directly.
-Do not run pytest, codex, opencode, claude, or any `tests/st` command; doing so
+Do not run pytest, any host CLI, or any `tests/st` command; doing so
 would recursively launch this same ST. If a required MCP or collaboration tool
 is unavailable, emit the final `st_report` with `extra.error`.
 

@@ -101,16 +101,15 @@ def create_run(tools: SearchTools, project: Path) -> tuple[str, list[dict]]:
     return run_id, tasks
 
 
-def create_parallel_host_run(
+def create_parallel_codex_run(
     tools: SearchTools,
     project: Path,
-    worker_host: str,
 ) -> str:
     spec = spec_for(project)
     spec["budget"] = {"max_candidates": 2, "max_parallel": 2}
     spec["strategy"] = {
         "name": "random",
-        "worker_host": worker_host,
+        "worker_host": "codex",
     }
     frozen = tools.search_freeze_spec(spec, [str(project / "evaluator.py")])
     run_id = tools.search_create(frozen["frozen_spec_id"])["run_id"]
@@ -127,9 +126,9 @@ def create_parallel_host_run(
         tools.search_bind_agent_handle(
             session["agent_session_id"],
             {
-                "host": worker_host,
-                "external_id": f"{worker_host}_agent_{lane_index}",
-                "task_name": f"{worker_host}_task_{lane_index}",
+                "host": "codex",
+                "external_id": f"codex_agent_{lane_index}",
+                "task_name": f"codex_task_{lane_index}",
             },
         )
 
@@ -241,20 +240,11 @@ def test_k_module_end_to_end_selects_best_without_changing_main_workspace(
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    "worker_host",
-    [
-        pytest.param("opencode", marks=pytest.mark.opencode),
-        "codex",
-        pytest.param("claude-code", marks=pytest.mark.claude),
-    ],
-)
-def test_k_module_parallel_lanes_record_host_sessions(
+def test_k_module_parallel_lanes_record_codex_sessions(
     tools: SearchTools,
     project_dir: Path,
-    worker_host: str,
 ) -> None:
-    run_id = create_parallel_host_run(tools, project_dir, worker_host)
+    run_id = create_parallel_codex_run(tools, project_dir)
 
     history = tools.search_list_history(run_id, top_n=5, sort_by="created")
     assert len(history["candidates"]) == 2
@@ -269,7 +259,7 @@ def test_k_module_parallel_lanes_record_host_sessions(
         for session in candidate["agent_sessions"]
     ]
     assert len(agent_sessions) == 2
-    assert {session["host"] for session in agent_sessions} == {worker_host}
+    assert {session["host"] for session in agent_sessions} == {"codex"}
     assert all(session["verifier_runs"] == 1 for session in agent_sessions)
 
     selection = tools.search_select(run_id)

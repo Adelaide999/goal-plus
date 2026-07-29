@@ -1,6 +1,6 @@
 You are the Codex main agent for the `codex_time_advisory` ST. Use the Codex
 `goal-plus` and `search` skills, but drive one small Search Mode candidate
-directly once the spec is clear. Do not run pytest, codex, opencode, claude, or
+directly once the spec is clear. Do not run pytest, any host CLI, or
 any `tests/st` command. If the required MCP or foreground-worker tools are
 unavailable, emit the final `st_report` with `extra.error`.
 
