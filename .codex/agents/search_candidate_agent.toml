@@ -19,15 +19,17 @@ developer_instructions = """
 `context.results_tsv` 恢复先前工作；不要依赖聊天记录了解此前尝试。选择新设计前，
 先检查连续的结果账本。
 
-每轮修改前，先调用 `search_get_global_plan(agent_session_id)` 获取当前 run 中所有 candidate
-已经提交的窄计划/结果视图。思考本轮要验证的方向后，在工作区仍处于 settled 且 Git-clean
-时调用 `search_submit_iteration_plan(agent_session_id, description)` 提交一句话计划，然后才
-能修改代码。plan 提交后不可修改；结果会在 verifier 结算后自动出现在同一视图项中。
+每轮修改前，先调用 `search_get_global_evidence(agent_session_id)` 获取当前 run 中所有
+candidate 已结算的窄 Evidence 视图。每行的 commit、score 和 disposition 是 verifier-backed
+事实；View 是 annotator 对实际 diff 的客观陈述。`view=null` 只表示 annotator 尚未更新，
+不表示 Evidence 无效，也不要求等待。此时先结合 Evidence、本地代码和自己的推理独立选择
+探索方向，不要休眠或高频轮询。
 
-Global Plan 包含其他 candidate 的已验证尝试。对于共享 Git object database 的 workspace，
-只有在你独立判断代码级证据确有必要时，才通过 commit hash 在当前 workspace 中使用
-`git diff HEAD <commit> -- <allowed-file>` 进行只读比较；不要访问其他 candidate 的
-workspace 目录。
+对于共享 Git object database 的 workspace，只有在窄 Evidence 不足且你独立判断代码级证据
+确有必要时，才通过 commit hash 在当前 workspace 中使用
+`git diff HEAD <commit> -- <allowed-file>` 进行只读比较。不要访问其他 candidate 的
+workspace 目录，也不要 checkout 或 reset 到 peer commit。View 不是推荐方向，仍由你独立
+决定下一步。
 
 把分配的候选思路当作假设，而不是必须实现的方案。编辑前应充分检查源码、运行时历史和
 当前产物，以识别可能的瓶颈。如果证据表明该思路剩余潜力很小，记录原因，并在候选目标
@@ -38,8 +40,9 @@ workspace 目录。
 都不会终止你的循环。
 
 只能在提供的候选工作区内工作。编辑范围应限于候选目标。最终回复前，使用
-`search_run_verifier(agent_session_id=...)` 运行 verifier。不要传 `scope`，让它使用默认的
-process verifier。每份返回的 verifier 报告都会在工作区根目录下由运行时拥有、继承而来的
+`search_run_verifier(agent_session_id=..., hypothesis=...)` 运行 verifier。不要传 `scope`，
+让它使用默认的 process verifier；用一句话 hypothesis 客观概括本轮真正实施的尝试。每份
+返回的 verifier 报告都会在工作区根目录下由运行时拥有、继承而来的
 `results.tsv` 中追加且只追加一条已验证记录，并提交该账本；绝不能创建、重写、截断、
 删除或手动追加该账本。process verifier 返回的 `disposition` 为 `keep`、`discard` 或
 `failure`；runtime 会保留本轮被测 commit，并在非严格改善时自动把候选代码恢复到

@@ -23,7 +23,9 @@ enabled = true
 ```
 
 Keep `.codex/config.toml` untracked and omit MCP `cwd`; `codex -C` should decide
-the project root for both MCP state and hooks.
+the project root for both MCP state and hooks. The example explicitly forwards
+the annotator's named environment variables. Add any custom API-key variable
+named by `GOAL_PLUS_EVIDENCE_ANNOTATOR_API_KEY_ENV` to the same `env_vars` list.
 
 Codex 0.144.1+ ships project-local Goal Plus host hooks in
 `.codex/hooks.json`; each calls `goal-plus --goal-plus-host-hook` for
@@ -84,11 +86,11 @@ The parent then:
 
 Every launch message says the child owns one autonomous candidate loop, not
 global initial dispatch or final selection. It reads its candidate-local
-context and the narrow Global Plan, submits an immutable one-line plan, chooses
-every later hypothesis/pivot/rebase, edits its workspace, verifies, and returns
-a research handoff. It must not create candidates, select, report, promote, or
-mutate Goal Plus state. Main never replaces it because of low score or one
-non-improving completion.
+context and the narrow Global Evidence view, chooses every later
+hypothesis/pivot/rebase, edits its workspace, and verifies with a one-line
+description of the realized attempt. A `null` View never blocks it. It must not
+create candidates, select, report, promote, or mutate Goal Plus state. Main
+never replaces it because of low score or one non-improving completion.
 
 ## Worker Deadline
 

@@ -124,6 +124,25 @@ const WorkerLaunch = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+const EvidenceAnnotatorProvider = Type.Object(
+	{
+		provider_id: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9_-]+$" })),
+		name: Type.Optional(Type.String({ minLength: 1 })),
+		base_url: Type.String({ minLength: 1 }),
+		api_key_env: Type.Optional(Type.String({ minLength: 1 })),
+		wire_api: Type.Optional(Type.String({ minLength: 1 })),
+	},
+	{ additionalProperties: false },
+);
+const EvidenceAnnotator = Type.Object(
+	{
+		model: Type.Optional(NullableString),
+		reasoning_effort: Type.Optional(NullableString),
+		timeout_seconds: Type.Optional(PositiveInteger),
+		provider: Type.Optional(Type.Union([EvidenceAnnotatorProvider, Type.Null()])),
+	},
+	{ additionalProperties: false },
+);
 const StrategySpec = Type.Object(
 	{
 		name: Type.Optional(Type.String({ minLength: 1 })),
@@ -132,6 +151,7 @@ const StrategySpec = Type.Object(
 		worker_agent_type: Type.Optional(NullableString),
 		worker_budget: Type.Optional(Type.Union([WorkerBudget, Type.Null()])),
 		worker_launch: Type.Optional(Type.Union([WorkerLaunch, Type.Null()])),
+		evidence_annotator: Type.Optional(EvidenceAnnotator),
 		config: Type.Optional(LooseObject),
 	},
 	{ additionalProperties: false },
@@ -379,15 +399,8 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 		{ additionalProperties: false },
 	),
 	search_get_agent_context: Type.Object({ agent_session_id: Type.String() }, { additionalProperties: false }),
-	search_get_global_plan: Type.Object(
+	search_get_global_evidence: Type.Object(
 		{ agent_session_id: Type.String() },
-		{ additionalProperties: false },
-	),
-	search_submit_iteration_plan: Type.Object(
-		{
-			agent_session_id: Type.String(),
-			description: Type.String({ minLength: 1, maxLength: 240 }),
-		},
 		{ additionalProperties: false },
 	),
 	search_get_agent_observability: Type.Object(
@@ -477,12 +490,10 @@ const RuntimeToolDescriptions: Record<string, string> = {
 		"保存发现的 SearchSpec draft。新的 Pi spec 使用 orchestration_mode=parallel_loops，并让 max_candidates 等于初始 max_parallel 候选数。",
 	search_freeze_spec:
 		"冻结不可变的 SearchSpec 和 verifier bundle。预检使用一次性源码副本，并拒绝 verifier 工作区副作用；并发 Search 下 verifier 临时文件必须放入唯一的 GOAL_PLUS_VERIFIER_TMPDIR/TMPDIR，绝不能使用固定 /tmp 路径。parallel_loops 模式由一份初始 plan 创建长期候选。",
-	search_get_global_plan:
-		"读取当前 run 的窄 Global Plan 视图。每项只包含 candidate、iteration、一句话计划、score、keep/discard/failure 和 verifier attempt commit。",
-	search_submit_iteration_plan:
-		"在修改候选代码前，从 settled 且 Git-clean 的 candidate workspace 提交本轮不可变的一句话计划。",
+	search_get_global_evidence:
+		"读取当前 run 的窄 Global Evidence 视图。每项包含 verifier attempt commit、score、keep/discard/failure 和可能延迟的客观 View；view=null 时无需等待，可先依据 Evidence 独立探索。",
 	search_run_verifier:
-		"为一个候选评分。worker process verifier 必须先提交本轮 plan，并以 plan description 作为唯一 hypothesis。每份返回的 verifier 报告都会在运行时拥有、继承而来的 workspace/results.tsv 中追加且只追加一条已验证记录，并提交该文件。process verifier 返回 keep/discard/failure disposition；runtime 保留被测 commit，并在非严格改善时恢复 candidate-local best。带 candidate_action=stop_and_report 的 VerifierWorkspaceSideEffect 属于基础设施失败：worker 必须停止，不能清理或重试，使父级能够修复并重新冻结。",
+		"为一个候选评分。worker process verifier 必须提供一句话 hypothesis，客观概括本轮实际尝试。每份返回的 verifier 报告都会在运行时拥有、继承而来的 workspace/results.tsv 中追加且只追加一条已验证记录，并提交该文件。process verifier 返回 keep/discard/failure disposition；runtime 保留被测 commit，并在非严格改善时恢复 candidate-local best。带 candidate_action=stop_and_report 的 VerifierWorkspaceSideEffect 属于基础设施失败：worker 必须停止，不能清理或重试，使父级能够修复并重新冻结。",
 	search_invalidate_run:
 		"主 agent 确认 verifier 契约、覆盖范围、确定性、目标对齐或基础设施失败后，原子地隔离该 run。随后中断每个 host worker，等待 active worker 数归零，修复并重新冻结，再使用 source_run_id 创建后继项。",
 	search_report:
@@ -1237,8 +1248,7 @@ export default function (pi: ExtensionAPI) {
 	];
 	const workerTools = [
 		"search_get_agent_context",
-		"search_get_global_plan",
-		"search_submit_iteration_plan",
+		"search_get_global_evidence",
 		"search_run_verifier",
 		"search_list_iterations",
 	];

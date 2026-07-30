@@ -14,6 +14,14 @@ import pytest
 _OPT_IN_MARKERS = ("integration", "example")
 
 
+@pytest.fixture(autouse=True)
+def disable_real_evidence_annotator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit tests opt into annotator process launches explicitly."""
+    monkeypatch.setenv("GOAL_PLUS_EVIDENCE_ANNOTATOR_DISABLED", "1")
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:

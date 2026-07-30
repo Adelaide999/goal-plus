@@ -34,18 +34,9 @@ def test_pi_tool_calls_context_verifier_and_iterations(tmp_path: Path) -> None:
 
     assert call_pi_tool(
         runtime_root,
-        "search_get_global_plan",
+        "search_get_global_evidence",
         {"agent_session_id": session.agent_session_id},
     ) == []
-    submitted = call_pi_tool(
-        runtime_root,
-        "search_submit_iteration_plan",
-        {
-            "agent_session_id": session.agent_session_id,
-            "description": "Raise VALUE once",
-        },
-    )
-    assert submitted["description"] == "Raise VALUE once"
 
     (task.workspace / "initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
     report = call_pi_tool(
@@ -55,6 +46,7 @@ def test_pi_tool_calls_context_verifier_and_iterations(tmp_path: Path) -> None:
             "run_id": run_id,
             "candidate_id": task.candidate_id,
             "agent_session_id": session.agent_session_id,
+            "hypothesis": "Raise VALUE once",
         },
     )
     assert report["candidate_id"] == task.candidate_id

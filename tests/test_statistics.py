@@ -59,12 +59,12 @@ def test_run_statistics_split_worker_parent_usage_and_stable_terminal_time(
     task = runtime.start_batch(run_id, plan.plan_id)[0]
     first = runtime.start_agent_session(run_id, task.candidate_id)
     second = runtime.redispatch_candidate(run_id, task.candidate_id)
-    runtime.submit_iteration_plan(second.agent_session_id, "Record worker statistics")
     task.workspace.joinpath("initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
     runtime.run_verifier(
         run_id,
         task.candidate_id,
         agent_session_id=second.agent_session_id,
+        hypothesis="Record worker statistics",
     )
     runtime.select(run_id)
     runtime.promote(run_id, task.candidate_id)

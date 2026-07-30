@@ -39,13 +39,11 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
     second_plan = search.plan_next(second_run, requested_k=1)
     [candidate] = search.start_batch(second_run, second_plan.plan_id)
     session = search.start_agent_session(second_run, candidate.candidate_id)
-    search.submit_iteration_plan(
-        session.agent_session_id, "Exercise the durable timeline"
-    )
     search.run_verifier(
         second_run,
         candidate.candidate_id,
         agent_session_id=session.agent_session_id,
+        hypothesis="Exercise the durable timeline",
     )
 
     goals = FileGoalPlusRuntime(root)

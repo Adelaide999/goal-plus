@@ -142,18 +142,11 @@ class SearchTools:
     def search_get_agent_context(self, agent_session_id: str) -> dict[str, Any]:
         return self.runtime.get_agent_context(agent_session_id)
 
-    def search_get_global_plan(
+    def search_get_global_evidence(
         self,
         agent_session_id: str,
     ) -> list[dict[str, Any]]:
-        return self.runtime.get_global_plan(agent_session_id)
-
-    def search_submit_iteration_plan(
-        self,
-        agent_session_id: str,
-        description: str,
-    ) -> dict[str, Any]:
-        return self.runtime.submit_iteration_plan(agent_session_id, description)
+        return self.runtime.get_global_evidence(agent_session_id)
 
     def search_get_agent_observability(self, agent_session_id: str) -> dict[str, Any]:
         return self.runtime.get_agent_observability(agent_session_id)

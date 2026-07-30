@@ -87,15 +87,16 @@ For each selected candidate, the main agent creates a session with
 The worker must begin with `search_get_agent_context`; prompt ids are labels,
 while returned context is authoritative. That context contains only its own
 candidate history. Before every new edit, it reads the narrow current-run
-Global Plan and commits one immutable sentence describing the next attempt:
+Global Evidence view:
 
 ```text
-search_get_global_plan(agent_session_id=<its session>)
-search_submit_iteration_plan(
-  agent_session_id=<its session>,
-  description=<one-line design to test>,
-)
+search_get_global_evidence(agent_session_id=<its session>)
 ```
+
+Each row exposes verifier-backed commit, score, and disposition immediately.
+Its objective `view` may still be `null` while the run-scoped annotator catches
+up. The worker does not wait or poll; it uses the available Evidence, local
+code, and its own reasoning to choose a direction.
 
 The worker owns all later hypothesis, pivot, feature-transfer, structural
 restart, and rebase decisions within that candidate. It never waits for main to
@@ -106,14 +107,14 @@ iterations with:
 search_run_verifier(
   ...,
   agent_session_id=<its session>,
+  hypothesis=<one-line description of the realized attempt>,
 )
 ```
 
-The runtime uses the submitted plan description as the iteration hypothesis.
-The Global Plan joins that immutable plan with the resulting score,
-`keep`/`discard`/`failure`, and tested commit. Peer code stays progressively
-disclosed: when independently needed, a worker can compare an advertised
-commit from its own shared-object worktree with
+The runtime stores the hypothesis with the settled iteration and asynchronously
+adds an immutable View based on the attempt commit's first-parent diff. Peer
+code stays progressively disclosed: only when independently needed, a worker
+can compare an advertised commit from its own shared-object worktree with
 `git diff HEAD <commit> -- <allowed-file>`; it never needs a peer workspace path.
 
 Every returned verifier report appends exactly one durable result-ledger entry

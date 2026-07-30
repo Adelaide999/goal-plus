@@ -256,6 +256,40 @@ def test_strategy_spec_accepts_codex_worker_launch_options() -> None:
     }
 
 
+def test_evidence_annotator_config_is_optional_and_overridable() -> None:
+    inherited = StrategySpec()
+    explicit = StrategySpec(
+        evidence_annotator={
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "medium",
+            "timeout_seconds": 90,
+            "provider": {
+                "base_url": "https://proxy.example/v1",
+                "api_key_env": "ANNOTATOR_API_KEY",
+            },
+        }
+    )
+
+    assert inherited.model_dump(mode="json")["evidence_annotator"] == {
+        "model": None,
+        "reasoning_effort": None,
+        "timeout_seconds": 300,
+        "provider": None,
+    }
+    assert explicit.model_dump(mode="json")["evidence_annotator"] == {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "timeout_seconds": 90,
+        "provider": {
+            "provider_id": "goal-plus-evidence",
+            "name": "Goal Plus Evidence provider",
+            "base_url": "https://proxy.example/v1",
+            "api_key_env": "ANNOTATOR_API_KEY",
+            "wire_api": "responses",
+        },
+    }
+
+
 def test_worker_budget_requires_runtime_or_turn_limit() -> None:
     with pytest.raises(ValidationError):
         WorkerBudget()

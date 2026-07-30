@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import calendar
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -32,12 +33,13 @@ from goal_plus.agent_hosts import (
 from goal_plus.models import (
     AgentHostHandle,
     AgentSessionRecord,
-    CandidateIterationPlan,
     CandidateRecord,
     CandidateProposal,
     CandidateTask,
     CandidateWorkOrder,
+    EvidenceAnnotationTask,
     FeedbackPolicy,
+    EvidenceViewRecord,
     FrozenSpec,
     IterationDisposition,
     PromotionEvidence,
@@ -46,6 +48,8 @@ from goal_plus.models import (
     RunSummary,
     IterationRecord,
     ResultLedgerEntry,
+    ResolvedCodexProvider,
+    ResolvedEvidenceAnnotatorProfile,
     ScoreReport,
     SearchPlan,
     SearchSpec,
@@ -75,6 +79,15 @@ VERIFIER_RESOURCE_LOCK_DIR_ENV = "GOAL_PLUS_VERIFIER_RESOURCE_LOCK_DIR"
 VERIFIER_OUTPUT_LIMIT_BYTES = 64 * 1024
 VERIFIER_LOG_LIMIT_BYTES = VERIFIER_OUTPUT_LIMIT_BYTES * 2 + 8192
 VERIFIER_TERM_GRACE_SECONDS = 0.5
+MAX_EVIDENCE_ANNOTATION_DIFF_BYTES = 1024 * 1024
+EVIDENCE_ANNOTATOR_MODEL_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL"
+EVIDENCE_ANNOTATOR_REASONING_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT"
+EVIDENCE_ANNOTATOR_BASE_URL_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_BASE_URL"
+EVIDENCE_ANNOTATOR_PROVIDER_ID_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_PROVIDER_ID"
+EVIDENCE_ANNOTATOR_PROVIDER_NAME_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_PROVIDER_NAME"
+EVIDENCE_ANNOTATOR_API_KEY_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_API_KEY_ENV"
+EVIDENCE_ANNOTATOR_WIRE_API_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_WIRE_API"
+OUTER_DEADLINE_ENV = "GOAL_PLUS_OUTER_DEADLINE_AT"
 
 
 @dataclass(frozen=True)
@@ -1051,6 +1064,7 @@ class FileSearchRuntime:
             candidate_id=candidate_id,
             directive=directive,
             worker_budget_override=worker_budget,
+            reuse_initial=True,
         )
 
     def redispatch_candidate(
@@ -1099,7 +1113,7 @@ class FileSearchRuntime:
             "resume_instruction": (
                 "这是现有候选的新 worker session。首先调用 search_get_agent_context，"
                 "将其中本 candidate 的 iterations/results 作为权威恢复上下文，"
-                "再读取 search_get_global_plan。"
+                "再读取 search_get_global_evidence。"
             ),
         }
         return self._create_agent_session(
@@ -1118,6 +1132,7 @@ class FileSearchRuntime:
         directive: dict[str, Any] | str | None,
         worker_agent_type_override: str | None = None,
         worker_budget_override: dict[str, Any] | None = None,
+        reuse_initial: bool = False,
     ) -> AgentSessionRecord:
         with self._run_transaction(run_id):
             run = self._load_run(run_id)
@@ -1139,10 +1154,41 @@ class FileSearchRuntime:
                     worker_budget=worker_budget_override,
                 )
 
-            agent_session_id = self._make_agent_session_id(run_id, run.next_agent_session_index)
+            normalized_directive = self._normalize_main_directive(directive)
+            if reuse_initial:
+                session = next(
+                    (
+                        item
+                        for item in self._load_agent_sessions(run_id)
+                        if item.candidate_id == candidate_id
+                    ),
+                    None,
+                )
+                if session is not None:
+                    expected_launch = self._build_launch_payload(
+                        frozen=frozen,
+                        candidate_id=candidate_id,
+                        agent_session_id=session.agent_session_id,
+                        directive=normalized_directive,
+                        candidate_record=candidate_record,
+                        worker_agent_type_override=worker_agent_type_override,
+                        worker_budget_override=worker_budget_override,
+                    )
+                    if (
+                        session.directive != normalized_directive
+                        or session.launch != expected_launch
+                    ):
+                        raise RuntimeError(
+                            f"candidate {candidate_id} initial agent session already exists "
+                            "with different launch options"
+                        )
+                    return session
+
+            agent_session_id = self._make_agent_session_id(
+                run_id, run.next_agent_session_index
+            )
             run.next_agent_session_index += 1
             now = utc_timestamp()
-            normalized_directive = self._normalize_main_directive(directive)
             launch = self._build_launch_payload(
                 frozen=frozen,
                 candidate_id=candidate_id,
@@ -1448,90 +1494,13 @@ class FileSearchRuntime:
             "iterations": self.list_iterations(session.run_id, session.candidate_id),
         }
 
-    def get_global_plan(self, agent_session_id: str) -> list[dict[str, Any]]:
-        """Return the narrow plan/result projection for the session's run."""
+    def get_global_evidence(self, agent_session_id: str) -> list[dict[str, Any]]:
+        """Return settled worker evidence and any completed objective views."""
         session = self._load_agent_session_by_id(agent_session_id)
         self._load_run(session.run_id)
-        return self._global_plan_view(session.run_id)
-
-    def submit_iteration_plan(
-        self,
-        agent_session_id: str,
-        description: str,
-    ) -> dict[str, Any]:
-        """Create one immutable plan at a candidate's settled boundary."""
-        session = self._load_agent_session_by_id(agent_session_id)
-        lock_path = self._candidate_dir(
-            session.run_id, session.candidate_id
-        ) / "verifier.lock"
-        with exclusive_file_lock(lock_path):
-            # Verifier settlement uses the same candidate -> run lock order.
-            with self._run_transaction(session.run_id):
-                run = self._load_run(session.run_id)
-                self._assert_worker_iteration_allowed(
-                    run, "submit iteration plan"
-                )
-                record = self._load_candidate_record(
-                    session.run_id, session.candidate_id
-                )
-                if record.status not in {"created", "evaluated"}:
-                    raise RuntimeError(
-                        f"cannot plan candidate in status {record.status}"
-                    )
-
-                iteration_number = len(record.iterations) + 1
-                plan = CandidateIterationPlan(
-                    run_id=session.run_id,
-                    candidate_id=session.candidate_id,
-                    iteration=iteration_number,
-                    agent_session_id=agent_session_id,
-                    description=description,
-                    created_at=utc_timestamp(),
-                )
-                existing = self._load_candidate_iteration_plan(
-                    session.run_id,
-                    session.candidate_id,
-                    iteration_number,
-                )
-                if existing is not None:
-                    if existing.description != plan.description:
-                        raise RuntimeError(
-                            f"candidate {session.candidate_id} iteration "
-                            f"{iteration_number} already has a different plan"
-                        )
-                    return self._global_plan_entry(existing, None)
-
-                if self._git_status(
-                    record.task.workspace, ignore_runtime_noise=True
-                ):
-                    raise RuntimeError(
-                        "iteration plans require a Git-clean settled workspace"
-                    )
-                results_were_initialized = (
-                    record.results_ledger_git_head is not None
-                )
-                metric_name = self._load_frozen_spec(
-                    run.frozen_spec_id
-                ).spec.metric_name
-                self._ensure_results_tsv(record, metric_name)
-                if not results_were_initialized:
-                    self._write_candidate_record(session.run_id, record)
-                if self._git_status(
-                    record.task.workspace, ignore_runtime_noise=True
-                ):
-                    raise RuntimeError(
-                        "iteration plans require a Git-clean settled workspace"
-                    )
-                if (
-                    self._git_head(record.task.workspace)
-                    != record.results_ledger_git_head
-                ):
-                    raise RuntimeError(
-                        "iteration plans require the settled results ledger HEAD"
-                    )
-
-                self._write_candidate_iteration_plan(plan)
-                return self._global_plan_entry(plan, None)
+        view = self._global_evidence_view(session.run_id)
+        self._kick_evidence_annotator(session.run_id)
+        return view
 
     def run_verifier(
         self,
@@ -1545,13 +1514,16 @@ class FileSearchRuntime:
             raise ValueError("verifier scope must be 'process' or 'promotion'")
         lock_path = self._candidate_dir(run_id, candidate_id) / "verifier.lock"
         with exclusive_file_lock(lock_path):
-            return self._run_verifier(
+            report = self._run_verifier(
                 run_id,
                 candidate_id,
                 scope=scope,
                 agent_session_id=agent_session_id,
                 hypothesis=hypothesis,
             )
+        if scope == "process" and agent_session_id is not None:
+            self._kick_evidence_annotator(run_id)
+        return report
 
     def _run_verifier(
         self,
@@ -1594,7 +1566,6 @@ class FileSearchRuntime:
                 )
 
         session: AgentSessionRecord | None = None
-        iteration_plan: CandidateIterationPlan | None = None
         if agent_session_id:
             session = self._load_agent_session_by_id(agent_session_id, run_id=run_id)
             if session.candidate_id != candidate_id:
@@ -1602,18 +1573,11 @@ class FileSearchRuntime:
                     "agent_session_id does not belong to this candidate"
                 )
             if scope == "process":
-                iteration_number = len(record.iterations) + 1
-                iteration_plan = self._load_candidate_iteration_plan(
-                    run_id,
-                    candidate_id,
-                    iteration_number,
-                )
-                if iteration_plan is None:
-                    raise RuntimeError(
-                        "worker process verifier requires an iteration plan "
-                        f"for {candidate_id} iteration {iteration_number}"
+                hypothesis = self._tsv_cell(hypothesis or "")
+                if not hypothesis:
+                    raise ValueError(
+                        "worker process verifier requires a non-empty hypothesis"
                     )
-                hypothesis = iteration_plan.description
 
         results_were_initialized = record.results_ledger_git_head is not None
         self._ensure_results_tsv(record, frozen.spec.metric_name)
@@ -1627,7 +1591,6 @@ class FileSearchRuntime:
             if scope == "process":
                 attempt_git_head = self._commit_workspace_iteration(
                     record.task.workspace,
-                    state.changed_files,
                     (
                         f"search verifier iteration "
                         f"{candidate_id}:{len(record.iterations) + 1}"
@@ -1650,6 +1613,11 @@ class FileSearchRuntime:
                     raise RuntimeError(
                         "candidate Git history diverged from the settled results ledger"
                     )
+                attempt_changed_files = self._git_changed_files(
+                    record.task.workspace,
+                    pre_attempt_settled_head,
+                    attempt_git_head,
+                )
                 state = self._candidate_artifact_state(run, frozen, record)
                 self._apply_candidate_artifact_state(record, state)
                 if state.git_head != attempt_git_head or not state.git_artifact_clean:
@@ -1678,6 +1646,7 @@ class FileSearchRuntime:
                     report=report,
                     attempt=state,
                     pre_attempt_settled_head=pre_attempt_settled_head,
+                    attempt_changed_files=attempt_changed_files,
                     hypothesis=hypothesis,
                     agent_session_id=agent_session_id,
                     session=session,
@@ -1728,6 +1697,7 @@ class FileSearchRuntime:
         report: ScoreReport,
         attempt: _CandidateArtifactState,
         pre_attempt_settled_head: str | None,
+        attempt_changed_files: list[str],
         hypothesis: str | None,
         agent_session_id: str | None,
         session: AgentSessionRecord | None,
@@ -1763,6 +1733,8 @@ class FileSearchRuntime:
                 score=report.aggregate_score,
                 process_passed=report.process_passed,
                 git_head=attempt.git_head,
+                attempt_base_git_head=pre_attempt_settled_head,
+                attempt_changed_files=attempt_changed_files,
                 git_artifact_clean=attempt.git_artifact_clean,
                 git_status=attempt.git_status,
                 failure_class=failure_class,
@@ -1865,6 +1837,17 @@ class FileSearchRuntime:
                 record.promotion_report = None
                 record.promotion_evidence = None
             self._write_candidate_record(run_id, record)
+            if agent_session_id is not None:
+                try:
+                    self._create_evidence_annotation_task(
+                        run_id,
+                        frozen,
+                        candidate_id,
+                        iteration,
+                    )
+                except Exception:
+                    # Explanatory Views never invalidate settled verifier Evidence.
+                    pass
 
             self._update_best_seen(run, frozen.spec, report)
             run.candidates_evaluated = len(
@@ -2640,8 +2623,8 @@ class FileSearchRuntime:
             return prompt_path.read_text(encoding="utf-8")
         return (
             "首先调用 search_get_agent_context。只能在候选工作区中工作。"
-            "每轮编辑前读取 search_get_global_plan 并提交 search_submit_iteration_plan，"
-            "然后调用 search_run_verifier。使用运行时证据，不要依赖 transcript。"
+            "每轮编辑前读取 search_get_global_evidence，修改后带一句话 hypothesis 调用 "
+            "search_run_verifier。使用运行时证据，不要依赖 transcript。"
             "如果 verifier 报告 VerifierWorkspaceSideEffect 或 "
             "candidate_action=stop_and_report，报告基础设施阻塞原因并直接返回，不要重试。"
         )
@@ -2776,13 +2759,13 @@ class FileSearchRuntime:
             "不要删除、移动或清理文件；禁止 rm、mv、rmdir、unlink、trash 和 find -delete 等破坏性命令。",
             "使用 git status、git diff 和 git log 分析工作区；runtime 拥有 verifier-backed iteration 的提交和回滚，不要自行 reset、restore 或 checkout 已验证状态。",
             "所有评分都必须通过 goal-plus_search_run_verifier；不要通过 bash 直接运行 process_verifiers 命令，也不要自行编写评分器。",
-            "每轮修改前调用 search_get_global_plan，思考后用 context.agent_session_id 调用 search_submit_iteration_plan，提交一句话计划。",
-            "把 context.agent_session_id 传给 search_run_verifier，并省略 scope 以使用 process verifier；plan description 是本轮唯一 hypothesis。",
+            "每轮修改前调用 search_get_global_evidence；结合 Evidence 和本地代码独立思考，不需要等待尚未生成的 View。",
+            "把 context.agent_session_id 传给 search_run_verifier，并省略 scope 以使用 process verifier；同时用一句话 hypothesis 客观概括本轮实际尝试。",
             "每次 run_verifier 调用都会记录一个 iteration。在配置的 host 预算内工作。尽早完成并验证候选，在达到限制前停止启动新的优化 iteration，并留出足够时间返回简洁摘要。",
             "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
             "process verifier 返回 keep/discard/failure disposition；非严格改善或验证失败时，runtime 会保留被测 commit 并把候选代码恢复到 candidate-local best。下一轮直接从返回后的已结算工作区继续。",
             "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
-            "Global Plan 只展示 peer 的计划、分数、disposition 和 attempt commit。仅在你独立判断代码级证据确有必要时，在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；不要访问其他 candidate 的 workspace。",
+            "Global Evidence 展示 peer 的 verifier commit、分数、disposition 和可能延迟的客观 View。view=null 只表示 annotator 尚未更新；可先按自己的方向探索，只有代码级证据确有必要时才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较。不要访问其他 candidate 的 workspace，也不要 checkout/reset peer commit。",
         ]
         if plan.worker_policy.get("worker_agent_type"):
             instructions.append(
@@ -4427,7 +4410,6 @@ class FileSearchRuntime:
             git_status=self._git_status(workspace),
             git_artifact_clean=self._git_artifact_clean(
                 workspace,
-                changed_files,
                 git_head,
             ),
         )
@@ -4486,28 +4468,47 @@ class FileSearchRuntime:
     def _git_artifact_clean(
         self,
         workspace: Path,
-        changed_files: list[str],
         git_head: str | None,
     ) -> bool:
         if not git_head:
             return False
-        if not changed_files:
-            return True
-        try:
-            value = self._git_output(
-                workspace,
-                [
-                    "git",
-                    "status",
-                    "--porcelain=v1",
-                    "--untracked-files=all",
-                    "--",
-                    *changed_files,
-                ],
-            )
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            return False
-        return not value.strip()
+        return not self._git_status(workspace, ignore_runtime_noise=True)
+
+    @staticmethod
+    def _candidate_git_pathspecs() -> list[str]:
+        exclusions = [
+            f":(exclude){name}/**"
+            for name in sorted(IGNORED_NAMES - {".git"})
+        ]
+        exclusions.extend(
+            f":(exclude)**/{name}/**"
+            for name in sorted(IGNORED_NAMES - {".git"})
+        )
+        exclusions.extend(
+            f":(exclude)**/*{suffix}" for suffix in sorted(IGNORED_SUFFIXES)
+        )
+        return [".", f":(exclude){RESULTS_TSV_RELATIVE_PATH}", *exclusions]
+
+    def _git_changed_files(
+        self,
+        workspace: Path,
+        base: str,
+        head: str,
+    ) -> list[str]:
+        value = self._git_output(
+            workspace,
+            [
+                "git",
+                "diff",
+                "--name-only",
+                "-z",
+                base,
+                head,
+                "--",
+                *self._candidate_git_pathspecs(),
+            ],
+        )
+        return sorted(path for path in value.split("\0") if path)
 
     def _git_output(self, workspace: Path, command: list[str]) -> str:
         process = subprocess.Popen(
@@ -4526,6 +4527,70 @@ class FileSearchRuntime:
                 stderr=stderr,
             )
         return stdout
+
+    def _git_output_bounded(
+        self,
+        workspace: Path,
+        command: list[str],
+        *,
+        max_bytes: int,
+    ) -> str:
+        process = subprocess.Popen(
+            command,
+            cwd=workspace,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        stdout = _BoundedOutput(max_bytes + 1)
+        stderr = _BoundedOutput(VERIFIER_OUTPUT_LIMIT_BYTES)
+
+        def drain(stream: Any, capture: _BoundedOutput) -> None:
+            try:
+                while True:
+                    chunk = stream.read(8192)
+                    if not chunk:
+                        return
+                    capture.append(chunk)
+            except (OSError, ValueError):
+                pass
+
+        readers = [
+            threading.Thread(
+                target=drain,
+                args=(process.stdout, stdout),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=drain,
+                args=(process.stderr, stderr),
+                daemon=True,
+            ),
+        ]
+        for reader in readers:
+            reader.start()
+        returncode = process.wait()
+        for reader in readers:
+            reader.join(timeout=VERIFIER_TERM_GRACE_SECONDS)
+        if any(reader.is_alive() for reader in readers):
+            self._terminate_verifier_process_group(process)
+            for reader in readers:
+                reader.join(timeout=VERIFIER_TERM_GRACE_SECONDS)
+        for stream in (process.stdout, process.stderr):
+            if stream is not None and not stream.closed:
+                stream.close()
+        if returncode:
+            raise subprocess.CalledProcessError(
+                returncode,
+                command,
+                output=stdout.text(),
+                stderr=stderr.text(),
+            )
+        if stdout.truncated or len(stdout.data) > max_bytes:
+            raise RuntimeError(
+                f"annotation diff exceeds {max_bytes} bytes"
+            )
+        return bytes(stdout.data).decode("utf-8", errors="replace")
 
     def _git_returncode(self, workspace: Path, command: list[str]) -> int:
         process = subprocess.Popen(
@@ -4615,16 +4680,16 @@ class FileSearchRuntime:
     def _commit_workspace_iteration(
         self,
         workspace: Path,
-        changed_files: list[str],
         message: str,
     ) -> str | None:
-        if not changed_files:
-            return self._git_head(workspace)
+        pathspecs = self._candidate_git_pathspecs()
         try:
-            self._git_output(workspace, ["git", "add", "--", *changed_files])
+            self._git_output(
+                workspace, ["git", "add", "-A", "-f", "--", *pathspecs]
+            )
             staged_returncode = self._git_returncode(
                 workspace,
-                ["git", "diff", "--cached", "--quiet", "--", *changed_files],
+                ["git", "diff", "--cached", "--quiet", "--", *pathspecs],
             )
             if staged_returncode == 0:
                 return self._git_head(workspace)
@@ -4886,7 +4951,7 @@ class FileSearchRuntime:
     def _candidate_dir(self, run_id: str, candidate_id: str) -> Path:
         return self._run_dir(run_id) / "candidates" / candidate_id
 
-    def _candidate_iteration_plan_path(
+    def _evidence_annotation_task_path(
         self,
         run_id: str,
         candidate_id: str,
@@ -4894,74 +4959,382 @@ class FileSearchRuntime:
     ) -> Path:
         return (
             self._candidate_dir(run_id, candidate_id)
-            / "plans"
+            / "evidence-annotations"
             / f"iteration-{iteration:04d}.json"
         )
 
-    def _load_candidate_iteration_plan(
+    def _load_evidence_annotation_task(
         self,
         run_id: str,
         candidate_id: str,
         iteration: int,
-    ) -> CandidateIterationPlan | None:
-        path = self._candidate_iteration_plan_path(
+    ) -> EvidenceAnnotationTask | None:
+        path = self._evidence_annotation_task_path(
             run_id, candidate_id, iteration
         )
         if not path.exists():
             return None
-        return CandidateIterationPlan.model_validate(load_json(path))
+        return EvidenceAnnotationTask.model_validate(load_json(path))
 
-    def _write_candidate_iteration_plan(
+    def _write_evidence_annotation_task(
         self,
-        plan: CandidateIterationPlan,
+        task: EvidenceAnnotationTask,
     ) -> None:
         write_json(
-            self._candidate_iteration_plan_path(
-                plan.run_id, plan.candidate_id, plan.iteration
+            self._evidence_annotation_task_path(
+                task.run_id, task.candidate_id, task.iteration
             ),
-            plan.model_dump(mode="json"),
+            task.model_dump(mode="json"),
         )
 
-    @staticmethod
-    def _global_plan_entry(
-        plan: CandidateIterationPlan,
-        iteration: IterationRecord | None,
-    ) -> dict[str, Any]:
+    def evidence_annotation_usage(self, run_id: str) -> dict[str, Any]:
+        """Return persisted annotator usage without exposing annotation tasks."""
+        self._load_run(run_id)
+        tasks = [
+            EvidenceAnnotationTask.model_validate(load_json(path))
+            for path in sorted(
+                self._run_dir(run_id).glob(
+                    "candidates/*/evidence-annotations/iteration-*.json"
+                )
+            )
+        ]
+        usage: dict[str, int | float] = {}
+        for task in tasks:
+            for key, value in task.usage.items():
+                usage[key] = usage.get(key, 0) + value
+        states: dict[str, int] = {}
+        for task in tasks:
+            states[task.state] = states.get(task.state, 0) + 1
         return {
-            "candidate_id": plan.candidate_id,
-            "iteration": plan.iteration,
-            "description": plan.description,
-            "score": iteration.score if iteration is not None else None,
-            "disposition": (
-                iteration.disposition if iteration is not None else None
-            ),
-            "commit": iteration.git_head if iteration is not None else None,
+            **usage,
+            "tasks": len(tasks),
+            "attempts": sum(task.attempts for task in tasks),
+            "states": states,
+            "coverage": "persisted Codex Evidence annotator turn usage",
         }
 
-    def _global_plan_view(self, run_id: str) -> list[dict[str, Any]]:
-        results = {
-            (record.candidate_id, iteration.iteration): iteration
+    @staticmethod
+    def _outer_deadline_epoch(value: str | None) -> float | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+
+    def _resolve_evidence_annotator_profile(
+        self,
+        frozen: FrozenSpec,
+    ) -> tuple[ResolvedEvidenceAnnotatorProfile | None, str | None]:
+        strategy = frozen.spec.strategy
+        configured = strategy.evidence_annotator
+        worker_launch = strategy.worker_launch
+        env_model = os.environ.get(EVIDENCE_ANNOTATOR_MODEL_ENV)
+        if configured.model:
+            model = configured.model
+        elif strategy.worker_host == "codex" and worker_launch is not None:
+            model = worker_launch.model
+        elif env_model:
+            model = env_model.strip() or None
+        elif strategy.worker_host == "pi-rpc":
+            return None, (
+                "pi-rpc worker models are not valid Codex annotator models; "
+                "configure evidence_annotator.model or "
+                f"{EVIDENCE_ANNOTATOR_MODEL_ENV}"
+            )
+        else:
+            model = None
+
+        reasoning_effort = configured.reasoning_effort
+        if reasoning_effort is None and worker_launch is not None:
+            reasoning_effort = worker_launch.reasoning_effort
+        if reasoning_effort is None:
+            reasoning_effort = (
+                os.environ.get(EVIDENCE_ANNOTATOR_REASONING_ENV) or None
+            )
+
+        provider: ResolvedCodexProvider | None = None
+        if configured.provider is not None:
+            provider = ResolvedCodexProvider(
+                provider_id=configured.provider.provider_id,
+                name=configured.provider.name,
+                base_url=configured.provider.base_url,
+                api_key_env=configured.provider.api_key_env,
+                wire_api=configured.provider.wire_api,
+            )
+        else:
+            base_url = os.environ.get(EVIDENCE_ANNOTATOR_BASE_URL_ENV)
+            if base_url:
+                provider = ResolvedCodexProvider(
+                    provider_id=(
+                        os.environ.get(EVIDENCE_ANNOTATOR_PROVIDER_ID_ENV)
+                        or "goal-plus-evidence"
+                    ),
+                    name=(
+                        os.environ.get(EVIDENCE_ANNOTATOR_PROVIDER_NAME_ENV)
+                        or "Goal Plus Evidence provider"
+                    ),
+                    base_url_env=EVIDENCE_ANNOTATOR_BASE_URL_ENV,
+                    base_url_sha256=sha256_text(base_url),
+                    api_key_env=(
+                        os.environ.get(EVIDENCE_ANNOTATOR_API_KEY_ENV)
+                        or "OPENAI_API_KEY"
+                    ),
+                    wire_api=(
+                        os.environ.get(EVIDENCE_ANNOTATOR_WIRE_API_ENV)
+                        or "responses"
+                    ),
+                )
+
+        codex_home = os.environ.get("CODEX_HOME")
+        if codex_home:
+            codex_home = str(Path(codex_home).expanduser().resolve())
+        return (
+            ResolvedEvidenceAnnotatorProfile(
+                model=model,
+                reasoning_effort=reasoning_effort,
+                timeout_seconds=configured.timeout_seconds,
+                codex_home=codex_home,
+                provider=provider,
+            ),
+            None,
+        )
+
+    def _create_evidence_annotation_task(
+        self,
+        run_id: str,
+        frozen: FrozenSpec,
+        candidate_id: str,
+        iteration: IterationRecord,
+    ) -> EvidenceAnnotationTask:
+        if (
+            iteration.git_head is None
+            or iteration.attempt_base_git_head is None
+        ):
+            raise RuntimeError("worker Evidence requires exact attempt commits")
+        existing = self._load_evidence_annotation_task(
+            run_id, candidate_id, iteration.iteration
+        )
+        if existing is not None:
+            if (
+                existing.attempt_commit != iteration.git_head
+                or existing.attempt_base_commit
+                != iteration.attempt_base_git_head
+            ):
+                raise RuntimeError("Evidence annotation task is immutable")
+            return existing
+
+        try:
+            profile, error = self._resolve_evidence_annotator_profile(frozen)
+        except Exception as exc:
+            profile = None
+            error = f"invalid annotator profile: {type(exc).__name__}: {exc}"
+        outer_deadline = os.environ.get(OUTER_DEADLINE_ENV) or None
+        if outer_deadline:
+            deadline_epoch = self._outer_deadline_epoch(outer_deadline)
+            if deadline_epoch is None:
+                error = f"invalid {OUTER_DEADLINE_ENV} value"
+                profile = None
+            elif deadline_epoch <= time.time():
+                error = "annotation outer deadline already expired"
+                profile = None
+        now = utc_timestamp()
+        task = EvidenceAnnotationTask(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            iteration=iteration.iteration,
+            attempt_base_commit=iteration.attempt_base_git_head,
+            attempt_commit=iteration.git_head,
+            attempt_changed_files=list(iteration.attempt_changed_files),
+            profile=profile,
+            outer_deadline_at=outer_deadline,
+            state="terminal_error" if error else "pending",
+            error_fingerprint=sha256_text(error) if error else None,
+            last_error=error,
+            created_at=now,
+            updated_at=now,
+        )
+        self._write_evidence_annotation_task(task)
+        return task
+
+    @staticmethod
+    def _global_evidence_entry(
+        candidate_id: str,
+        iteration: IterationRecord,
+        view: EvidenceViewRecord | None,
+    ) -> dict[str, Any]:
+        return {
+            "candidate_id": candidate_id,
+            "iteration": iteration.iteration,
+            "commit": iteration.git_head,
+            "score": iteration.score,
+            "disposition": iteration.disposition,
+            "view": view.description if view is not None else None,
+        }
+
+    def _global_evidence_view(self, run_id: str) -> list[dict[str, Any]]:
+        evidence = [
+            (iteration.created_at, record.candidate_id, iteration)
             for record in self._load_candidate_records(run_id)
             for iteration in record.iterations
             if iteration.agent_session_id is not None
-        }
-        plans = []
-        candidates_dir = self._run_dir(run_id) / "candidates"
-        for path in sorted(candidates_dir.glob("*/plans/iteration-*.json")):
-            plans.append(CandidateIterationPlan.model_validate(load_json(path)))
-        plans.sort(
-            key=lambda plan: (
-                plan.created_at,
-                plan.candidate_id,
-                plan.iteration,
+        ]
+        evidence.sort(
+            key=lambda item: (
+                item[0],
+                item[1],
+                item[2].iteration,
             )
         )
+        result = []
+        for _, candidate_id, iteration in evidence:
+            task = self._load_evidence_annotation_task(
+                run_id, candidate_id, iteration.iteration
+            )
+            view = (
+                task.view
+                if task is not None and task.state == "completed"
+                else None
+            )
+            if view is not None and (
+                view.run_id != run_id
+                or view.candidate_id != candidate_id
+                or view.iteration != iteration.iteration
+                or view.attempt_commit != iteration.git_head
+            ):
+                raise RuntimeError("evidence view does not match iteration")
+            result.append(
+                self._global_evidence_entry(candidate_id, iteration, view)
+            )
+        return result
 
-        view = []
-        for plan in plans:
-            result = results.get((plan.candidate_id, plan.iteration))
-            view.append(self._global_plan_entry(plan, result))
-        return view
+    def _pending_evidence_annotations(
+        self,
+        run_id: str,
+    ) -> list[tuple[str, int]]:
+        return [
+            (entry["candidate_id"], entry["iteration"])
+            for entry in self._global_evidence_view(run_id)
+            if entry["view"] is None
+        ]
+
+    def _evidence_annotation_run_active(self, run_id: str) -> bool:
+        run = self._load_run(run_id)
+        return (
+            run.invalidated_at is None
+            and run.state in WORKER_ITERATION_RUN_STATES
+        )
+
+    def _eligible_evidence_annotations(
+        self,
+        run_id: str,
+        *,
+        now_epoch: float | None = None,
+    ) -> list[tuple[str, int]]:
+        if not self._evidence_annotation_run_active(run_id):
+            return []
+        now_epoch = time.time() if now_epoch is None else now_epoch
+        eligible = []
+        for candidate_id, iteration in self._pending_evidence_annotations(run_id):
+            task = self._load_evidence_annotation_task(
+                run_id, candidate_id, iteration
+            )
+            if task is None or task.state not in {"pending", "retry_wait"}:
+                continue
+            deadline = self._outer_deadline_epoch(task.outer_deadline_at)
+            retry_at = self._outer_deadline_epoch(task.next_attempt_at)
+            if deadline is not None and deadline <= now_epoch:
+                continue
+            if retry_at is not None and retry_at > now_epoch:
+                continue
+            eligible.append((candidate_id, iteration))
+        return eligible
+
+    def _evidence_annotation_context(
+        self,
+        run_id: str,
+        candidate_id: str,
+        iteration_number: int,
+    ) -> dict[str, Any]:
+        record = self._load_candidate_record(run_id, candidate_id)
+        iteration = next(
+            (
+                item
+                for item in record.iterations
+                if item.iteration == iteration_number
+                and item.agent_session_id is not None
+            ),
+            None,
+        )
+        if iteration is None or iteration.git_head is None:
+            raise RuntimeError("annotation requires commit-backed worker evidence")
+        task = self._load_evidence_annotation_task(
+            run_id, candidate_id, iteration_number
+        )
+        if task is None or task.profile is None:
+            raise RuntimeError("annotation requires a runnable immutable task")
+        commit = iteration.git_head
+        if (
+            task.attempt_commit != commit
+            or task.attempt_base_commit != iteration.attempt_base_git_head
+            or task.attempt_changed_files != iteration.attempt_changed_files
+        ):
+            raise RuntimeError("annotation task does not match settled Evidence")
+        if self._git_returncode(
+            record.task.workspace,
+            ["git", "cat-file", "-e", f"{task.attempt_base_commit}^{{commit}}"],
+        ) != 0 or self._git_returncode(
+            record.task.workspace,
+            ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+        ) != 0:
+            raise RuntimeError("annotation Evidence commit is unavailable")
+        diff = ""
+        if task.attempt_changed_files:
+            diff = self._git_output_bounded(
+                record.task.workspace,
+                [
+                    "git",
+                    "diff",
+                    "--binary",
+                    "--full-index",
+                    "--no-ext-diff",
+                    task.attempt_base_commit,
+                    commit,
+                    "--",
+                    *task.attempt_changed_files,
+                ],
+                max_bytes=MAX_EVIDENCE_ANNOTATION_DIFF_BYTES,
+            )
+        return {
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "iteration": iteration.iteration,
+            "agent_summary": iteration.hypothesis,
+            "exact_attempt_commit": commit,
+            "actual_diff": diff,
+            "verifier_result": {
+                "score": iteration.score,
+                "process_passed": iteration.process_passed,
+                "disposition": iteration.disposition,
+                "failure_class": iteration.failure_class,
+            },
+            "relevant_metrics": iteration.metrics,
+            "annotator": task.profile.model_dump(mode="json"),
+            "outer_deadline_at": task.outer_deadline_at,
+            "runtime_root": str(self.root_dir),
+        }
+
+    def _kick_evidence_annotator(self, run_id: str) -> None:
+        try:
+            from goal_plus.evidence_annotator import kick_evidence_annotator
+
+            kick_evidence_annotator(self.root_dir, run_id)
+        except Exception:
+            # Evidence settlement and reads never depend on explanatory Views.
+            return
 
     def _plan_dir(self, run_id: str) -> Path:
         return self._run_dir(run_id) / "plans"

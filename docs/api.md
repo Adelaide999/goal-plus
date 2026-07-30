@@ -80,14 +80,21 @@ feature ledger, and scoped pitfalls. It marks predecessor scores non-reusable.
 | `search_bind_agent_handle` | main/host driver | attach a Codex or Pi native handle |
 | `search_continue_agent_session` | main | return native same-worker continuation fields when supported |
 | `search_get_agent_context` | candidate worker | load authoritative ids, workspace, candidate-local iterations/results, and resume data |
-| `search_get_global_plan` | candidate worker | project all plan-backed attempts in the current run as description, score, disposition, and attempt commit |
-| `search_submit_iteration_plan` | candidate worker | atomically create the next immutable one-line plan while its workspace is settled and Git-clean; the final write shares the run lock with invalidation and is rejected outside active iteration states |
+| `search_get_global_evidence` | candidate worker | project settled worker attempts in the current run as score, disposition, exact attempt commit, and a possibly delayed objective View |
 | `search_get_agent_observability` | main/monitor | read normalized model, timing, terminal, usage, context, artifact, and handoff evidence for one session |
 
 `search_start_agent_session` does not launch or supervise a worker. The caller
 must use the returned `launch` object. A one-dispatch `worker_budget` can be
 passed to initial launch, continuation, or redispatch without mutating the
 frozen spec.
+
+Worker process verifier calls require a one-line `hypothesis` describing the
+realized attempt. `view=null` in Global Evidence means annotation has not been
+published yet; workers continue independently and do not wait or poll.
+Each worker settlement snapshots the exact attempt base/head and the resolved
+annotator model/provider into an internal task. Explicit
+`strategy.evidence_annotator.provider` configuration stores only the API-key
+environment variable name, never the key value.
 
 `search_get_agent_observability` has one versioned cross-host schema. Schema
 version 2 adds `execution.provider` and `usage.processed_tokens`; Pi processed

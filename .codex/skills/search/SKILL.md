@@ -82,8 +82,9 @@ strategy:
    `strategy.orchestration_mode="parallel_loops"` 和 `worker_host="codex"`。
 2. 调用且只调用一次 `search_plan_next(requested_k=budget.max_parallel)`，然后调用且只调用
    一次 `search_start_batch`，创建初始候选。
-3. 对每个候选调用 `search_start_agent_session`。可选的 `worker_budget` 是一次派发的
-   host 限制；它不会改变候选的技术方向。
+3. 对每个候选调用且只调用一次 `search_start_agent_session`，直接解析同一次响应中的
+   launch payload，不要为了重新读取响应而再次调用。可选的 `worker_budget` 是一次派发的
+   host 限制；它不会改变候选的技术方向。真正重派使用 `search_redispatch_candidate`。
 4. 使用返回的 launch payload 启动 Codex subagent：
    - 将其映射到当前 `spawn_agent` 工具 schema；
    - 字段可用时始终传入 `task_name`、`message` 和 `fork_turns`；
@@ -187,9 +188,12 @@ continuation 预算根据外层剩余时间和最终收尾预留推导，而不�
 candidate-local history 由运行时拥有，不是 `plan.md` 文件。worker 通过
 `search_get_agent_context` 恢复自己的 `context.iterations`、`context.results`、
 `context.results_tsv`、工作区 Git 状态和有界 handoff metadata。其他 candidate 的尝试
-只通过窄 `search_get_global_plan` 视图披露。每轮修改前，worker 提交不可变的
-`search_submit_iteration_plan`；需要代码级证据时，只在当前 workspace 使用
-`git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace。
+只通过窄 `search_get_global_evidence` 视图披露。每轮修改前读取一次；`view=null` 只表示
+annotator 尚未更新，worker 可先依据 commit、score、disposition 和自己的推理独立探索，
+不等待或轮询。只有代码级证据确有必要时，才在当前 workspace 使用
+`git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace，
+也不 checkout/reset peer commit。修改完成后，worker 在 `search_run_verifier` 中用一句话
+`hypothesis` 客观概括实际尝试。
 host transcript 是有用上下文，但不是权威 Search 状态。
 
 Codex 的同 worker continuation 使用 `search_continue_agent_session`，随后对现有 task

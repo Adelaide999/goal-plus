@@ -12,9 +12,11 @@ logs.
 The runtime owns goal-plus records, specs, plans, candidate workspaces,
 iteration history, verifier scoring, reports, and promotion patches. Codex or
 the Pi supervisor owns worker launch, lifecycle, deadlines, and interruption.
-The MCP runtime does not maintain lifecycle status, host-sync state, or process
-cancellation. Debug host lifecycle through native logs and goal/search state
-through `.gp/`.
+The MCP runtime does not maintain worker lifecycle status, host-sync state, or
+worker process cancellation. Its internal Evidence annotator is the exception:
+annotation tasks and bounded retry state live under each candidate, while the
+single-flight drainer state lives under the run. Debug host lifecycle through
+native logs and goal/search state through `.gp/`.
 
 Goal-plus records live under `.gp/goal-plus/<goal_plus_id>/`. One Goal Plus
 record may append multiple search tasks; each task points to one Search run
@@ -460,7 +462,7 @@ These tools are safe to call anytime — they're read-only:
 | `search_list_history(run_id, top_n, sort_by)` | Top candidates by score |
 | `search_list_iterations(run_id, candidate_id)` | Full iteration history for a candidate |
 | `search_get_agent_context(agent_session_id)` | What a specific subagent sees (including its own iterations) |
-| `search_get_global_plan(agent_session_id)` | Narrow plan/result history across the session's current run |
+| `search_get_global_evidence(agent_session_id)` | Settled worker Evidence and possibly delayed objective Views across the session's current run |
 
 ## Cross-Referencing Layers
 
