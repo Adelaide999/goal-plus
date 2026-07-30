@@ -55,6 +55,14 @@ def _additional_context(result: subprocess.CompletedProcess[str], event: str) ->
     return specific["additionalContext"]
 
 
+def _stop_hook_events(search_root: Path) -> list[dict]:
+    event_dir = search_root / "host-logs" / "codex-hook-events"
+    return [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(event_dir.glob("*.json"))
+    ]
+
+
 def _codex_search_worker(
     tmp_path: Path,
     *,
@@ -677,6 +685,17 @@ def test_search_candidate_stop_is_owned_by_its_verifier_not_parent_next_action(
     assert rebound.host_handle.metadata["session_file"] == "/tmp/codex-search-worker.jsonl"
     assert rebound.host_handle.metadata["model"] == "gpt-5.5"
     assert "subagent_stop_observed_at" in rebound.host_handle.metadata
+
+    subagent_events = _stop_hook_events(search_root)
+    assert len(subagent_events) == 2
+    assert {event["decision"] for event in subagent_events} == {"allow", "block"}
+    for event in subagent_events:
+        assert event["hook_event_name"] == "SubagentStop"
+        assert event["goal_plus_id"] == record.goal_plus_id
+        assert event["host_agent_id"] == agent_identity
+        assert event["agent_session_id"] == agent_session_id
+        assert event["run_id"] == run_id
+        assert event["candidate_id"] == candidate_id
 
     parent_stop = _run_hook(
         tmp_path,

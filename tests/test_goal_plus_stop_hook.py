@@ -19,6 +19,14 @@ HOOK_CLI = [
 ]
 
 
+def _stop_hook_events(search_root: Path) -> list[dict]:
+    event_dir = search_root / "host-logs" / "codex-hook-events"
+    return [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(event_dir.glob("*.json"))
+    ]
+
+
 def _run_hook(tmp_path: Path, search_root: Path, hook_input: dict | None = None, **env):
     run_env = {
         **os.environ,
@@ -85,6 +93,10 @@ def test_stop_hook_allows_unbound_active_goal_without_session_match(
     events = runtime.list_events(record.goal_plus_id)
     assert events[-1]["event_type"] == "session_gate_skipped"
     assert events[-1]["payload"]["reason"] == "no_matching_session"
+    hook_event = _stop_hook_events(search_root)[0]
+    assert hook_event["decision"] == "skipped"
+    assert hook_event["reason"] == "no_matching_session"
+    assert hook_event["goal_plus_id"] == record.goal_plus_id
 
 
 def test_stop_hook_blocks_active_goal_mode_for_full_goal_audit(tmp_path: Path) -> None:
@@ -113,7 +125,11 @@ def test_stop_hook_blocks_active_goal_mode_for_full_goal_audit(tmp_path: Path) -
     result = _run_hook(
         tmp_path,
         search_root,
-        {"hook_event_name": "Stop", "session_id": "session-current"},
+        {
+            "hook_event_name": "Stop",
+            "session_id": "session-current",
+            "stop_reason": "end_turn",
+        },
     )
 
     assert result.returncode == 0
@@ -125,6 +141,114 @@ def test_stop_hook_blocks_active_goal_mode_for_full_goal_audit(tmp_path: Path) -
     assert "checked_at_utc" in payload["reason"]
     assert "goal_plus_set_status" in payload["reason"]
     assert runtime.list_events(record.goal_plus_id)[-1]["event_type"] == "gate_blocked"
+
+    hook_event = _stop_hook_events(search_root)[0]
+    assert hook_event["schema_version"] == 1
+    assert hook_event["invocation_id"].startswith("hook_")
+    assert hook_event["hook_event_name"] == "Stop"
+    assert hook_event["outcome"] == "completed"
+    assert hook_event["decision"] == "block"
+    assert hook_event["goal_plus_id"] == record.goal_plus_id
+    assert hook_event["session_id"] == "session-current"
+    assert hook_event["stop_reason"] == "end_turn"
+    assert hook_event["duration_ms"] >= 0
+    assert hook_event["started_at"] <= hook_event["finished_at"]
+    assert hook_event["error_type"] is None
+    assert hook_event["error"] is None
+    assert "prompt" not in hook_event
+    assert "transcript_path" not in hook_event
+    assert "continuation_prompt" not in hook_event
+
+
+def test_explicit_gate_call_is_not_counted_as_automatic_stop_hook(
+    tmp_path: Path,
+) -> None:
+    search_root = tmp_path / ".search"
+    runtime = FileGoalPlusRuntime(search_root)
+    record = runtime.create_goal("Optimize model throughput")
+
+    runtime.gate(record.goal_plus_id, event="stop", context={})
+
+    assert _stop_hook_events(search_root) == []
+
+
+def test_stop_hook_records_allowed_terminal_goal(tmp_path: Path) -> None:
+    search_root = tmp_path / ".search"
+    runtime = FileGoalPlusRuntime(search_root)
+    record = runtime.create_goal("Optimize model throughput")
+    runtime.activate_session(
+        record.goal_plus_id,
+        {"host": "codex", "session_id": "session-terminal"},
+    )
+    runtime.set_status(
+        record.goal_plus_id,
+        status="complete",
+        reason="verified",
+        evidence=[{"kind": "test", "path": "evidence.json"}],
+    )
+
+    result = _run_hook(
+        tmp_path,
+        search_root,
+        {
+            "hook_event_name": "Stop",
+            "session_id": "session-terminal",
+            "goal_plus_id": record.goal_plus_id,
+            "stop_reason": "end_turn",
+        },
+    )
+
+    assert result.returncode == 0
+    assert "systemMessage" in json.loads(result.stdout)
+    hook_event = _stop_hook_events(search_root)[0]
+    assert hook_event["decision"] == "allow"
+    assert hook_event["outcome"] == "completed"
+    assert hook_event["goal_plus_id"] == record.goal_plus_id
+
+
+def test_stop_hook_records_failure_and_still_fails_open(tmp_path: Path) -> None:
+    search_root = tmp_path / ".search"
+    goal_dir = search_root / "goal-plus" / "gp_999"
+    goal_dir.mkdir(parents=True)
+    (goal_dir / "goal.json").write_text("{", encoding="utf-8")
+
+    result = _run_hook(
+        tmp_path,
+        search_root,
+        {
+            "hook_event_name": "Stop",
+            "session_id": "session-broken",
+            "goal_plus_id": "gp_999",
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert "allowing host action because hook failed" in result.stderr
+    hook_event = _stop_hook_events(search_root)[0]
+    assert hook_event["decision"] == "error"
+    assert hook_event["outcome"] == "failed"
+    assert hook_event["goal_plus_id"] == "gp_999"
+    assert hook_event["error_type"] == "JSONDecodeError"
+    assert 0 < len(hook_event["error"]) <= 1024
+
+
+def test_stop_hook_records_each_invocation_separately(tmp_path: Path) -> None:
+    search_root = tmp_path / ".search"
+    runtime = FileGoalPlusRuntime(search_root)
+    runtime.create_goal("Optimize model throughput")
+
+    for _ in range(2):
+        result = _run_hook(
+            tmp_path,
+            search_root,
+            {"hook_event_name": "Stop", "session_id": "unmatched"},
+        )
+        assert result.returncode == 0
+
+    hook_events = _stop_hook_events(search_root)
+    assert len(hook_events) == 2
+    assert len({event["invocation_id"] for event in hook_events}) == 2
 
 
 def test_stop_hook_can_target_explicit_goal_id(tmp_path: Path) -> None:
@@ -253,3 +377,4 @@ def test_stop_hook_disable_env_allows_without_gate_event(tmp_path: Path) -> None
     assert result.returncode == 0
     assert result.stdout == ""
     assert runtime.list_events(record.goal_plus_id) == before
+    assert _stop_hook_events(search_root) == []
