@@ -313,3 +313,121 @@ def test_codex_transcript_observability_reports_window_delta_without_content(
     assert result["usage"]["assistant_messages"] == 1
     assert result["usage"]["tool_calls"] == 1
     assert "secret" not in json.dumps(result)
+
+
+def test_codex_activity_classifies_loop_behavior_without_persisting_content(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "loop-agent.jsonl"
+    events = [
+        {
+            "timestamp": "2026-07-16T10:00:00Z",
+            "type": "session_meta",
+            "payload": {"id": "thread-loop", "timestamp": "2026-07-16T10:00:00Z"},
+        },
+        {
+            "timestamp": "2026-07-16T10:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "input": (
+                    "const hits = ALL_TOOLS.filter(x => "
+                    "/search_get_agent_context|search_get_global_plan/.test(x.name));"
+                ),
+            },
+        },
+        {
+            "timestamp": "2026-07-16T10:00:02Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "input": (
+                    "const r = await tools.mcp__goal_plus__"
+                    "search_get_agent_context({agent_session_id:'agent-secret'});"
+                ),
+            },
+        },
+        {
+            "timestamp": "2026-07-16T10:00:03Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "input": (
+                    "const r = await tools.mcp__goal_plus__"
+                    "search_get_global_evidence({agent_session_id:'agent-secret'});"
+                ),
+            },
+        },
+        {
+            "timestamp": "2026-07-16T10:00:04Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "apply_patch",
+                "input": "*** Begin Patch\nsecret source change",
+            },
+        },
+        {
+            "timestamp": "2026-07-16T10:00:05Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": ""}],
+            },
+        },
+        {
+            "timestamp": "2026-07-16T10:00:06Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": "Best remains 2,588 cycles",
+            },
+        },
+        {
+            "timestamp": "2026-07-16T10:00:07Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": "Best remains 2,588 cycles",
+            },
+        },
+        {
+            "timestamp": "2026-07-16T10:00:08Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": "I cannot continue this secret direction",
+            },
+        },
+    ]
+    path.write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    result = collect_codex_transcript_observability(path)
+    activity = result["activity"]
+
+    assert activity["tool_calls_by_category"] == {
+        "context": 1,
+        "edit_capable": 1,
+        "global_evidence": 1,
+        "other": 1,
+    }
+    assert activity["assistant_messages_by_class"] == {
+        "best_remains": 2,
+        "cannot_continue": 1,
+        "duplicate": 1,
+        "empty": 1,
+    }
+    serialized = json.dumps(result)
+    assert "2,588" not in serialized
+    assert "agent-secret" not in serialized
+    assert "secret source change" not in serialized

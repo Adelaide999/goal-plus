@@ -1886,6 +1886,7 @@ def test_codex_continue_agent_session_uses_bound_worker_and_budget(tmp_path: Pat
     assert continued.launch["tool"] == "followup_task"
     assert continued.launch["target"] == "search_agent_0001"
     assert continued.launch["budget_control"]["max_runtime_seconds"] == 900
+    assert continued.counters["resume_dispatches"] == 1
     assert "理论或结构限制" in continued.launch["message"]
     assert "返回前，在候选工作区创建 `.tmp/handoff.json`" in continued.launch["message"]
 
@@ -1934,6 +1935,7 @@ def test_pi_rpc_continue_agent_session_reuses_native_session(tmp_path: Path) -> 
     assert continued.agent_session_id == session.agent_session_id
     assert continued.launch["session_id"] == session.agent_session_id
     assert continued.launch["continuation"] == "native_session"
+    assert continued.counters["resume_dispatches"] == 1
     assert continued.launch["metrics_baseline"]["last_entry_id"] == "entry_3"
     assert "continue_existing_agent_session=true" in continued.launch["prompt"]
     context = runtime.get_agent_context(session.agent_session_id)
