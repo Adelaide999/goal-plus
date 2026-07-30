@@ -251,6 +251,20 @@ def build_run_statistics(
     process_passed = sum(iteration.process_passed is True for iteration in iterations)
     process_failed = sum(iteration.process_passed is False for iteration in iterations)
     process_unknown = len(iterations) - process_passed - process_failed
+    candidates_completed_with_result = sum(
+        bool(candidate.iterations) for candidate in candidates
+    )
+    results_kept = sum(iteration.disposition == "keep" for iteration in iterations)
+    results_rejected = sum(
+        iteration.disposition in {"discard", "failure"} for iteration in iterations
+    )
+    same_session_resumes = sum(
+        int(session.counters.get("resume_dispatches", 0) or 0)
+        for session in sessions
+    )
+    redispatch_resumes = sum(
+        bool(session.directive.get("state_level_resume")) for session in sessions
+    )
     promotion_reports = [
         candidate.promotion_report
         for candidate in candidates
@@ -464,6 +478,17 @@ def build_run_statistics(
             "models": _counter(models),
             "terminal_states": _counter(terminal_states),
         },
+        "activity": {
+            "candidates_submitted": len(candidates),
+            "candidates_completed_with_result": candidates_completed_with_result,
+            "results_total": len(iterations),
+            "results_kept": results_kept,
+            "results_rejected": results_rejected,
+            "results_unsettled": len(iterations) - results_kept - results_rejected,
+            "agent_resumes": same_session_resumes + redispatch_resumes,
+            "same_session_resumes": same_session_resumes,
+            "redispatch_resumes": redispatch_resumes,
+        },
         "lineage": _lineage_statistics(candidates),
         "selection": {
             "selected": run.selected_candidate_id is not None,
@@ -531,6 +556,7 @@ def build_run_statistics(
 def aggregate_run_statistics(statistics: Iterable[dict[str, Any] | None]) -> dict[str, Any]:
     records = [record for record in statistics if isinstance(record, dict)]
     workers = [record.get("workers", {}) for record in records]
+    activity = [record.get("activity", {}) for record in records]
     verifiers = [record.get("verifiers", {}) for record in records]
     scores = [record.get("scores", {}) for record in records]
     selection = [record.get("selection", {}) for record in records]
@@ -554,6 +580,20 @@ def aggregate_run_statistics(statistics: Iterable[dict[str, Any] | None]) -> dic
                 "successful_sessions",
                 "timed_out",
                 "runner_failed",
+            )
+        },
+        "activity": {
+            key: sum(int(item.get(key) or 0) for item in activity)
+            for key in (
+                "candidates_submitted",
+                "candidates_completed_with_result",
+                "results_total",
+                "results_kept",
+                "results_rejected",
+                "results_unsettled",
+                "agent_resumes",
+                "same_session_resumes",
+                "redispatch_resumes",
             )
         },
         "verifiers": {

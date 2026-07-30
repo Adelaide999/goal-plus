@@ -8,12 +8,19 @@ import pytest
 from goal_plus.goal_plus import FileGoalPlusRuntime
 from goal_plus.models import GoalPlusRecord, IterationRecord, SearchSpec
 from goal_plus.reporting import (
+    _build_loop_agent_statistics,
+    _build_stop_hook_statistics,
     _build_timeline,
+    _duration,
     _epoch,
+    _render_loop_agent_statistics,
+    _render_stop_hook_statistics,
     _render_timeline,
     _search_trajectory_payload,
     build_html_report_data,
     render_html_report,
+    render_report_document,
+    write_html_report,
 )
 from goal_plus.runtime import FileSearchRuntime
 
@@ -52,6 +59,250 @@ def _write_stop_hook_event(
         json.dumps(payload),
         encoding="utf-8",
     )
+
+
+def test_stop_hook_statistics_tolerate_corrupt_files_and_invalid_durations(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".gp"
+    goal_id = "gp_123"
+    _write_stop_hook_event(
+        root,
+        "hook_valid",
+        goal_plus_id=goal_id,
+        duration_ms=2.5,
+    )
+    _write_stop_hook_event(
+        root,
+        "hook_negative",
+        goal_plus_id=goal_id,
+        duration_ms=-1.0,
+    )
+    _write_stop_hook_event(
+        root,
+        "hook_infinite",
+        goal_plus_id=goal_id,
+        duration_ms=float("inf"),
+    )
+    event_dir = root / "host-logs" / "codex-hook-events"
+    (event_dir / "hook_corrupt.json").write_bytes(b"\xff")
+
+    statistics = _build_stop_hook_statistics(
+        root,
+        goal_plus_id=goal_id,
+        run_ids=set(),
+    )
+
+    assert statistics["source_available"] is True
+    assert statistics["events_total"] == 3
+    assert statistics["duration_ms_total"] == 2.5
+    assert {
+        event["invocation_id"]: event["duration_ms"]
+        for event in statistics["events"]
+    } == {
+        "hook_infinite": None,
+        "hook_negative": None,
+        "hook_valid": 2.5,
+    }
+
+
+def test_duration_rounding_never_displays_sixty_seconds() -> None:
+    assert _duration(599.828) == "10m 0s"
+    assert _duration(3599.8) == "1h 0m"
+
+
+def test_stop_hook_statistics_distinguish_missing_source_from_zero(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".gp"
+
+    statistics = _build_stop_hook_statistics(
+        root,
+        goal_plus_id="gp_missing",
+        run_ids={"run_missing"},
+    )
+    html = _render_stop_hook_statistics(statistics)
+
+    assert statistics["source_available"] is False
+    assert statistics["events_total"] == 0
+    assert html.count("Not observed") >= 15
+    assert "Counts cannot be distinguished from zero" in html
+
+
+def test_codex_run_report_uses_canonical_renderer_and_submission_trajectory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "goal_plus.reporting._load_plotly_javascript",
+        lambda: "window.Plotly = {};",
+    )
+    observation = {
+        "schema_version": "0.2",
+        "generated_at": "2026-07-30T12:00:00+08:00",
+        "source_kind": "codex-run-bundle",
+        "run": {
+            "run_id": "codex-terra-medium-case",
+            "task_id": "optimization_task",
+            "agent": "codex",
+            "model": "gpt-5.6-terra",
+            "reasoning_effort": "medium",
+            "codex_versions": ["0.144.1"],
+            "session_ids": ["session-1"],
+            "runtime_seconds": 600.0,
+            "timed_out": True,
+            "termination_reason": "budget_exhausted",
+            "budget_exhausted": True,
+            "terminal_state": "budget_reached",
+            "resume_count": 0,
+        },
+        "result": {
+            "best_pass_rate": 1.0,
+            "best_score": 2460.0,
+            "best_round": "agent-2",
+            "total_rounds": 3,
+            "agent_submissions": 2,
+            "auto_submissions": 1,
+            "outcome_status": "success",
+        },
+        "evaluations": {
+            "metric_name": "score",
+            "metric_direction": "minimize",
+            "best_score": 2460.0,
+            "best_round": "agent-2",
+            "entries": [
+                {
+                    "round": "agent-1",
+                    "kind": "agent",
+                    "score": 5103.0,
+                    "pass_rate": 1.0,
+                    "valid": True,
+                    "passed": 9,
+                    "total_tests": 9,
+                    "summary": "cycles=5103; lower is better",
+                    "at": None,
+                },
+                {
+                    "round": "auto-1",
+                    "kind": "auto",
+                    "score": 5103.0,
+                    "pass_rate": 1.0,
+                    "valid": True,
+                    "passed": 9,
+                    "total_tests": 9,
+                    "summary": "cycles=5103; lower is better",
+                    "at": "2026-07-30T12:05:00",
+                },
+                {
+                    "round": "agent-2",
+                    "kind": "agent",
+                    "score": 2460.0,
+                    "pass_rate": 1.0,
+                    "valid": True,
+                    "passed": 9,
+                    "total_tests": 9,
+                    "summary": "cycles=2460; lower is better",
+                    "at": None,
+                },
+            ],
+        },
+        "hooks": {
+            "stop": {
+                "started": 691,
+                "blocked": 691,
+                "completed_or_allowed": 0,
+                "other_terminal_statuses": 0,
+                "blocked_per_agent_hour": 386.4,
+                "blocked_output_progress_bins": [10, 20, 30],
+            },
+            "subagent_stop": {
+                "started": 0,
+                "blocked": 0,
+                "completed_or_allowed": 0,
+                "other_terminal_statuses": 0,
+            },
+        },
+        "run_log": {
+            "first_timestamp": "2026-07-30 12:00:00,000",
+            "last_timestamp": "2026-07-30 12:10:00,000",
+        },
+        "availability": {
+            "per_event_wall_clock_timestamps": False,
+            "stop_hook_active": False,
+            "token_usage": False,
+            "reason": "Persisted human output has no per-hook timestamps.",
+        },
+        "warnings": [],
+        "evidence": {
+            "agent_output": str(tmp_path / "agent_output.txt"),
+            "evaluation_history": str(tmp_path / "run_history.json"),
+        },
+    }
+
+    html = render_report_document(
+        {
+            "schema_version": 1,
+            "report_kind": "codex-run",
+            "data": observation,
+        }
+    )
+
+    assert 'data-report-schema="codex-observability-report/v1"' in html
+    assert "Codex Execution Report" in html
+    assert "Codex Execution Timeline" in html
+    assert "Submission Score Trajectory" in html
+    assert "data-search-trajectory=" in html
+    assert "agent submissions" in html
+    assert "auto submissions" in html
+    assert "Blocked Stop Distribution" in html
+    assert "Top-level Stop" in html
+    assert "Budget reached" in html
+    assert "Successful · resumes 0" in html
+    assert "Budget Exhausted" in html
+    assert "Raw timeout flag" in html
+    assert "Codex execution · budget reached" in html
+    assert "691" in html
+    assert "run_history.json" in html
+    assert "Goal And Completion" not in html
+    assert "EdgeBench" not in html
+
+    observation["goal_plus"] = {
+        "source_available": True,
+        "overall_status": "incomplete",
+        "records_total": 1,
+        "active_records": 1,
+        "terminal_records": 0,
+        "reports_generated": 0,
+        "records": [
+            {
+                "goal_plus_id": "gp_0001",
+                "status": "active",
+                "phase": "search",
+                "next_action": "drive_search_run",
+                "result_recorded_at": None,
+                "selected_candidate_id": None,
+                "search_tasks": [
+                    {
+                        "run_id": "run_promoted",
+                        "state": "promoted",
+                    }
+                ],
+            }
+        ],
+    }
+    goal_plus_html = render_report_document(
+        {
+            "schema_version": 1,
+            "report_kind": "codex-run",
+            "data": observation,
+        }
+    )
+    assert "Goal Plus Finalization Evidence" in goal_plus_html
+    assert "Goal Plus finalization" in goal_plus_html
+    assert "Incomplete" in goal_plus_html
+    assert "gp_0001" in goal_plus_html
+    assert "run_promoted=promoted" in goal_plus_html
+    assert "valid promoted result does not make an active Goal" in goal_plus_html
 
 
 def test_search_report_generates_self_contained_html_with_multi_search_timeline(
@@ -132,8 +383,12 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
 
     with pytest.raises(RuntimeError, match="before every linked Goal Plus record"):
         search.report(second_run)
+    direct_html_path = root / "debug-active-report.html"
+    with pytest.raises(RuntimeError, match="before the linked record reaches"):
+        write_html_report(root, second_run, direct_html_path)
     assert not (root / "runs" / second_run / "report.md").exists()
     assert not (root / "runs" / second_run / "report.html").exists()
+    assert not direct_html_path.exists()
 
     goals.set_status(
         goal.goal_plus_id,
@@ -170,6 +425,7 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
     assert "Verifier activity" in html
     assert "Complete normalized report data" in html
     assert "Stop Hook Activity" in html
+    assert "Loop Agent Stop Outcomes" in html
     assert "Top-level Stop" in html
     assert "Subagent Breakdown" in html
     assert session.agent_session_id in html
@@ -204,6 +460,187 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
     fallback_html = render_html_report(report_data)
     assert "data-search-trajectory=" not in fallback_html
     assert 'class="score-step"' in fallback_html
+
+
+def test_loop_agent_statistics_distinguish_productive_and_stalled_tails() -> None:
+    run_id = "run_loop"
+
+    def tool_events(category: str, count: int) -> list[dict[str, object]]:
+        return [
+            {
+                "at": "2026-01-01T00:00:30Z",
+                "kind": "tool_call",
+                "category": category,
+            }
+            for _ in range(count)
+        ]
+
+    def message_events(
+        classification: str,
+        count: int,
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "at": "2026-01-01T00:00:30Z",
+                "kind": "assistant_message",
+                "classification": classification,
+                "duplicate": index > 0,
+            }
+            for index in range(count)
+        ]
+
+    sessions = [
+        {
+            "host": "codex",
+            "agent_session_id": "agent_c001",
+            "candidate_id": "c001",
+            "activity": {
+                "available": True,
+                "events": (
+                    message_events("empty", 37)
+                    + message_events("substantive", 4)
+                ),
+            },
+        },
+        {
+            "host": "codex",
+            "agent_session_id": "agent_c002",
+            "candidate_id": "c002",
+            "activity": {"available": True, "events": []},
+        },
+        {
+            "host": "codex",
+            "agent_session_id": "agent_c003",
+            "candidate_id": "c003",
+            "activity": {
+                "available": True,
+                "events": (
+                    tool_events("context", 137)
+                    + tool_events("global_evidence", 143)
+                ),
+            },
+        },
+        {
+            "host": "codex",
+            "agent_session_id": "agent_c004",
+            "candidate_id": "c004",
+            "activity": {
+                "available": True,
+                "events": (
+                    tool_events("context", 1)
+                    + message_events("best_remains", 4)
+                ),
+            },
+        },
+    ]
+    candidates = [
+        {
+            "candidate_id": candidate_id,
+            "selected": candidate_id == "c002",
+            "best_score": score,
+            "iterations": (
+                [
+                    {
+                        "iteration": 1,
+                        "agent_session_id": f"agent_{candidate_id}",
+                        "score": score,
+                        "process_passed": True,
+                        "git_head": f"{candidate_id}-base",
+                        "created_at": "2026-01-01T00:00:05Z",
+                    }
+                ]
+                if candidate_id != "c002"
+                else [
+                    {
+                        "iteration": 1,
+                        "agent_session_id": "agent_c002",
+                        "score": 2900.0,
+                        "process_passed": True,
+                        "git_head": "c002-rev-1",
+                        "created_at": "2026-01-01T00:00:12Z",
+                    },
+                    {
+                        "iteration": 2,
+                        "agent_session_id": "agent_c002",
+                        "score": 2936.0,
+                        "process_passed": True,
+                        "git_head": "c002-rev-2",
+                        "created_at": "2026-01-01T00:00:22Z",
+                    },
+                ]
+            ),
+        }
+        for candidate_id, score in (
+            ("c001", 2500.0),
+            ("c002", 2936.0),
+            ("c003", 2936.0),
+            ("c004", 2588.0),
+        )
+    ]
+    next(
+        candidate
+        for candidate in candidates
+        if candidate["candidate_id"] == "c003"
+    )["iterations"].append(
+        {
+            "iteration": 2,
+            "agent_session_id": None,
+            "score": 2936.0,
+            "process_passed": True,
+            "git_head": "c003-parent-verifier",
+            "created_at": "2026-01-01T00:00:40Z",
+        }
+    )
+    tasks = [
+        {
+            "run_id": run_id,
+            "frozen_spec": {"metric_direction": "maximize"},
+            "sessions": sessions,
+            "candidates": candidates,
+        }
+    ]
+    stop_events = [
+        {
+            "hook_event_name": "SubagentStop",
+            "run_id": run_id,
+            "candidate_id": "c002",
+            "agent_session_id": "agent_c002",
+            "started_at": started_at,
+            "finished_at": started_at,
+            "decision": "block",
+        }
+        for started_at in (
+            "2026-01-01T00:00:10Z",
+            "2026-01-01T00:00:20Z",
+        )
+    ]
+
+    statistics = _build_loop_agent_statistics(
+        tasks,
+        {"events": stop_events, "subagents": []},
+    )
+    rows = {row["candidate_id"]: row for row in statistics["rows"]}
+
+    assert rows["c002"]["productive_blocked_stops"] == 2
+    assert rows["c002"]["verified_revision_changes_after_blocked_stops"] == 2
+    assert rows["c002"]["improvements_after_blocked_stops"] == 2
+    assert rows["c002"]["tail_signal"] == "quiet"
+    assert rows["c003"]["post_last_verifier"]["context_calls"] == 137
+    assert rows["c003"]["post_last_verifier"]["global_evidence_calls"] == 143
+    assert rows["c003"]["tail_signal"] == "polling-only"
+    assert rows["c004"]["tail_signal"] == "answer-only"
+    assert rows["c001"]["post_last_verifier"]["assistant_messages"] == 41
+    assert rows["c001"]["post_last_verifier"]["empty_messages"] == 37
+    assert rows["c001"]["tail_signal"] == "empty-output"
+
+    html = _render_loop_agent_statistics(statistics)
+    assert "137 total / 137 tail" in html
+    assert "143 total / 143 tail" in html
+    assert "41 messages / 37 empty" in html
+    assert "polling-only" in html
+    assert "answer-only" in html
+    assert "empty-output" in html
+    assert html.count("productive") >= 2
 
 
 def test_search_trajectory_payload_keeps_parallel_candidate_loops() -> None:
@@ -539,6 +976,15 @@ def test_pi_native_session_resume_renders_distinct_process_dispatches(
         entry_count=2,
         cumulative_input=20,
     )
+    _write_stop_hook_event(
+        root,
+        "hook_resume",
+        hook_event_name="SubagentStop",
+        run_id=run_id,
+        candidate_id=candidate.candidate_id,
+        agent_session_id=session.agent_session_id,
+        decision="block",
+    )
     record = search._load_candidate_record(run_id, candidate.candidate_id)
     record.iterations = [
         IterationRecord(
@@ -547,6 +993,7 @@ def test_pi_native_session_resume_renders_distinct_process_dispatches(
             process_passed=True,
             hypothesis="parent baseline",
             summary="parent baseline",
+            disposition="discard",
             created_at="2026-07-19T00:00:10Z",
         ),
         IterationRecord(
@@ -556,6 +1003,7 @@ def test_pi_native_session_resume_renders_distinct_process_dispatches(
             process_passed=True,
             hypothesis="worker improvement",
             summary="worker improvement",
+            disposition="keep",
             created_at="2026-07-19T00:00:25Z",
         ),
     ]
@@ -563,6 +1011,18 @@ def test_pi_native_session_resume_renders_distinct_process_dispatches(
 
     data = build_html_report_data(root, run_id)
     task = data["search_tasks"][0]
+    activity = data["snapshot"]["search_task_aggregate"]["statistics"]["activity"]
+    assert activity == {
+        "candidates_submitted": 1,
+        "candidates_completed_with_result": 1,
+        "results_total": 2,
+        "results_kept": 1,
+        "results_rejected": 1,
+        "results_unsettled": 0,
+        "agent_resumes": 1,
+        "same_session_resumes": 1,
+        "redispatch_resumes": 0,
+    }
     assert len(task["sessions"]) == 2
     assert [item["dispatch_index"] for item in task["sessions"]] == [1, 2]
     assert {item["agent_session_id"] for item in task["sessions"]} == {
@@ -597,6 +1057,13 @@ def test_pi_native_session_resume_renders_distinct_process_dispatches(
     assert "data-metric-score-gain=" not in html
     assert 'data-metric-score-raw="0.000000000"' in html
     assert 'data-metric-score-raw="9.000000000"' in html
+    report_html = render_html_report(data)
+    assert "Candidate Loop Activity" in report_html
+    assert "Candidate Submissions" in report_html
+    assert "Completed With Result" in report_html
+    assert "Rejected Results" in report_html
+    assert "Agent Resumes" in report_html
+    assert "Stop Hook Continue Triggers" in report_html
 
 
 def test_worker_duration_uses_search_scale_not_goal_record_lifecycle() -> None:

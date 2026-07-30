@@ -1311,7 +1311,13 @@ def _handle_stop_event(
         return {
             "decision": "skipped",
             "reason": "no_matching_session" if active else "no_matching_goal",
-            "goal_plus_id": active[0].goal_plus_id if active else None,
+            # An unmatched top-level Stop still belongs to the active Goal Plus
+            # record for diagnostics. A SubagentStop may instead belong to a
+            # standalone or unlinked Search run, so do not attach it to an
+            # arbitrary active goal.
+            "goal_plus_id": (
+                active[0].goal_plus_id if event == "stop" and active else None
+            ),
             "agent_session_id": (
                 candidate_context.get("search_candidate_agent_session_id")
                 if candidate_context is not None

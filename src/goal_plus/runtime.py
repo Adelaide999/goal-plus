@@ -1338,11 +1338,14 @@ class FileSearchRuntime:
             )
         except UnsupportedHostCapability as exc:
             raise RuntimeError(str(exc)) from exc
+        counters = dict(session.counters)
+        counters["resume_dispatches"] = counters.get("resume_dispatches", 0) + 1
         updated = session.model_copy(
             update={
                 "updated_at": utc_timestamp(),
                 "workspace": candidate_record.task.workspace,
                 "launch": launch,
+                "counters": counters,
             }
         )
         self._write_agent_session(updated)

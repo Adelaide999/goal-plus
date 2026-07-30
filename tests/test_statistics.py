@@ -135,6 +135,12 @@ def test_run_statistics_split_worker_parent_usage_and_stable_terminal_time(
         "max_depth": 0,
         "cycles_detected": 0,
     }
+    assert first_snapshot["activity"]["candidates_submitted"] == 1
+    assert first_snapshot["activity"]["candidates_completed_with_result"] == 1
+    assert first_snapshot["activity"]["results_total"] == 2
+    assert first_snapshot["activity"]["agent_resumes"] == 1
+    assert first_snapshot["activity"]["same_session_resumes"] == 0
+    assert first_snapshot["activity"]["redispatch_resumes"] == 1
     assert first_snapshot["selection"]["parent_verified"] is True
     assert first_snapshot["selection"]["survived"] is True
     assert first_snapshot["timing"]["time_to_first_improvement_seconds"] is not None

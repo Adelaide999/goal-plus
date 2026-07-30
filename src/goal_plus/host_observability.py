@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 from goal_plus.codex_pricing import (
@@ -15,6 +17,43 @@ from goal_plus.models import AgentSessionRecord
 
 
 OBSERVABILITY_SCHEMA_VERSION = 2
+CODEX_ACTIVITY_SCHEMA_VERSION = 1
+
+_CODEX_ACTIVITY_TOOL_CATEGORIES = {
+    "search_get_agent_context": "context",
+    "search_get_global_plan": "global_evidence",
+    "search_get_global_evidence": "global_evidence",
+    "search_submit_iteration_plan": "iteration_plan",
+    "search_run_verifier": "verifier",
+}
+_CODEX_ACTIVITY_TOOL_NAME_PATTERN = re.compile(
+    r"(?:^|__)"
+    r"("
+    + "|".join(
+        re.escape(name)
+        for name in sorted(_CODEX_ACTIVITY_TOOL_CATEGORIES, key=len, reverse=True)
+    )
+    + r")$"
+)
+_CODEX_ACTIVITY_EXEC_PATTERN = re.compile(
+    r"\btools\.[A-Za-z0-9_]*"
+    r"("
+    + "|".join(
+        re.escape(name)
+        for name in sorted(_CODEX_ACTIVITY_TOOL_CATEGORIES, key=len, reverse=True)
+    )
+    + r")\s*\("
+)
+_BEST_REMAINS_PATTERN = re.compile(
+    r"(?:\bbest\b.{0,60}\bremains?\b|\bremains?\b.{0,60}\b(?:cycles?|score)\b|"
+    r"最佳.{0,30}(?:仍|保持))",
+    re.IGNORECASE,
+)
+_CANNOT_CONTINUE_PATTERN = re.compile(
+    r"(?:\bcannot continue\b|\bcan['’]?t continue\b|\bunable to continue\b|"
+    r"\bno longer continue\b|无法继续|不能继续)",
+    re.IGNORECASE,
+)
 
 
 def _number(value: Any) -> int | float | None:
@@ -376,6 +415,55 @@ def _usage_delta(
     return result
 
 
+def _codex_activity_tool(payload: dict[str, Any]) -> tuple[str | None, str]:
+    raw_name = payload.get("name")
+    raw_name = raw_name if isinstance(raw_name, str) else ""
+    raw_input = payload.get("input")
+    if not isinstance(raw_input, str):
+        raw_input = payload.get("arguments")
+    raw_input = raw_input if isinstance(raw_input, str) else ""
+    match = _CODEX_ACTIVITY_TOOL_NAME_PATTERN.search(raw_name)
+    if match is None and raw_name == "exec":
+        match = _CODEX_ACTIVITY_EXEC_PATTERN.search(raw_input)
+    if match is not None:
+        logical_name = match.group(1)
+        return logical_name, _CODEX_ACTIVITY_TOOL_CATEGORIES[logical_name]
+    if raw_name == "apply_patch":
+        return "apply_patch", "edit_capable"
+    return None, "other"
+
+
+def _codex_assistant_text(payload: dict[str, Any]) -> str | None:
+    if payload.get("type") != "message" or payload.get("role") != "assistant":
+        return None
+    content = payload.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if not isinstance(text, str):
+            text = item.get("content")
+        if isinstance(text, str):
+            parts.append(text)
+    return "\n".join(parts)
+
+
+def _codex_assistant_class(text: str) -> tuple[str, str]:
+    normalized = " ".join(text.split()).strip()
+    if not normalized:
+        return "empty", ""
+    if _CANNOT_CONTINUE_PATTERN.search(normalized):
+        return "cannot_continue", normalized.casefold()
+    if len(normalized) <= 240 and _BEST_REMAINS_PATTERN.search(normalized):
+        return "best_remains", normalized.casefold()
+    return "substantive", normalized.casefold()
+
+
 def _parse_codex_session(path: Path, *, since: str | None = None) -> dict[str, Any]:
     result: dict[str, Any] = {
         "session_id": None,
@@ -395,6 +483,7 @@ def _parse_codex_session(path: Path, *, since: str | None = None) -> dict[str, A
         "assistant_messages": 0,
         "tool_calls": 0,
         "tool_results": 0,
+        "activity": None,
         "errors": [],
     }
     first_epoch: float | None = None
@@ -411,6 +500,10 @@ def _parse_codex_session(path: Path, *, since: str | None = None) -> dict[str, A
     unpriced_calls = 0
     priced_models: set[str] = set()
     priced_service_tiers: set[str] = set()
+    activity_events: list[dict[str, Any]] = []
+    activity_tool_counts: Counter[str] = Counter()
+    activity_message_counts: Counter[str] = Counter()
+    seen_assistant_messages: set[str] = set()
     try:
         stream = path.open("r", encoding="utf-8")
     except OSError as exc:
@@ -452,6 +545,16 @@ def _parse_codex_session(path: Path, *, since: str | None = None) -> dict[str, A
                 if message_type == "token_count":
                     info = payload.get("info")
                     usage, context = _codex_usage(info)
+                    if in_window and timestamp:
+                        activity_events.append(
+                            {
+                                "at": timestamp,
+                                "kind": "context",
+                                "tokens": context.get("tokens"),
+                                "context_window": context.get("context_window"),
+                                "percent": context.get("percent"),
+                            }
+                        )
                     info = info if isinstance(info, dict) else {}
                     total_usage = info.get("total_token_usage")
                     total_usage = total_usage if isinstance(total_usage, dict) else {}
@@ -509,8 +612,41 @@ def _parse_codex_session(path: Path, *, since: str | None = None) -> dict[str, A
                     response_type == "message" and payload.get("role") == "assistant"
                 ):
                     result["assistant_messages"] += 1
+                    assistant_text = _codex_assistant_text(payload)
+                    if assistant_text is not None:
+                        classification, normalized = _codex_assistant_class(
+                            assistant_text
+                        )
+                        duplicate = bool(
+                            normalized and normalized in seen_assistant_messages
+                        )
+                        if normalized:
+                            seen_assistant_messages.add(normalized)
+                        activity_message_counts[classification] += 1
+                        if duplicate:
+                            activity_message_counts["duplicate"] += 1
+                        if timestamp:
+                            activity_events.append(
+                                {
+                                    "at": timestamp,
+                                    "kind": "assistant_message",
+                                    "classification": classification,
+                                    "duplicate": duplicate,
+                                }
+                            )
                 elif response_type in {"function_call", "custom_tool_call"}:
                     result["tool_calls"] += 1
+                    logical_name, category = _codex_activity_tool(payload)
+                    activity_tool_counts[category] += 1
+                    if timestamp:
+                        activity_events.append(
+                            {
+                                "at": timestamp,
+                                "kind": "tool_call",
+                                "category": category,
+                                "tool_name": logical_name,
+                            }
+                        )
                 elif response_type in {"function_call_output", "custom_tool_call_output"}:
                     result["tool_results"] += 1
 
@@ -552,6 +688,15 @@ def _parse_codex_session(path: Path, *, since: str | None = None) -> dict[str, A
             ),
         }
         result["usage"] = usage
+    result["activity"] = {
+        "schema_version": CODEX_ACTIVITY_SCHEMA_VERSION,
+        "available": True,
+        "events": activity_events,
+        "tool_calls_by_category": dict(sorted(activity_tool_counts.items())),
+        "assistant_messages_by_class": dict(
+            sorted(activity_message_counts.items())
+        ),
+    }
     return result
 
 
@@ -582,6 +727,7 @@ def collect_codex_transcript_observability(
         },
         "usage": parsed["usage"],
         "context": parsed["context"],
+        "activity": parsed["activity"],
         "artifacts": {"session_file": str(path)},
         "errors": parsed["errors"],
     }
@@ -626,6 +772,8 @@ def collect_codex_observability(
         payload["usage"] = parsed["usage"]
     if isinstance(parsed["context"], dict):
         payload["context"] = parsed["context"]
+    if isinstance(parsed["activity"], dict):
+        payload["activity"] = parsed["activity"]
     payload["identity"]["external_id"] = (
         payload["identity"]["external_id"] or parsed["session_id"]
     )

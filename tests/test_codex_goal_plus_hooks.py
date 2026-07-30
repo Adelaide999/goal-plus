@@ -710,6 +710,54 @@ def test_search_candidate_stop_is_owned_by_its_verifier_not_parent_next_action(
     assert counters["stop"] == 1
 
 
+def test_unlinked_search_candidate_stop_does_not_inherit_unrelated_active_goal(
+    tmp_path: Path,
+) -> None:
+    search_runtime, run_id, candidate_id, agent_session_id = _codex_search_worker(
+        tmp_path
+    )
+    search_root = search_runtime.root_dir
+    goal_runtime = FileGoalPlusRuntime(search_root)
+    unrelated = goal_runtime.create_goal("Unrelated active Goal Plus task")
+    goal_runtime.activate_session(
+        unrelated.goal_plus_id,
+        {"host": "codex", "session_id": "parent-session"},
+    )
+    agent_identity = "standalone-search-worker"
+
+    mapped = _run_hook(
+        tmp_path,
+        search_root,
+        {
+            "hook_event_name": "PostToolUse",
+            "agent_id": agent_identity,
+            "agent_type": "search_candidate_agent",
+            "tool_name": "mcp__goal-plus__search_get_agent_context",
+            "tool_input": {"agent_session_id": agent_session_id},
+        },
+    )
+    assert mapped.returncode == 0
+
+    stopped = _run_hook(
+        tmp_path,
+        search_root,
+        {
+            "hook_event_name": "SubagentStop",
+            "session_id": "child-session",
+            "agent_id": agent_identity,
+        },
+    )
+
+    assert stopped.returncode == 0
+    assert stopped.stdout == ""
+    [event] = _stop_hook_events(search_root)
+    assert event["decision"] == "skipped"
+    assert event["goal_plus_id"] is None
+    assert event["agent_session_id"] == agent_session_id
+    assert event["run_id"] == run_id
+    assert event["candidate_id"] == candidate_id
+
+
 def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
     tmp_path: Path,
 ) -> None:
