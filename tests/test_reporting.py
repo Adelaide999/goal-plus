@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,40 @@ from goal_plus.reporting import (
 from goal_plus.runtime import FileSearchRuntime
 
 from tests._runtime_helpers import make_project, spec_for
+
+
+def _write_stop_hook_event(
+    root: Path,
+    invocation_id: str,
+    **values: object,
+) -> None:
+    event_dir = root / "host-logs" / "codex-hook-events"
+    event_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "invocation_id": invocation_id,
+        "hook_event_name": "Stop",
+        "started_at": "2026-01-01T00:00:00Z",
+        "finished_at": "2026-01-01T00:00:00.010000Z",
+        "duration_ms": 10.0,
+        "outcome": "completed",
+        "decision": "block",
+        "reason": "active goal",
+        "goal_plus_id": None,
+        "session_id": "session-main",
+        "host_agent_id": None,
+        "agent_session_id": None,
+        "run_id": None,
+        "candidate_id": None,
+        "stop_reason": "end_turn",
+        "error_type": None,
+        "error": None,
+        **values,
+    }
+    (event_dir / f"{invocation_id}.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
 
 
 def test_search_report_generates_self_contained_html_with_multi_search_timeline(
@@ -50,6 +85,48 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
     goal = goals.create_goal("Optimize <script>alert('unsafe')</script> safely")
     goals.link_search_run(goal.goal_plus_id, frozen.frozen_spec_id, first_run)
     goals.link_search_run(goal.goal_plus_id, frozen.frozen_spec_id, second_run)
+    _write_stop_hook_event(
+        root,
+        "hook_stop",
+        goal_plus_id=goal.goal_plus_id,
+    )
+    _write_stop_hook_event(
+        root,
+        "hook_subagent_a",
+        hook_event_name="SubagentStop",
+        goal_plus_id=goal.goal_plus_id,
+        host_agent_id="codex-child-a",
+        agent_session_id=session.agent_session_id,
+        run_id=second_run,
+        candidate_id=candidate.candidate_id,
+        decision="block",
+        duration_ms=4.5,
+    )
+    _write_stop_hook_event(
+        root,
+        "hook_subagent_a_early",
+        hook_event_name="SubagentStop",
+        goal_plus_id=goal.goal_plus_id,
+        host_agent_id="codex-child-a",
+        decision="allow",
+        duration_ms=1.5,
+    )
+    _write_stop_hook_event(
+        root,
+        "hook_subagent_b",
+        hook_event_name="SubagentStop",
+        goal_plus_id=goal.goal_plus_id,
+        host_agent_id="codex-child-b",
+        decision="allow",
+        duration_ms=2.5,
+    )
+    _write_stop_hook_event(
+        root,
+        "hook_unrelated",
+        goal_plus_id="gp_9999",
+        run_id=second_run,
+        decision="error",
+    )
 
     with pytest.raises(RuntimeError, match="before every linked Goal Plus record"):
         search.report(second_run)
@@ -90,6 +167,13 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
     assert "Unavailable Metrics Audit" not in html
     assert "Verifier activity" in html
     assert "Complete normalized report data" in html
+    assert "Stop Hook Activity" in html
+    assert "Top-level Stop" in html
+    assert "Subagent Breakdown" in html
+    assert session.agent_session_id in html
+    assert "codex-child-a" in html
+    assert "codex-child-b" in html
+    assert "hook_unrelated" not in html
     assert "Complete Search Trajectory" in html
     assert "data-search-trajectory=" in html
     assert "window.Plotly={newPlot" in html
@@ -102,7 +186,20 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
     assert "<script src=" not in html
 
     monkeypatch.setattr("goal_plus.reporting._load_plotly_javascript", lambda: None)
-    fallback_html = render_html_report(build_html_report_data(root, second_run))
+    report_data = build_html_report_data(root, second_run)
+    hook_stats = report_data["stop_hook_statistics"]
+    assert hook_stats["events_total"] == 4
+    assert hook_stats["by_event"]["Stop"]["events_total"] == 1
+    assert hook_stats["by_event"]["SubagentStop"]["events_total"] == 3
+    assert hook_stats["by_decision"]["block"] == 2
+    assert hook_stats["by_decision"]["allow"] == 2
+    assert [row["identity"] for row in hook_stats["subagents"]] == [
+        session.agent_session_id,
+        "codex-child-b",
+    ]
+    assert hook_stats["subagents"][0]["events_total"] == 2
+    assert hook_stats["subagents"][0]["decisions"]["allow"] == 1
+    fallback_html = render_html_report(report_data)
     assert "data-search-trajectory=" not in fallback_html
     assert 'class="score-step"' in fallback_html
 

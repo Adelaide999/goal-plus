@@ -24,6 +24,8 @@ from goal_plus.runtime import load_json
 
 
 REPORT_SCHEMA_VERSION = 1
+STOP_HOOK_EVENT_NAMES = ("Stop", "SubagentStop")
+STOP_HOOK_DECISIONS = ("block", "allow", "skipped", "error", "unknown")
 
 
 _REPORT_CSS = """
@@ -150,7 +152,13 @@ h3 { margin-bottom: 12px; font-size: 14px; line-height: 20px; }
 }
 .section-nav a:hover { color: var(--accent); border-color: var(--accent); }
 main { padding-top: 30px; padding-bottom: 72px; }
-.report-section { padding: 0 0 40px; margin: 0 0 40px; border-bottom: 1px solid var(--border); }
+main.wrap { overflow-x: clip; }
+.report-section {
+  scroll-margin-top: 58px;
+  padding: 0 0 40px;
+  margin: 0 0 40px;
+  border-bottom: 1px solid var(--border);
+}
 .section-kicker { margin-bottom: 14px; color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
 .kpi-grid {
   display: grid;
@@ -322,8 +330,16 @@ main { padding-top: 30px; padding-bottom: 72px; }
 .subsection:first-child { border-top: 0; }
 details.summary-block > summary { cursor: pointer; list-style: none; }
 details.summary-block > summary::-webkit-details-marker { display: none; }
-.table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; }
+.table-scroll {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  contain: inline-size;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
 table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 12px; }
+.hook-table { min-width: 1040px; }
 th { background: var(--surface-subtle); color: var(--muted); font-size: 10px; text-align: left; text-transform: uppercase; }
 th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
 tbody tr:last-child td { border-bottom: 0; }
@@ -845,6 +861,13 @@ def _duration(value: Any) -> str:
     return f"{int(hours)}h {int(minutes)}m"
 
 
+def _milliseconds(value: Any) -> str:
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return "Not observed"
+    formatted = f"{float(value):,.3f}".rstrip("0").rstrip(".")
+    return f"{formatted} ms"
+
+
 def _number(value: Any, *, digits: int = 2) -> str:
     if not isinstance(value, int | float) or isinstance(value, bool):
         return "Not observed"
@@ -867,9 +890,26 @@ def _cost(value: Any) -> str:
 
 def _status_class(value: Any) -> str:
     normalized = str(value or "").lower()
-    if normalized in {"complete", "completed", "promoted", "passed", "evaluated", "success"}:
+    if normalized in {
+        "allow",
+        "complete",
+        "completed",
+        "promoted",
+        "passed",
+        "evaluated",
+        "success",
+    }:
         return "success"
-    if normalized in {"failed", "failure", "aborted", "blocked", "timed_out", "timeout"}:
+    if normalized in {
+        "block",
+        "error",
+        "failed",
+        "failure",
+        "aborted",
+        "blocked",
+        "timed_out",
+        "timeout",
+    }:
         return "failure"
     if normalized in {"active", "running", "waiting_for_workers", "ready_to_promote", "planned", "started"}:
         return "warning"
@@ -1615,6 +1655,199 @@ def _timeline_payload(
     }
 
 
+def _stop_hook_decision_counts() -> dict[str, int]:
+    return {decision: 0 for decision in STOP_HOOK_DECISIONS}
+
+
+def _normalized_stop_hook_event(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    event_name = payload.get("hook_event_name")
+    if event_name not in STOP_HOOK_EVENT_NAMES:
+        return None
+    decision = payload.get("decision")
+    if decision not in STOP_HOOK_DECISIONS:
+        decision = "unknown"
+    duration_ms = payload.get("duration_ms")
+    if not isinstance(duration_ms, int | float) or isinstance(duration_ms, bool):
+        duration_ms = None
+    text_fields = (
+        "invocation_id",
+        "started_at",
+        "finished_at",
+        "outcome",
+        "reason",
+        "goal_plus_id",
+        "session_id",
+        "host_agent_id",
+        "agent_session_id",
+        "run_id",
+        "candidate_id",
+        "stop_reason",
+        "error_type",
+        "error",
+    )
+    event = {
+        key: value if isinstance((value := payload.get(key)), str) and value else None
+        for key in text_fields
+    }
+    event.update(
+        {
+            "schema_version": payload.get("schema_version"),
+            "hook_event_name": event_name,
+            "decision": decision,
+            "duration_ms": duration_ms,
+        }
+    )
+    return event
+
+
+def _build_stop_hook_statistics(
+    root: Path,
+    *,
+    goal_plus_id: str | None,
+    run_ids: set[str],
+) -> dict[str, Any]:
+    events = []
+    event_dir = root / "host-logs" / "codex-hook-events"
+    for path in sorted(event_dir.glob("*.json")):
+        try:
+            event = _normalized_stop_hook_event(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+        except (OSError, json.JSONDecodeError):
+            continue
+        if event is None:
+            continue
+        event_goal_id = event.get("goal_plus_id")
+        matches_goal = goal_plus_id is not None and event_goal_id == goal_plus_id
+        matches_run = event.get("run_id") in run_ids
+        if goal_plus_id is not None:
+            included = matches_goal or (event_goal_id is None and matches_run)
+        else:
+            included = matches_run
+        if not included:
+            continue
+        events.append(event)
+
+    events.sort(
+        key=lambda event: (
+            _epoch(event.get("started_at")) or float("inf"),
+            str(event.get("invocation_id") or ""),
+        )
+    )
+    by_decision = _stop_hook_decision_counts()
+    by_event = {
+        event_name: {
+            "events_total": 0,
+            "duration_ms_total": 0.0,
+            "decisions": _stop_hook_decision_counts(),
+        }
+        for event_name in STOP_HOOK_EVENT_NAMES
+    }
+    subagents: dict[str, dict[str, Any]] = {}
+    host_agent_sessions = {
+        str(event["host_agent_id"]): str(event["agent_session_id"])
+        for event in events
+        if event["hook_event_name"] == "SubagentStop"
+        and event.get("host_agent_id")
+        and event.get("agent_session_id")
+    }
+    duration_ms_total = 0.0
+    for event in events:
+        event_name = str(event["hook_event_name"])
+        decision = str(event["decision"])
+        duration_ms = float(event.get("duration_ms") or 0.0)
+        duration_ms_total += duration_ms
+        by_decision[decision] += 1
+        by_event[event_name]["events_total"] += 1
+        by_event[event_name]["duration_ms_total"] += duration_ms
+        by_event[event_name]["decisions"][decision] += 1
+        if event_name != "SubagentStop":
+            continue
+        agent_session_id = event.get("agent_session_id")
+        host_agent_id = event.get("host_agent_id")
+        if not agent_session_id and host_agent_id:
+            agent_session_id = host_agent_sessions.get(str(host_agent_id))
+        if agent_session_id:
+            identity = str(agent_session_id)
+            identity_source = "agent_session_id"
+        elif host_agent_id:
+            identity = str(host_agent_id)
+            identity_source = "host_agent_id"
+        else:
+            identity = "unresolved"
+            identity_source = "unresolved"
+        key = f"{identity_source}:{identity}"
+        summary = subagents.setdefault(
+            key,
+            {
+                "identity": identity,
+                "identity_source": identity_source,
+                "agent_session_id": agent_session_id,
+                "host_agent_ids": set(),
+                "run_ids": set(),
+                "candidate_ids": set(),
+                "events_total": 0,
+                "duration_ms_total": 0.0,
+                "decisions": _stop_hook_decision_counts(),
+                "last_event_at": None,
+            },
+        )
+        for field, target in (
+            ("host_agent_id", "host_agent_ids"),
+            ("run_id", "run_ids"),
+            ("candidate_id", "candidate_ids"),
+        ):
+            value = event.get(field)
+            if isinstance(value, str) and value:
+                summary[target].add(value)
+        summary["events_total"] += 1
+        summary["duration_ms_total"] += duration_ms
+        summary["decisions"][decision] += 1
+        observed_at = event.get("finished_at") or event.get("started_at")
+        if observed_at and (
+            summary["last_event_at"] is None
+            or (_epoch(observed_at) or float("-inf"))
+            > (_epoch(summary["last_event_at"]) or float("-inf"))
+        ):
+            summary["last_event_at"] = observed_at
+
+    subagent_rows = []
+    for summary in subagents.values():
+        subagent_rows.append(
+            {
+                **summary,
+                "host_agent_ids": sorted(summary["host_agent_ids"]),
+                "run_ids": sorted(summary["run_ids"]),
+                "candidate_ids": sorted(summary["candidate_ids"]),
+                "duration_ms_total": round(summary["duration_ms_total"], 3),
+            }
+        )
+    subagent_rows.sort(key=lambda item: (item["identity_source"], item["identity"]))
+    captured_through = max(
+        (
+            observed_at
+            for event in events
+            if (observed_at := event.get("finished_at") or event.get("started_at"))
+        ),
+        key=lambda value: _epoch(value) or float("-inf"),
+        default=None,
+    )
+    for summary in by_event.values():
+        summary["duration_ms_total"] = round(summary["duration_ms_total"], 3)
+    return {
+        "schema_version": 1,
+        "events_total": len(events),
+        "duration_ms_total": round(duration_ms_total, 3),
+        "captured_through": captured_through,
+        "by_event": by_event,
+        "by_decision": by_decision,
+        "subagents": subagent_rows,
+        "events": events,
+    }
+
+
 def build_html_report_data(root_dir: Path | str, run_id: str) -> dict[str, Any]:
     root = Path(root_dir).resolve()
     goal = _find_goal_record(root, run_id)
@@ -1634,6 +1867,16 @@ def build_html_report_data(root_dir: Path | str, run_id: str) -> dict[str, Any]:
     goal_runtime = FileGoalPlusRuntime(root)
     goal_events = goal_runtime.list_events(goal_id) if goal_id is not None else []
     timeline = _build_timeline(goal, goal_events, tasks)
+    stop_hook_statistics = _build_stop_hook_statistics(
+        root,
+        goal_plus_id=goal_id,
+        run_ids={
+            str(task["run_id"])
+            for task in tasks
+            if isinstance(task.get("run_id"), str) and task.get("run_id")
+        }
+        | {run_id},
+    )
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
         "generated_at": snapshot.get("snapshot_at"),
@@ -1642,6 +1885,7 @@ def build_html_report_data(root_dir: Path | str, run_id: str) -> dict[str, Any]:
         "snapshot": snapshot,
         "search_tasks": tasks,
         "timeline": timeline,
+        "stop_hook_statistics": stop_hook_statistics,
     }
 
 
@@ -2465,6 +2709,105 @@ def _render_statistics(task: dict[str, Any]) -> str:
     ) + "</div>"
 
 
+def _render_stop_hook_statistics(statistics: dict[str, Any]) -> str:
+    by_event = statistics.get("by_event") or {}
+
+    def event_summary(event_name: str) -> dict[str, Any]:
+        summary = by_event.get(event_name) or {}
+        decisions = summary.get("decisions") or {}
+        return {
+            "calls": summary.get("events_total", 0),
+            "block": decisions.get("block", 0),
+            "allow": decisions.get("allow", 0),
+            "skipped": decisions.get("skipped", 0),
+            "error": decisions.get("error", 0),
+            "unknown": decisions.get("unknown", 0),
+            "hook_time": summary.get("duration_ms_total", 0.0),
+        }
+
+    overview = {
+        "calls": statistics.get("events_total", 0),
+        "hook_time": statistics.get("duration_ms_total", 0.0),
+        "captured_through": statistics.get("captured_through"),
+    }
+    summary_tables = (
+        '<div class="stats-grid">'
+        '<div class="stats-table"><h3>All Stop Hooks</h3>'
+        f'{_stat_rows(overview, {"hook_time": _milliseconds})}</div>'
+        '<div class="stats-table"><h3>Top-level Stop</h3>'
+        f'{_stat_rows(event_summary("Stop"), {"hook_time": _milliseconds})}</div>'
+        '<div class="stats-table"><h3>SubagentStop</h3>'
+        f'{_stat_rows(event_summary("SubagentStop"), {"hook_time": _milliseconds})}</div>'
+        "</div>"
+    )
+
+    subagent_rows = []
+    for subagent in statistics.get("subagents") or []:
+        decisions = subagent.get("decisions") or {}
+        subagent_rows.append(
+            "<tr>"
+            f'<td class="mono"><strong>{_html(subagent.get("identity"))}</strong></td>'
+            f'<td>{_html(subagent.get("identity_source"))}</td>'
+            f'<td class="mono">{_html(", ".join(subagent.get("host_agent_ids") or []) or None)}</td>'
+            f'<td class="mono">{_html(", ".join(subagent.get("run_ids") or []) or None)}</td>'
+            f'<td class="mono">{_html(", ".join(subagent.get("candidate_ids") or []) or None)}</td>'
+            f'<td class="mono">{_html(subagent.get("events_total"))}</td>'
+            f'<td class="mono">{_html(decisions.get("block", 0))}</td>'
+            f'<td class="mono">{_html(decisions.get("allow", 0))}</td>'
+            f'<td class="mono">{_html(decisions.get("skipped", 0))}</td>'
+            f'<td class="mono">{_html(decisions.get("error", 0))}</td>'
+            f'<td class="mono">{_html(_milliseconds(subagent.get("duration_ms_total")))}</td>'
+            f'<td class="mono">{_html(subagent.get("last_event_at"))}</td>'
+            "</tr>"
+        )
+    subagent_table = (
+        '<div class="table-scroll"><table class="hook-table"><thead><tr>'
+        "<th>Subagent</th><th>Identity source</th><th>Host agent</th><th>Run</th><th>Candidate</th>"
+        "<th>Calls</th><th>Block</th><th>Allow</th><th>Skipped</th><th>Error</th>"
+        "<th>Hook time</th><th>Last event</th>"
+        f'</tr></thead><tbody>{"".join(subagent_rows)}</tbody></table></div>'
+        if subagent_rows
+        else "<p>No SubagentStop invocation was captured in this report snapshot.</p>"
+    )
+
+    event_rows = []
+    for event in statistics.get("events") or []:
+        runtime_agent = event.get("agent_session_id")
+        host_agent = event.get("host_agent_id")
+        reason = event.get("error") or event.get("reason")
+        event_rows.append(
+            "<tr>"
+            f'<td class="mono">{_html(event.get("started_at"))}</td>'
+            f'<td>{_html(event.get("hook_event_name"))}</td>'
+            f'<td>{_status(event.get("decision"))}</td>'
+            f'<td class="mono">{_html(runtime_agent)}</td>'
+            f'<td class="mono">{_html(host_agent)}</td>'
+            f'<td class="mono">{_html(event.get("run_id"))}</td>'
+            f'<td class="mono">{_html(event.get("candidate_id"))}</td>'
+            f'<td class="mono">{_html(_milliseconds(event.get("duration_ms")))}</td>'
+            f'<td>{_html(event.get("stop_reason"))}</td>'
+            f'<td>{_html(reason)}</td>'
+            "</tr>"
+        )
+    event_evidence = (
+        '<details class="summary-block"><summary>Per-invocation hook evidence '
+        f'({len(event_rows)})</summary><div><div class="table-scroll"><table class="hook-table"><thead><tr>'
+        "<th>Started</th><th>Event</th><th>Decision</th><th>Agent session</th>"
+        "<th>Host agent</th><th>Run</th><th>Candidate</th><th>Hook time</th>"
+        "<th>Stop reason</th><th>Gate reason / error</th>"
+        f'</tr></thead><tbody>{"".join(event_rows)}</tbody></table></div></div></details>'
+        if event_rows
+        else ""
+    )
+    return (
+        summary_tables
+        + '<div class="subsection"><h3>Subagent Breakdown</h3>'
+        + subagent_table
+        + "</div>"
+        + event_evidence
+    )
+
+
 def _render_task(
     task: dict[str, Any],
     index: int,
@@ -2545,6 +2888,7 @@ def render_html_report(data: dict[str, Any]) -> str:
     unavailable = total_statistics.get("unavailable_metrics") or []
     missing = (selected_stats.get("data_quality") or {}).get("missing") or []
     warnings = snapshot.get("warnings") or []
+    stop_hook_statistics = data.get("stop_hook_statistics") or {}
     goal_id = data.get("goal_plus_id")
     title_id = str(goal_id or report_run_id)
     state = goal.get("status") or (selected_task.get("run") or {}).get("state")
@@ -2644,6 +2988,7 @@ def render_html_report(data: dict[str, Any]) -> str:
         "snapshot": snapshot,
         "search_tasks": tasks,
         "timeline": data.get("timeline"),
+        "stop_hook_statistics": stop_hook_statistics,
     }
 
     print_icon = (
@@ -2680,6 +3025,7 @@ def render_html_report(data: dict[str, Any]) -> str:
   <nav class="section-nav no-print" aria-label="Report sections">
     <div class="wrap">
       <a href="#aggregate">Summary</a><a href="#goal">Goal</a>
+      <a href="#hooks">Stop hooks</a>
       <a href="#tasks">Search tasks ({escape(_number(search_count))})</a><a href="#audit">Audit</a>
     </div>
   </nav>
@@ -2719,6 +3065,12 @@ def render_html_report(data: dict[str, Any]) -> str:
           <div class="fact"><dt>Combined estimated cost</dt><dd class="mono">{_html(_cost(total_usage.get("cost_usd")))}</dd></div>
         </dl>
       </div>
+    </section>
+    <section id="hooks" class="report-section">
+      <div class="section-kicker">Codex Host Hook Evidence</div>
+      <h2>Stop Hook Activity</h2>
+      {_render_stop_hook_statistics(stop_hook_statistics)}
+      <p class="footnote">This is a static snapshot of durable automatic Stop and SubagentStop invocations available when the report was generated. Direct goal_plus_gate calls are excluded.</p>
     </section>
     <section id="tasks" class="report-section">
       <div class="section-kicker">Per-Task Evidence</div>

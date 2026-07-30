@@ -45,7 +45,11 @@ canonical final line of `raw_goal`.
 Top-level `Stop` blocks every still-active record and re-presents the full raw
 goal, timestamps, elapsed time, phase, next action, and final-check policy. The
 main agent must continue or record a terminal status. Candidate `SubagentStop`
-semantics are unchanged.
+semantics are unchanged. Low-level evidence for each automatic stop-hook
+invocation is stored under `.gp/host-logs/codex-hook-events/`; see
+[Debugging Runtime State](debugging-runtime.md#codex). Generated HTML reports
+show separate Stop/SubagentStop counts and a per-subagent breakdown from that
+durable evidence.
 
 Use the `goal-plus` skill as the user entry. The `search` skill is internal.
 
