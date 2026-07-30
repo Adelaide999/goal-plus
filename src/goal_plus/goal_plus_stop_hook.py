@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from goal_plus.paths import DEFAULT_RUNTIME_ROOT, LEGACY_RUNTIME_ROOT
 from goal_plus.time_advisory import (
@@ -26,6 +28,8 @@ GOAL_PLUS_PROMPT_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 DISABLE_VALUES = {"1", "true", "yes", "on"}
+STOP_HOOK_EVENT_SCHEMA_VERSION = 1
+STOP_HOOK_TEXT_LIMIT = 1024
 
 
 def _read_hook_input() -> dict[str, Any]:
@@ -167,6 +171,28 @@ def _session_id(hook_input: dict[str, Any]) -> str | None:
     if isinstance(session, dict):
         for key in ("id", "session_id", "sessionId"):
             value = session.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _stop_reason(hook_input: dict[str, Any]) -> str | None:
+    for key in ("stop_reason", "stopReason"):
+        value = hook_input.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _host_agent_id(hook_input: dict[str, Any]) -> str | None:
+    for key in ("agent_id", "agentId"):
+        value = hook_input.get(key)
+        if isinstance(value, str) and value:
+            return value
+    target = hook_input.get("target")
+    if isinstance(target, dict):
+        for key in ("agent_id", "agentId", "agent"):
+            value = target.get(key)
             if isinstance(value, str) and value:
                 return value
     return None
@@ -446,6 +472,70 @@ def _utc_now() -> datetime:
 
 def _utc_text(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
+
+
+def _bounded_hook_text(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    if len(value) <= STOP_HOOK_TEXT_LIMIT:
+        return value
+    return value[: STOP_HOOK_TEXT_LIMIT - 3] + "..."
+
+
+def _stop_hook_event_dir(search_root: Path) -> Path:
+    return search_root / "host-logs" / "codex-hook-events"
+
+
+def _record_stop_hook_event(
+    search_root: Path,
+    hook_input: dict[str, Any],
+    *,
+    event_name: str,
+    invocation_id: str,
+    started_at: datetime,
+    started_monotonic: float,
+    result: dict[str, Any] | None = None,
+    error: Exception | None = None,
+) -> None:
+    """Best-effort, content-minimal evidence for one automatic stop hook."""
+    try:
+        finished_at = _utc_now()
+        details = result or {}
+        goal_plus_id = details.get("goal_plus_id")
+        if not isinstance(goal_plus_id, str):
+            goal_plus_id = _first_goal_id(hook_input) or _first_goal_id(
+                os.environ.get("GOAL_PLUS_ID")
+            )
+        payload = {
+            "schema_version": STOP_HOOK_EVENT_SCHEMA_VERSION,
+            "invocation_id": invocation_id,
+            "hook_event_name": event_name,
+            "started_at": _utc_text(started_at),
+            "finished_at": _utc_text(finished_at),
+            "duration_ms": round(
+                max(0.0, time.monotonic() - started_monotonic) * 1000.0,
+                3,
+            ),
+            "outcome": "failed" if error is not None else "completed",
+            "decision": "error" if error is not None else details.get("decision"),
+            "reason": _bounded_hook_text(details.get("reason")),
+            "goal_plus_id": goal_plus_id,
+            "session_id": _session_id(hook_input),
+            "host_agent_id": _host_agent_id(hook_input),
+            "agent_session_id": details.get("agent_session_id"),
+            "run_id": details.get("run_id"),
+            "candidate_id": details.get("candidate_id"),
+            "stop_reason": _bounded_hook_text(_stop_reason(hook_input)),
+            "error_type": type(error).__name__ if error is not None else None,
+            "error": _bounded_hook_text(str(error)) if error is not None else None,
+        }
+        _write_json_object(
+            _stop_hook_event_dir(search_root) / f"{invocation_id}.json",
+            payload,
+        )
+    except Exception:
+        # Statistics must never alter the host hook's fail-open contract.
+        return
 
 
 def _utc_datetime(value: Any) -> datetime | None:
@@ -1197,7 +1287,7 @@ def _handle_stop_event(
     hook_input: dict[str, Any],
     *,
     event: str,
-) -> None:
+) -> dict[str, Any]:
     candidate_context = None
     if event == "subagent_stop" and not _is_final_checker_context(hook_input):
         candidate_context = _search_candidate_stop_context(search_root, hook_input)
@@ -1217,7 +1307,32 @@ def _handle_stop_event(
                 hook_input,
                 current_session_id,
             )
-        return
+        return {
+            "decision": "skipped",
+            "reason": "no_matching_session" if active else "no_matching_goal",
+            # An unmatched top-level Stop still belongs to the active Goal Plus
+            # record for diagnostics. A SubagentStop may instead belong to a
+            # standalone or unlinked Search run, so do not attach it to an
+            # arbitrary active goal.
+            "goal_plus_id": (
+                active[0].goal_plus_id if event == "stop" and active else None
+            ),
+            "agent_session_id": (
+                candidate_context.get("search_candidate_agent_session_id")
+                if candidate_context is not None
+                else None
+            ),
+            "run_id": (
+                candidate_context.get("search_candidate_run_id")
+                if candidate_context is not None
+                else None
+            ),
+            "candidate_id": (
+                candidate_context.get("search_candidate_id")
+                if candidate_context is not None
+                else None
+            ),
+        }
     gate_context = hook_input
     if event == "subagent_stop" and _is_final_checker_context(hook_input):
         record = runtime.status(goal_id)
@@ -1269,6 +1384,66 @@ def _handle_stop_event(
         )
     elif event == "stop" and gate.status != "active":
         _emit_terminal_stats(runtime.status(goal_id))
+    return {
+        "decision": gate.decision,
+        "reason": gate.reason,
+        "goal_plus_id": goal_id,
+        "agent_session_id": (
+            candidate_context.get("search_candidate_agent_session_id")
+            if candidate_context is not None
+            else None
+        ),
+        "run_id": (
+            candidate_context.get("search_candidate_run_id")
+            if candidate_context is not None
+            else None
+        ),
+        "candidate_id": (
+            candidate_context.get("search_candidate_id")
+            if candidate_context is not None
+            else None
+        ),
+    }
+
+
+def _run_recorded_stop_event(
+    search_root: Path,
+    hook_input: dict[str, Any],
+    *,
+    event_name: str,
+) -> None:
+    invocation_id = f"hook_{uuid4().hex}"
+    started_at = _utc_now()
+    started_monotonic = time.monotonic()
+    try:
+        from goal_plus.goal_plus import FileGoalPlusRuntime
+
+        result = _handle_stop_event(
+            FileGoalPlusRuntime(search_root),
+            search_root,
+            hook_input,
+            event="subagent_stop" if event_name == "SubagentStop" else "stop",
+        )
+    except Exception as exc:
+        _record_stop_hook_event(
+            search_root,
+            hook_input,
+            event_name=event_name,
+            invocation_id=invocation_id,
+            started_at=started_at,
+            started_monotonic=started_monotonic,
+            error=exc,
+        )
+        raise
+    _record_stop_hook_event(
+        search_root,
+        hook_input,
+        event_name=event_name,
+        invocation_id=invocation_id,
+        started_at=started_at,
+        started_monotonic=started_monotonic,
+        result=result,
+    )
 
 
 def main() -> int:
@@ -1322,14 +1497,10 @@ def main() -> int:
         if not search_root.exists():
             return 0
 
-        from goal_plus.goal_plus import FileGoalPlusRuntime
-
-        runtime = FileGoalPlusRuntime(search_root)
-        _handle_stop_event(
-            runtime,
+        _run_recorded_stop_event(
             search_root,
             hook_input,
-            event="subagent_stop" if event_name == "SubagentStop" else "stop",
+            event_name=event_name,
         )
         return 0
     except Exception as exc:

@@ -24,6 +24,9 @@ from goal_plus.runtime import load_json
 
 
 REPORT_SCHEMA_VERSION = 1
+REPORT_DOCUMENT_SCHEMA_VERSION = 1
+STOP_HOOK_EVENT_NAMES = ("Stop", "SubagentStop")
+STOP_HOOK_DECISIONS = ("block", "allow", "skipped", "error", "unknown")
 
 
 _REPORT_CSS = """
@@ -150,7 +153,13 @@ h3 { margin-bottom: 12px; font-size: 14px; line-height: 20px; }
 }
 .section-nav a:hover { color: var(--accent); border-color: var(--accent); }
 main { padding-top: 30px; padding-bottom: 72px; }
-.report-section { padding: 0 0 40px; margin: 0 0 40px; border-bottom: 1px solid var(--border); }
+main.wrap { overflow-x: clip; }
+.report-section {
+  scroll-margin-top: 58px;
+  padding: 0 0 40px;
+  margin: 0 0 40px;
+  border-bottom: 1px solid var(--border);
+}
 .section-kicker { margin-bottom: 14px; color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
 .kpi-grid {
   display: grid;
@@ -195,6 +204,9 @@ main { padding-top: 30px; padding-bottom: 72px; }
 .trajectory-head h3 { margin: 0; }
 .trajectory-head span { color: var(--muted); font-size: 11px; }
 .trajectory-plot { width: 100%; min-height: 380px; }
+.stop-progress-chart { padding: 18px 20px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.stop-progress-chart svg { display: block; width: 100%; height: auto; min-height: 180px; }
+.stop-progress-axis { display: flex; justify-content: space-between; margin-top: 6px; color: var(--muted); font-size: 10px; }
 .timeline-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 20px; border-bottom: 1px solid var(--border); }
 .timeline-head h2 { margin: 0; }
 .metric-lens-toolbar {
@@ -322,8 +334,16 @@ main { padding-top: 30px; padding-bottom: 72px; }
 .subsection:first-child { border-top: 0; }
 details.summary-block > summary { cursor: pointer; list-style: none; }
 details.summary-block > summary::-webkit-details-marker { display: none; }
-.table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; }
+.table-scroll {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  contain: inline-size;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
 table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 12px; }
+.hook-table { min-width: 1040px; }
 th { background: var(--surface-subtle); color: var(--muted); font-size: 10px; text-align: left; text-transform: uppercase; }
 th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
 tbody tr:last-child td { border-bottom: 0; }
@@ -331,6 +351,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .stats-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .stats-table { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .stats-table h3 { margin: 0; padding: 11px 12px; border-bottom: 1px solid var(--border); background: var(--surface-subtle); }
+.activity-summary { margin-bottom: 32px; }
 .stat-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--border); font-size: 11px; }
 .stat-row:first-of-type { border-top: 0; }
 .stat-row span:first-child { color: var(--muted); overflow-wrap: anywhere; }
@@ -471,6 +492,11 @@ _REPORT_SCRIPT = """
           tick: Math.max(1, Math.ceil(payload.evaluations / 12)),
           marker_size: 5
         }];
+    var callLabel = payload.call_label || 'Verifier call';
+    var bestLabel = payload.best_label || 'Global best';
+    var pointLabel = payload.point_label || 'Iteration';
+    var failureLabel = payload.failure_label || 'verifier failed';
+    var failureLegend = payload.failure_legend || 'Failed verifier · not scored';
     var axisSpec = payload.score_axis || {type: 'linear', range: null};
     var palette = [
       reportColor('--accent'),
@@ -528,7 +554,7 @@ _REPORT_SCRIPT = """
         anchor: yRef,
         range: [windowSpec.start - 0.5, windowSpec.end + 0.5],
         dtick: windowSpec.tick,
-        title: {text: windowIndex === windows.length - 1 ? 'Verifier call' : ''},
+        title: {text: windowIndex === windows.length - 1 ? callLabel : ''},
         color: reportColor('--muted'),
         gridcolor: reportColor('--border'),
         zerolinecolor: reportColor('--border'),
@@ -584,9 +610,9 @@ _REPORT_SCRIPT = """
             },
             hovertemplate:
               '<b>' + trajectory.candidate_id + '</b><br>' +
-              'Verifier call %{x}<br>' +
+              callLabel + ' %{x}<br>' +
               payload.metric_name + ' %{y:.4f}<br>' +
-              'Iteration %{customdata[0]} · %{customdata[1]}<br>' +
+              pointLabel + ' %{customdata[0]} · %{customdata[1]}<br>' +
               '%{customdata[2]}<extra></extra>'
           });
           candidateLegendSeen[trajectory.candidate_id] = true;
@@ -613,14 +639,14 @@ _REPORT_SCRIPT = """
         traces.push({
           type: 'scatter',
           mode: 'lines',
-          name: 'Global best',
+          name: bestLabel,
           x: globalSeries.calls,
           y: globalSeries.values,
           xaxis: xRef,
           yaxis: yRef,
           showlegend: !globalLegendSeen,
           line: {color: reportColor('--text'), width: 3, shape: 'hv'},
-          hovertemplate: 'Verifier call %{x}<br>Best-so-far %{y:.4f}<extra></extra>'
+          hovertemplate: callLabel + ' %{x}<br>Best-so-far %{y:.4f}<extra></extra>'
         });
         globalLegendSeen = true;
       }
@@ -644,7 +670,7 @@ _REPORT_SCRIPT = """
           },
           hovertemplate:
             '<b>Selected · ' + payload.selected_point.candidate_id + '</b><br>' +
-            'Verifier call %{x}<br>' + payload.metric_name + ' %{y:.4f}<extra></extra>'
+            callLabel + ' %{x}<br>' + payload.metric_name + ' %{y:.4f}<extra></extra>'
         });
         selectedLegendSeen = true;
       }
@@ -659,7 +685,7 @@ _REPORT_SCRIPT = """
         traces.push({
           type: 'scatter',
           mode: 'markers',
-          name: 'Failed verifier · not scored',
+          name: failureLegend,
           x: failureCalls,
           y: failureValues,
           customdata: failureDetails,
@@ -673,8 +699,8 @@ _REPORT_SCRIPT = """
             line: {width: 1}
           },
           hovertemplate:
-            '<b>%{customdata[0]} · verifier failed</b><br>' +
-            'Verifier call %{x}<br>Iteration %{customdata[1]} · %{customdata[2]}<br>' +
+            '<b>%{customdata[0]} · ' + failureLabel + '</b><br>' +
+            callLabel + ' %{x}<br>' + pointLabel + ' %{customdata[1]} · %{customdata[2]}<br>' +
             '%{customdata[3]}<br>Raw score %{customdata[4]} · excluded from ranking<extra></extra>'
         });
         failureLegendSeen = true;
@@ -697,7 +723,7 @@ _REPORT_SCRIPT = """
       displaylogo: false,
       responsive: true,
       modeBarButtonsToRemove: ['lasso2d', 'select2d'],
-      toImageButtonOptions: {format: 'svg', filename: 'complete-search-trajectory'}
+      toImageButtonOptions: {format: 'svg', filename: payload.export_name || 'complete-search-trajectory'}
     });
   }
 
@@ -731,6 +757,7 @@ _REPORT_SCRIPT = """
       ? requested : buttons.find(function (button) { return button.getAttribute('aria-selected') === 'true'; }).dataset.taskTarget;
     activate(initial, false);
   }
+  renderVisibleTrajectories();
 
   window.addEventListener('beforeprint', function () {
     Array.prototype.forEach.call(document.querySelectorAll('[data-search-trajectory]'), renderTrajectory);
@@ -838,11 +865,18 @@ def _duration(value: Any) -> str:
     seconds = float(value)
     if seconds < 60:
         return f"{seconds:.1f}s"
-    minutes, remainder = divmod(seconds, 60)
+    minutes, remainder = divmod(int(round(seconds)), 60)
     if minutes < 60:
-        return f"{int(minutes)}m {remainder:.0f}s"
+        return f"{minutes}m {remainder}s"
     hours, minutes = divmod(minutes, 60)
-    return f"{int(hours)}h {int(minutes)}m"
+    return f"{hours}h {minutes}m"
+
+
+def _milliseconds(value: Any) -> str:
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return "Not observed"
+    formatted = f"{float(value):,.3f}".rstrip("0").rstrip(".")
+    return f"{formatted} ms"
 
 
 def _number(value: Any, *, digits: int = 2) -> str:
@@ -867,11 +901,50 @@ def _cost(value: Any) -> str:
 
 def _status_class(value: Any) -> str:
     normalized = str(value or "").lower()
-    if normalized in {"complete", "completed", "promoted", "passed", "evaluated", "success"}:
+    if normalized in {
+        "allow",
+        "complete",
+        "completed",
+        "promoted",
+        "passed",
+        "evaluated",
+        "productive",
+        "quiet",
+        "success",
+        "budget_reached",
+        "completed_in_finalization_grace",
+        "terminal-allow",
+    }:
         return "success"
-    if normalized in {"failed", "failure", "aborted", "blocked", "timed_out", "timeout"}:
+    if normalized in {
+        "block",
+        "error",
+        "failed",
+        "failure",
+        "aborted",
+        "blocked",
+        "timed_out",
+        "timeout",
+        "polling-only",
+        "answer-only",
+        "empty-output",
+        "cannot-continue",
+    }:
         return "failure"
-    if normalized in {"active", "running", "waiting_for_workers", "ready_to_promote", "planned", "started"}:
+    if normalized in {
+        "active",
+        "running",
+        "waiting_for_workers",
+        "ready_to_promote",
+        "planned",
+        "started",
+        "unavailable",
+        "unverified-edit",
+        "unverified-output",
+        "unverified-tail",
+        "unverified-tooling",
+        "verified-no-revision",
+    }:
         return "warning"
     return ""
 
@@ -1187,6 +1260,8 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
         usage = usage if isinstance(usage, dict) else {}
         context = observation.get("context")
         context = context if isinstance(context, dict) else {}
+        activity = observation.get("activity")
+        activity = activity if isinstance(activity, dict) else None
         session_iterations = [
             iteration
             for candidate in candidates
@@ -1214,6 +1289,7 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
             "context_percent": context.get("percent"),
             "verifier_runs": len(session_iterations),
             "observability_source": observation.get("source"),
+            "activity": activity,
             "errors": observation.get("errors") or [],
         }
         raw_dispatches = session.host_handle.metadata.get("dispatches")
@@ -1615,6 +1691,670 @@ def _timeline_payload(
     }
 
 
+def _stop_hook_decision_counts() -> dict[str, int]:
+    return {decision: 0 for decision in STOP_HOOK_DECISIONS}
+
+
+def _normalized_stop_hook_event(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    event_name = payload.get("hook_event_name")
+    if event_name not in STOP_HOOK_EVENT_NAMES:
+        return None
+    decision = payload.get("decision")
+    if decision not in STOP_HOOK_DECISIONS:
+        decision = "unknown"
+    duration_ms = payload.get("duration_ms")
+    if (
+        not isinstance(duration_ms, int | float)
+        or isinstance(duration_ms, bool)
+        or not isfinite(duration_ms)
+        or duration_ms < 0
+    ):
+        duration_ms = None
+    text_fields = (
+        "invocation_id",
+        "started_at",
+        "finished_at",
+        "outcome",
+        "reason",
+        "goal_plus_id",
+        "session_id",
+        "host_agent_id",
+        "agent_session_id",
+        "run_id",
+        "candidate_id",
+        "stop_reason",
+        "error_type",
+        "error",
+    )
+    event = {
+        key: value if isinstance((value := payload.get(key)), str) and value else None
+        for key in text_fields
+    }
+    event.update(
+        {
+            "schema_version": payload.get("schema_version"),
+            "hook_event_name": event_name,
+            "decision": decision,
+            "duration_ms": duration_ms,
+        }
+    )
+    return event
+
+
+def _build_stop_hook_statistics(
+    root: Path,
+    *,
+    goal_plus_id: str | None,
+    run_ids: set[str],
+) -> dict[str, Any]:
+    events = []
+    event_dir = root / "host-logs" / "codex-hook-events"
+    source_available = event_dir.is_dir()
+    for path in sorted(event_dir.glob("*.json")):
+        try:
+            event = _normalized_stop_hook_event(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if event is None:
+            continue
+        event_goal_id = event.get("goal_plus_id")
+        matches_goal = goal_plus_id is not None and event_goal_id == goal_plus_id
+        matches_run = event.get("run_id") in run_ids
+        if goal_plus_id is not None:
+            included = matches_goal or (event_goal_id is None and matches_run)
+        else:
+            included = matches_run
+        if not included:
+            continue
+        events.append(event)
+
+    events.sort(
+        key=lambda event: (
+            _epoch(event.get("started_at")) or float("inf"),
+            str(event.get("invocation_id") or ""),
+        )
+    )
+    by_decision = _stop_hook_decision_counts()
+    by_event = {
+        event_name: {
+            "events_total": 0,
+            "duration_ms_total": 0.0,
+            "decisions": _stop_hook_decision_counts(),
+        }
+        for event_name in STOP_HOOK_EVENT_NAMES
+    }
+    subagents: dict[str, dict[str, Any]] = {}
+    host_agent_sessions = {
+        str(event["host_agent_id"]): str(event["agent_session_id"])
+        for event in events
+        if event["hook_event_name"] == "SubagentStop"
+        and event.get("host_agent_id")
+        and event.get("agent_session_id")
+    }
+    duration_ms_total = 0.0
+    for event in events:
+        event_name = str(event["hook_event_name"])
+        decision = str(event["decision"])
+        duration_ms = float(event.get("duration_ms") or 0.0)
+        duration_ms_total += duration_ms
+        by_decision[decision] += 1
+        by_event[event_name]["events_total"] += 1
+        by_event[event_name]["duration_ms_total"] += duration_ms
+        by_event[event_name]["decisions"][decision] += 1
+        if event_name != "SubagentStop":
+            continue
+        agent_session_id = event.get("agent_session_id")
+        host_agent_id = event.get("host_agent_id")
+        if not agent_session_id and host_agent_id:
+            agent_session_id = host_agent_sessions.get(str(host_agent_id))
+        if agent_session_id:
+            identity = str(agent_session_id)
+            identity_source = "agent_session_id"
+        elif host_agent_id:
+            identity = str(host_agent_id)
+            identity_source = "host_agent_id"
+        else:
+            identity = "unresolved"
+            identity_source = "unresolved"
+        key = f"{identity_source}:{identity}"
+        summary = subagents.setdefault(
+            key,
+            {
+                "identity": identity,
+                "identity_source": identity_source,
+                "agent_session_id": agent_session_id,
+                "host_agent_ids": set(),
+                "run_ids": set(),
+                "candidate_ids": set(),
+                "events_total": 0,
+                "duration_ms_total": 0.0,
+                "decisions": _stop_hook_decision_counts(),
+                "last_event_at": None,
+            },
+        )
+        for field, target in (
+            ("host_agent_id", "host_agent_ids"),
+            ("run_id", "run_ids"),
+            ("candidate_id", "candidate_ids"),
+        ):
+            value = event.get(field)
+            if isinstance(value, str) and value:
+                summary[target].add(value)
+        summary["events_total"] += 1
+        summary["duration_ms_total"] += duration_ms
+        summary["decisions"][decision] += 1
+        observed_at = event.get("finished_at") or event.get("started_at")
+        if observed_at and (
+            summary["last_event_at"] is None
+            or (_epoch(observed_at) or float("-inf"))
+            > (_epoch(summary["last_event_at"]) or float("-inf"))
+        ):
+            summary["last_event_at"] = observed_at
+
+    subagent_rows = []
+    for summary in subagents.values():
+        subagent_rows.append(
+            {
+                **summary,
+                "host_agent_ids": sorted(summary["host_agent_ids"]),
+                "run_ids": sorted(summary["run_ids"]),
+                "candidate_ids": sorted(summary["candidate_ids"]),
+                "duration_ms_total": round(summary["duration_ms_total"], 3),
+            }
+        )
+    subagent_rows.sort(key=lambda item: (item["identity_source"], item["identity"]))
+    captured_through = max(
+        (
+            observed_at
+            for event in events
+            if (observed_at := event.get("finished_at") or event.get("started_at"))
+        ),
+        key=lambda value: _epoch(value) or float("-inf"),
+        default=None,
+    )
+    for summary in by_event.values():
+        summary["duration_ms_total"] = round(summary["duration_ms_total"], 3)
+    return {
+        "schema_version": 1,
+        "source_available": source_available,
+        "source_path": str(event_dir),
+        "events_total": len(events),
+        "duration_ms_total": round(duration_ms_total, 3),
+        "captured_through": captured_through,
+        "by_event": by_event,
+        "by_decision": by_decision,
+        "subagents": subagent_rows,
+        "events": events,
+    }
+
+
+def _activity_window_counts(
+    events: list[dict[str, Any]],
+    *,
+    start_epoch: float | None = None,
+    end_epoch: float | None = None,
+) -> dict[str, Any]:
+    tool_counts: Counter[str] = Counter()
+    message_counts: Counter[str] = Counter()
+    context_samples: list[tuple[float, float]] = []
+    for event in events:
+        event_epoch = _epoch(event.get("at"))
+        if event_epoch is None:
+            continue
+        if start_epoch is not None and event_epoch < start_epoch:
+            continue
+        if end_epoch is not None and event_epoch >= end_epoch:
+            continue
+        kind = event.get("kind")
+        if kind == "tool_call":
+            tool_counts[str(event.get("category") or "other")] += 1
+        elif kind == "assistant_message":
+            message_counts[str(event.get("classification") or "substantive")] += 1
+            if event.get("duplicate") is True:
+                message_counts["duplicate"] += 1
+        elif kind == "context":
+            percent = _finite_float(event.get("percent"))
+            if percent is not None:
+                context_samples.append((event_epoch, percent))
+    return {
+        "tool_calls": sum(tool_counts.values()),
+        "context_calls": tool_counts.get("context", 0),
+        "global_evidence_calls": tool_counts.get("global_evidence", 0),
+        "verifier_tool_calls": tool_counts.get("verifier", 0),
+        "iteration_plan_calls": tool_counts.get("iteration_plan", 0),
+        "edit_capable_calls": tool_counts.get("edit_capable", 0),
+        "other_tool_calls": tool_counts.get("other", 0),
+        "assistant_messages": sum(
+            count
+            for classification, count in message_counts.items()
+            if classification != "duplicate"
+        ),
+        "empty_messages": message_counts.get("empty", 0),
+        "best_remains_messages": message_counts.get("best_remains", 0),
+        "cannot_continue_messages": message_counts.get("cannot_continue", 0),
+        "substantive_messages": message_counts.get("substantive", 0),
+        "duplicate_messages": message_counts.get("duplicate", 0),
+        "context_samples": len(context_samples),
+        "context_percent_final": (
+            max(context_samples, key=lambda item: item[0])[1]
+            if context_samples
+            else None
+        ),
+        "context_percent_max": (
+            max(value for _, value in context_samples)
+            if context_samples
+            else None
+        ),
+    }
+
+
+def _nearest_context_percent(
+    events: list[dict[str, Any]],
+    target_epoch: float | None,
+) -> float | None:
+    if target_epoch is None:
+        return None
+    samples = [
+        (abs(event_epoch - target_epoch), percent)
+        for event in events
+        if event.get("kind") == "context"
+        and (event_epoch := _epoch(event.get("at"))) is not None
+        and (percent := _finite_float(event.get("percent"))) is not None
+    ]
+    return min(samples, default=(0.0, None), key=lambda item: item[0])[1]
+
+
+def _loop_tail_signal(
+    *,
+    activity_available: bool,
+    last_verifier_at: str | None,
+    post_last: dict[str, Any],
+) -> str:
+    if not activity_available:
+        return "unavailable"
+    if last_verifier_at is None:
+        return "no-verifier"
+    messages = int(post_last.get("assistant_messages") or 0)
+    empty = int(post_last.get("empty_messages") or 0)
+    best_remains = int(post_last.get("best_remains_messages") or 0)
+    cannot_continue = int(post_last.get("cannot_continue_messages") or 0)
+    context_reads = int(post_last.get("context_calls") or 0)
+    evidence_reads = int(post_last.get("global_evidence_calls") or 0)
+    edits = int(post_last.get("edit_capable_calls") or 0)
+    tool_calls = int(post_last.get("tool_calls") or 0)
+    if messages >= 5 and empty * 5 >= messages * 4:
+        return "empty-output"
+    if context_reads + evidence_reads >= 10 and edits == 0:
+        return "polling-only"
+    if (
+        messages >= 3
+        and best_remains >= 2
+        and best_remains * 2 >= messages
+        and edits == 0
+        and tool_calls <= 1
+    ):
+        return "answer-only"
+    if cannot_continue > 0 and edits == 0:
+        return "cannot-continue"
+    if edits > 0:
+        return "unverified-edit"
+    if messages > 0 or tool_calls > 0:
+        return "unverified-tail"
+    return "quiet"
+
+
+def _build_loop_agent_statistics(
+    tasks: list[dict[str, Any]],
+    stop_hook_statistics: dict[str, Any],
+) -> dict[str, Any]:
+    sessions: dict[tuple[str, str], dict[str, Any]] = {}
+    candidate_sessions: dict[tuple[str, str], set[str]] = {}
+    candidates: dict[tuple[str, str], dict[str, Any]] = {}
+    task_by_run: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        run_id = task.get("run_id")
+        if not isinstance(run_id, str) or not run_id:
+            continue
+        task_by_run[run_id] = task
+        for candidate in task.get("candidates") or []:
+            candidate_id = candidate.get("candidate_id")
+            if isinstance(candidate_id, str) and candidate_id:
+                candidates[(run_id, candidate_id)] = candidate
+        for session in task.get("sessions") or []:
+            if session.get("host") != "codex":
+                continue
+            agent_session_id = session.get("agent_session_id")
+            candidate_id = session.get("candidate_id")
+            if not isinstance(agent_session_id, str) or not agent_session_id:
+                continue
+            if not isinstance(candidate_id, str) or not candidate_id:
+                continue
+            sessions.setdefault((run_id, agent_session_id), session)
+            candidate_sessions.setdefault((run_id, candidate_id), set()).add(
+                agent_session_id
+            )
+
+    host_agent_sessions: dict[str, str] = {}
+    for summary in stop_hook_statistics.get("subagents") or []:
+        agent_session_id = summary.get("agent_session_id")
+        if not isinstance(agent_session_id, str) or not agent_session_id:
+            continue
+        for host_agent_id in summary.get("host_agent_ids") or []:
+            if isinstance(host_agent_id, str) and host_agent_id:
+                host_agent_sessions[host_agent_id] = agent_session_id
+
+    events_by_session: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    subagent_hook_streams: set[str] = set()
+    for raw_event in stop_hook_statistics.get("events") or []:
+        if raw_event.get("hook_event_name") != "SubagentStop":
+            continue
+        event = dict(raw_event)
+        run_id = event.get("run_id")
+        candidate_id = event.get("candidate_id")
+        if isinstance(run_id, str) and run_id:
+            subagent_hook_streams.add(run_id)
+        agent_session_id = event.get("agent_session_id")
+        host_agent_id = event.get("host_agent_id")
+        if (
+            not isinstance(agent_session_id, str)
+            and isinstance(host_agent_id, str)
+        ):
+            agent_session_id = host_agent_sessions.get(host_agent_id)
+        if (
+            not isinstance(agent_session_id, str)
+            and isinstance(run_id, str)
+            and isinstance(candidate_id, str)
+        ):
+            candidates_for_event = candidate_sessions.get(
+                (run_id, candidate_id), set()
+            )
+            if len(candidates_for_event) == 1:
+                agent_session_id = next(iter(candidates_for_event))
+        if not isinstance(run_id, str) or not isinstance(agent_session_id, str):
+            continue
+        event["resolved_agent_session_id"] = agent_session_id
+        events_by_session.setdefault((run_id, agent_session_id), []).append(
+            event
+        )
+    for events in events_by_session.values():
+        events.sort(
+            key=lambda event: (
+                _epoch(event.get("started_at")) or float("inf"),
+                str(event.get("invocation_id") or ""),
+            )
+        )
+
+    rows: list[dict[str, Any]] = []
+    stop_windows: list[dict[str, Any]] = []
+    for (run_id, agent_session_id), session in sorted(sessions.items()):
+        task = task_by_run[run_id]
+        candidate_id = str(session.get("candidate_id"))
+        candidate = candidates.get((run_id, candidate_id)) or {}
+        activity = session.get("activity")
+        activity = activity if isinstance(activity, dict) else {}
+        activity_available = activity.get("available") is True
+        activity_events = activity.get("events")
+        activity_events = (
+            [event for event in activity_events if isinstance(event, dict)]
+            if isinstance(activity_events, list)
+            else []
+        )
+        direction = str(
+            (task.get("frozen_spec") or {}).get("metric_direction")
+            or "maximize"
+        )
+        candidate_session_ids = candidate_sessions.get(
+            (run_id, candidate_id), set()
+        )
+        candidate_iterations = candidate.get("iterations") or []
+        has_session_attribution = any(
+            isinstance(iteration, dict)
+            and isinstance(iteration.get("agent_session_id"), str)
+            for iteration in candidate_iterations
+        )
+        iteration_rows = []
+        current_best: float | None = None
+        previous_git_head: str | None = None
+        for iteration in sorted(
+            candidate_iterations,
+            key=lambda item: _epoch(item.get("created_at")) or float("inf"),
+        ):
+            iteration_session_id = iteration.get("agent_session_id")
+            belongs_to_session = iteration_session_id == agent_session_id or (
+                not has_session_attribution
+                and iteration_session_id is None
+                and len(candidate_session_ids) == 1
+            )
+            if not belongs_to_session:
+                continue
+            item = dict(iteration)
+            git_head = item.get("git_head")
+            item["_revision_changed"] = bool(
+                isinstance(git_head, str)
+                and git_head
+                and git_head != previous_git_head
+            )
+            if isinstance(git_head, str) and git_head:
+                previous_git_head = git_head
+            score = _finite_float(item.get("score"))
+            improved = False
+            if item.get("process_passed") is True and score is not None:
+                improved = current_best is None or _is_better_score(
+                    score, current_best, direction
+                )
+                if improved:
+                    current_best = score
+            item["_improved"] = improved
+            iteration_rows.append(item)
+
+        last_verifier = max(
+            (
+                iteration.get("created_at")
+                for iteration in iteration_rows
+                if _epoch(iteration.get("created_at")) is not None
+            ),
+            key=lambda value: _epoch(value) or float("-inf"),
+            default=None,
+        )
+        last_verifier_epoch = _epoch(last_verifier)
+        total_activity = _activity_window_counts(activity_events)
+        post_last = _activity_window_counts(
+            activity_events,
+            start_epoch=last_verifier_epoch,
+        )
+        session_events = events_by_session.get((run_id, agent_session_id), [])
+        blocked_events = [
+            event for event in session_events if event.get("decision") == "block"
+        ]
+        for index, event in enumerate(session_events):
+            start_at = event.get("finished_at") or event.get("started_at")
+            start_epoch = _epoch(start_at)
+            next_event = (
+                session_events[index + 1]
+                if index + 1 < len(session_events)
+                else None
+            )
+            end_at = next_event.get("started_at") if next_event is not None else None
+            end_epoch = _epoch(end_at)
+            window_activity = _activity_window_counts(
+                activity_events,
+                start_epoch=start_epoch,
+                end_epoch=end_epoch,
+            )
+            window_iterations = [
+                iteration
+                for iteration in iteration_rows
+                if (iteration_epoch := _epoch(iteration.get("created_at")))
+                is not None
+                and (start_epoch is None or iteration_epoch >= start_epoch)
+                and (end_epoch is None or iteration_epoch < end_epoch)
+            ]
+            revision_changes = sum(
+                iteration.get("_revision_changed") is True
+                for iteration in window_iterations
+            )
+            improvements = sum(
+                iteration.get("_improved") is True
+                for iteration in window_iterations
+            )
+            if event.get("decision") != "block":
+                outcome = "terminal-allow"
+            elif window_iterations and revision_changes:
+                outcome = "productive"
+            elif window_iterations:
+                outcome = "verified-no-revision"
+            elif (
+                window_activity["context_calls"]
+                + window_activity["global_evidence_calls"]
+            ):
+                outcome = "polling-only"
+            elif window_activity["assistant_messages"]:
+                if (
+                    window_activity["empty_messages"] * 5
+                    >= window_activity["assistant_messages"] * 4
+                ):
+                    outcome = "empty-output"
+                elif (
+                    window_activity["best_remains_messages"]
+                    or window_activity["cannot_continue_messages"]
+                    or window_activity["duplicate_messages"]
+                ):
+                    outcome = "answer-only"
+                else:
+                    outcome = "unverified-output"
+            elif window_activity["tool_calls"]:
+                outcome = "unverified-tooling"
+            else:
+                outcome = "no-observed-followup"
+            stop_windows.append(
+                {
+                    "run_id": run_id,
+                    "candidate_id": candidate_id,
+                    "agent_session_id": agent_session_id,
+                    "stop_index": index + 1,
+                    "started_at": event.get("started_at"),
+                    "decision": event.get("decision"),
+                    "verifier_runs": len(window_iterations),
+                    "verified_revision_changes": revision_changes,
+                    "improvements": improvements,
+                    **window_activity,
+                    "outcome": outcome,
+                }
+            )
+
+        blocked_windows = [
+            window
+            for window in stop_windows
+            if window["run_id"] == run_id
+            and window["agent_session_id"] == agent_session_id
+            and window["decision"] == "block"
+        ]
+        first_block_epoch = (
+            _epoch(blocked_events[0].get("started_at"))
+            if blocked_events
+            else None
+        )
+        context_at_first_block = _nearest_context_percent(
+            activity_events, first_block_epoch
+        )
+        context_final = total_activity.get("context_percent_final")
+        context_growth = (
+            context_final - context_at_first_block
+            if context_final is not None and context_at_first_block is not None
+            else None
+        )
+        hook_stream_available = run_id in subagent_hook_streams
+        decision_counts = Counter(
+            str(event.get("decision") or "unknown") for event in session_events
+        )
+        rows.append(
+            {
+                "run_id": run_id,
+                "candidate_id": candidate_id,
+                "agent_session_id": agent_session_id,
+                "selected": candidate.get("selected") is True,
+                "best_score": candidate.get("best_score"),
+                "hook_stream_available": hook_stream_available,
+                "stop_calls": len(session_events) if hook_stream_available else None,
+                "blocked_stops": (
+                    decision_counts.get("block", 0)
+                    if hook_stream_available
+                    else None
+                ),
+                "allowed_stops": (
+                    decision_counts.get("allow", 0)
+                    if hook_stream_available
+                    else None
+                ),
+                "productive_blocked_stops": (
+                    sum(window["outcome"] == "productive" for window in blocked_windows)
+                    if hook_stream_available
+                    else None
+                ),
+                "verifier_runs_after_blocked_stops": (
+                    sum(window["verifier_runs"] for window in blocked_windows)
+                    if hook_stream_available
+                    else None
+                ),
+                "verified_revision_changes_after_blocked_stops": (
+                    sum(
+                        window["verified_revision_changes"]
+                        for window in blocked_windows
+                    )
+                    if hook_stream_available
+                    else None
+                ),
+                "improvements_after_blocked_stops": (
+                    sum(window["improvements"] for window in blocked_windows)
+                    if hook_stream_available
+                    else None
+                ),
+                "activity_available": activity_available,
+                "activity": total_activity,
+                "last_verifier_at": last_verifier,
+                "post_last_verifier": post_last,
+                "context_percent_at_first_block_nearest": context_at_first_block,
+                "context_percent_final": context_final,
+                "context_percent_max": total_activity.get("context_percent_max"),
+                "context_growth_after_first_block": context_growth,
+                "tail_signal": _loop_tail_signal(
+                    activity_available=activity_available,
+                    last_verifier_at=last_verifier,
+                    post_last=post_last,
+                ),
+            }
+        )
+
+    return {
+        "schema_version": 1,
+        "rows": rows,
+        "stop_windows": stop_windows,
+        "definitions": {
+            "productive_stop": (
+                "A blocked SubagentStop followed before the next stop by a "
+                "verifier on a different immutable Git revision."
+            ),
+            "polling_only": (
+                "At least ten context/global-evidence reads after the last "
+                "verifier, with no edit-capable call."
+            ),
+            "answer_only": (
+                "At least three post-verifier assistant messages, at least "
+                "half classified as short best-remains replies, and at most "
+                "one tool call."
+            ),
+            "empty_output": (
+                "At least five post-verifier assistant messages, at least "
+                "80 percent empty."
+            ),
+        },
+    }
+
+
 def build_html_report_data(root_dir: Path | str, run_id: str) -> dict[str, Any]:
     root = Path(root_dir).resolve()
     goal = _find_goal_record(root, run_id)
@@ -1634,6 +2374,20 @@ def build_html_report_data(root_dir: Path | str, run_id: str) -> dict[str, Any]:
     goal_runtime = FileGoalPlusRuntime(root)
     goal_events = goal_runtime.list_events(goal_id) if goal_id is not None else []
     timeline = _build_timeline(goal, goal_events, tasks)
+    stop_hook_statistics = _build_stop_hook_statistics(
+        root,
+        goal_plus_id=goal_id,
+        run_ids={
+            str(task["run_id"])
+            for task in tasks
+            if isinstance(task.get("run_id"), str) and task.get("run_id")
+        }
+        | {run_id},
+    )
+    loop_agent_statistics = _build_loop_agent_statistics(
+        tasks,
+        stop_hook_statistics,
+    )
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
         "generated_at": snapshot.get("snapshot_at"),
@@ -1642,6 +2396,8 @@ def build_html_report_data(root_dir: Path | str, run_id: str) -> dict[str, Any]:
         "snapshot": snapshot,
         "search_tasks": tasks,
         "timeline": timeline,
+        "stop_hook_statistics": stop_hook_statistics,
+        "loop_agent_statistics": loop_agent_statistics,
     }
 
 
@@ -2100,14 +2856,19 @@ def _render_search_trajectory(payload: dict[str, Any]) -> str:
     trajectories = len(payload.get("trajectories") or [])
     axis_type = str((payload.get("score_axis") or {}).get("type") or "linear")
     metric_name = str(payload.get("metric_name") or "score")
+    title = str(payload.get("title") or "Complete Search Trajectory")
+    unit_label = str(payload.get("unit_label") or "calls")
+    group_label = str(payload.get("group_label") or "loops")
+    aria_subject = str(payload.get("aria_subject") or "search trajectory")
     aria_label = (
-        f"Complete search trajectory with {evaluations} verifier calls across "
-        f"{trajectories} candidate loops for {metric_name}."
+        f"{aria_subject} with {evaluations} {unit_label} across "
+        f"{trajectories} {group_label} for {metric_name}."
     )
     return (
         '<div class="trajectory-shell">'
-        '<div class="trajectory-head"><h3>Complete Search Trajectory</h3>'
-        f'<span>{evaluations} calls / {trajectories} loops · {passing} scored / {failed} failed · '
+        f'<div class="trajectory-head"><h3>{escape(title)}</h3>'
+        f'<span>{evaluations} {escape(unit_label)} / {trajectories} {escape(group_label)} · '
+        f'{passing} scored / {failed} failed · '
         f'{axis_type} score axis</span></div>'
         f'<div class="trajectory-plot" role="img" aria-label="{escape(aria_label, quote=True)}" '
         f'data-search-trajectory="{encoded}"></div></div>'
@@ -2465,6 +3226,303 @@ def _render_statistics(task: dict[str, Any]) -> str:
     ) + "</div>"
 
 
+def _render_stop_hook_statistics(statistics: dict[str, Any]) -> str:
+    by_event = statistics.get("by_event") or {}
+    source_available = statistics.get("source_available") is True
+
+    def event_summary(event_name: str) -> dict[str, Any]:
+        if not source_available:
+            return {
+                "calls": None,
+                "block": None,
+                "allow": None,
+                "skipped": None,
+                "error": None,
+                "unknown": None,
+                "hook_time": None,
+            }
+        summary = by_event.get(event_name) or {}
+        decisions = summary.get("decisions") or {}
+        return {
+            "calls": summary.get("events_total", 0),
+            "block": decisions.get("block", 0),
+            "allow": decisions.get("allow", 0),
+            "skipped": decisions.get("skipped", 0),
+            "error": decisions.get("error", 0),
+            "unknown": decisions.get("unknown", 0),
+            "hook_time": summary.get("duration_ms_total", 0.0),
+        }
+
+    overview = {
+        "calls": statistics.get("events_total", 0) if source_available else None,
+        "hook_time": (
+            statistics.get("duration_ms_total", 0.0)
+            if source_available
+            else None
+        ),
+        "captured_through": statistics.get("captured_through"),
+    }
+    summary_tables = (
+        '<div class="stats-grid">'
+        '<div class="stats-table"><h3>All Stop Hooks</h3>'
+        f'{_stat_rows(overview, {"hook_time": _milliseconds})}</div>'
+        '<div class="stats-table"><h3>Top-level Stop</h3>'
+        f'{_stat_rows(event_summary("Stop"), {"hook_time": _milliseconds})}</div>'
+        '<div class="stats-table"><h3>SubagentStop</h3>'
+        f'{_stat_rows(event_summary("SubagentStop"), {"hook_time": _milliseconds})}</div>'
+        "</div>"
+    )
+
+    subagent_rows = []
+    for subagent in statistics.get("subagents") or []:
+        decisions = subagent.get("decisions") or {}
+        subagent_rows.append(
+            "<tr>"
+            f'<td class="mono"><strong>{_html(subagent.get("identity"))}</strong></td>'
+            f'<td>{_html(subagent.get("identity_source"))}</td>'
+            f'<td class="mono">{_html(", ".join(subagent.get("host_agent_ids") or []) or None)}</td>'
+            f'<td class="mono">{_html(", ".join(subagent.get("run_ids") or []) or None)}</td>'
+            f'<td class="mono">{_html(", ".join(subagent.get("candidate_ids") or []) or None)}</td>'
+            f'<td class="mono">{_html(subagent.get("events_total"))}</td>'
+            f'<td class="mono">{_html(decisions.get("block", 0))}</td>'
+            f'<td class="mono">{_html(decisions.get("allow", 0))}</td>'
+            f'<td class="mono">{_html(decisions.get("skipped", 0))}</td>'
+            f'<td class="mono">{_html(decisions.get("error", 0))}</td>'
+            f'<td class="mono">{_html(_milliseconds(subagent.get("duration_ms_total")))}</td>'
+            f'<td class="mono">{_html(subagent.get("last_event_at"))}</td>'
+            "</tr>"
+        )
+    if not source_available:
+        subagent_table = (
+            "<p>Stop-hook event evidence was not persisted for this report. "
+            "Counts cannot be distinguished from zero.</p>"
+        )
+    elif subagent_rows:
+        subagent_table = (
+            '<div class="table-scroll"><table class="hook-table"><thead><tr>'
+            "<th>Subagent</th><th>Identity source</th><th>Host agent</th><th>Run</th><th>Candidate</th>"
+            "<th>Calls</th><th>Block</th><th>Allow</th><th>Skipped</th><th>Error</th>"
+            "<th>Hook time</th><th>Last event</th>"
+            f'</tr></thead><tbody>{"".join(subagent_rows)}</tbody></table></div>'
+        )
+    else:
+        subagent_table = (
+            "<p>No SubagentStop invocation was captured in this report snapshot.</p>"
+        )
+
+    event_rows = []
+    for event in statistics.get("events") or []:
+        runtime_agent = event.get("agent_session_id")
+        host_agent = event.get("host_agent_id")
+        reason = event.get("error") or event.get("reason")
+        event_rows.append(
+            "<tr>"
+            f'<td class="mono">{_html(event.get("started_at"))}</td>'
+            f'<td>{_html(event.get("hook_event_name"))}</td>'
+            f'<td>{_status(event.get("decision"))}</td>'
+            f'<td class="mono">{_html(runtime_agent)}</td>'
+            f'<td class="mono">{_html(host_agent)}</td>'
+            f'<td class="mono">{_html(event.get("run_id"))}</td>'
+            f'<td class="mono">{_html(event.get("candidate_id"))}</td>'
+            f'<td class="mono">{_html(_milliseconds(event.get("duration_ms")))}</td>'
+            f'<td>{_html(event.get("stop_reason"))}</td>'
+            f'<td>{_html(reason)}</td>'
+            "</tr>"
+        )
+    event_evidence = (
+        '<details class="summary-block"><summary>Per-invocation hook evidence '
+        f'({len(event_rows)})</summary><div><div class="table-scroll"><table class="hook-table"><thead><tr>'
+        "<th>Started</th><th>Event</th><th>Decision</th><th>Agent session</th>"
+        "<th>Host agent</th><th>Run</th><th>Candidate</th><th>Hook time</th>"
+        "<th>Stop reason</th><th>Gate reason / error</th>"
+        f'</tr></thead><tbody>{"".join(event_rows)}</tbody></table></div></div></details>'
+        if event_rows
+        else ""
+    )
+    return (
+        summary_tables
+        + '<div class="subsection"><h3>Subagent Breakdown</h3>'
+        + subagent_table
+        + "</div>"
+        + event_evidence
+    )
+
+
+def _render_loop_agent_statistics(statistics: dict[str, Any]) -> str:
+    rows = statistics.get("rows") or []
+    if not rows:
+        return "<p>No Codex loop-agent session was persisted for this report.</p>"
+
+    def observed(row: dict[str, Any], value: Any) -> Any:
+        return value if row.get("activity_available") else None
+
+    def count_pair(total: Any, tail: Any, *, label: str = "tail") -> str | None:
+        if total is None or tail is None:
+            return None
+        return f"{_number(total)} total / {_number(tail)} {label}"
+
+    def context_label(row: dict[str, Any]) -> str | None:
+        first = _finite_float(row.get("context_percent_at_first_block_nearest"))
+        final = _finite_float(row.get("context_percent_final"))
+        maximum = _finite_float(row.get("context_percent_max"))
+        if first is None and final is None and maximum is None:
+            return None
+
+        def percent(value: float | None) -> str:
+            return (
+                f"{_number(value, digits=1)}%"
+                if value is not None
+                else "Not observed"
+            )
+
+        return (
+            f"{percent(first)} → {percent(final)} "
+            f"(max {percent(maximum)})"
+        )
+
+    summary_rows = []
+    for row in rows:
+        activity = row.get("activity") or {}
+        post_last = row.get("post_last_verifier") or {}
+        hook_stream_available = row.get("hook_stream_available") is True
+        stop_label = (
+            f"{_number(row.get('blocked_stops'))} block / "
+            f"{_number(row.get('allowed_stops'))} allow"
+            if hook_stream_available
+            else None
+        )
+        productive_label = (
+            f"{_number(row.get('productive_blocked_stops'))} / "
+            f"{_number(row.get('blocked_stops'))}"
+            if hook_stream_available
+            else None
+        )
+        verifier_label = (
+            f"{_number(row.get('verified_revision_changes_after_blocked_stops'))} revisions / "
+            f"{_number(row.get('verifier_runs_after_blocked_stops'))} verifiers / "
+            f"{_number(row.get('improvements_after_blocked_stops'))} improvements"
+            if hook_stream_available
+            else None
+        )
+        message_label = observed(
+            row,
+            (
+                f"{_number(post_last.get('assistant_messages'))} messages / "
+                f"{_number(post_last.get('empty_messages'))} empty / "
+                f"{_number(post_last.get('best_remains_messages'))} best-remains / "
+                f"{_number(post_last.get('cannot_continue_messages'))} cannot-continue"
+            ),
+        )
+        summary_rows.append(
+            "<tr>"
+            f'<td class="mono"><strong>{_html(row.get("candidate_id"))}</strong></td>'
+            f'<td class="mono">{_html(row.get("agent_session_id"))}</td>'
+            f'<td>{_status("incumbent" if row.get("selected") else "follower")}</td>'
+            f'<td class="mono">{_html(_number(row.get("best_score")))}</td>'
+            f'<td class="mono">{_html(stop_label)}</td>'
+            f'<td class="mono">{_html(productive_label)}</td>'
+            f'<td class="mono">{_html(verifier_label)}</td>'
+            f'<td class="mono">{_html(observed(row, count_pair(activity.get("context_calls"), post_last.get("context_calls"))))}</td>'
+            f'<td class="mono">{_html(observed(row, count_pair(activity.get("global_evidence_calls"), post_last.get("global_evidence_calls"))))}</td>'
+            f'<td class="mono">{_html(message_label)}</td>'
+            f'<td class="mono">{_html(context_label(row) if row.get("activity_available") else None)}</td>'
+            f'<td>{_status(row.get("tail_signal"))}</td>'
+            "</tr>"
+        )
+    summary_table = (
+        '<div class="table-scroll"><table class="hook-table"><thead><tr>'
+        "<th>Candidate</th><th>Loop agent</th><th>Final role</th><th>Best score</th>"
+        "<th>SubagentStop</th><th>Productive blocks</th><th>Post-block verified work</th>"
+        "<th>Context reads</th><th>Global-evidence reads</th><th>After last verifier</th>"
+        "<th>Context near first block → final</th><th>Tail signal</th>"
+        f'</tr></thead><tbody>{"".join(summary_rows)}</tbody></table></div>'
+    )
+
+    window_rows = []
+    for window in statistics.get("stop_windows") or []:
+        window_rows.append(
+            "<tr>"
+            f'<td class="mono">{_html(window.get("candidate_id"))}</td>'
+            f'<td class="mono">{_html(window.get("agent_session_id"))}</td>'
+            f'<td class="mono">{_html(window.get("stop_index"))}</td>'
+            f'<td>{_status(window.get("decision"))}</td>'
+            f'<td class="mono">{_html(window.get("started_at"))}</td>'
+            f'<td class="mono">{_html(window.get("context_calls"))}</td>'
+            f'<td class="mono">{_html(window.get("global_evidence_calls"))}</td>'
+            f'<td class="mono">{_html(window.get("edit_capable_calls"))}</td>'
+            f'<td class="mono">{_html(window.get("verifier_runs"))}</td>'
+            f'<td class="mono">{_html(window.get("verified_revision_changes"))}</td>'
+            f'<td class="mono">{_html(window.get("improvements"))}</td>'
+            f'<td class="mono">{_html(window.get("assistant_messages"))}</td>'
+            f'<td class="mono">{_html(window.get("empty_messages"))}</td>'
+            f'<td class="mono">{_html(window.get("best_remains_messages"))}</td>'
+            f'<td class="mono">{_html(window.get("cannot_continue_messages"))}</td>'
+            f'<td>{_status(window.get("outcome"))}</td>'
+            "</tr>"
+        )
+    window_table = (
+        '<details class="summary-block"><summary>Per-stop continuation windows '
+        f'({len(window_rows)})</summary><div><div class="table-scroll"><table class="hook-table"><thead><tr>'
+        "<th>Candidate</th><th>Loop agent</th><th>Stop #</th><th>Decision</th><th>Started</th>"
+        "<th>Context</th><th>Evidence</th><th>Edit-capable</th><th>Verifier</th>"
+        "<th>Revision changes</th><th>Improvements</th><th>Assistant</th><th>Empty</th>"
+        "<th>Best-remains</th><th>Cannot-continue</th><th>Outcome</th>"
+        f'</tr></thead><tbody>{"".join(window_rows)}</tbody></table></div></div></details>'
+        if window_rows
+        else '<p class="footnote">No per-invocation SubagentStop window was captured.</p>'
+    )
+    return (
+        summary_table
+        + window_table
+        + '<p class="footnote">Final role is a report-time incumbent/follower label, not a causal claim. '
+        "A productive block requires a blocked SubagentStop followed before the next stop by a verifier "
+        "on a different immutable Git revision. Context and global-evidence counts come from content-free "
+        "native Codex activity events. Tail signals are deterministic heuristics over the period after the "
+        "last verifier; unavailable evidence remains Not observed.</p>"
+    )
+
+
+def _render_candidate_loop_statistics(
+    activity: dict[str, Any],
+    stop_hook_statistics: dict[str, Any],
+) -> str:
+    hook_decisions = stop_hook_statistics.get("by_decision") or {}
+    hook_by_event = stop_hook_statistics.get("by_event") or {}
+    stop_blocks = (hook_by_event.get("Stop") or {}).get("decisions") or {}
+    subagent_blocks = (hook_by_event.get("SubagentStop") or {}).get("decisions") or {}
+    requested = {
+        "candidate_submissions": activity.get("candidates_submitted", 0),
+        "completed_with_result": activity.get(
+            "candidates_completed_with_result", 0
+        ),
+        "rejected_results": activity.get("results_rejected", 0),
+        "agent_resumes": activity.get("agent_resumes", 0),
+        "stop_hook_continue_triggers": hook_decisions.get("block", 0),
+    }
+    result_details = {
+        "durable_results": activity.get("results_total", 0),
+        "kept_results": activity.get("results_kept", 0),
+        "rejected_results": activity.get("results_rejected", 0),
+        "unsettled_results": activity.get("results_unsettled", 0),
+    }
+    continuation_details = {
+        "same_session_resumes": activity.get("same_session_resumes", 0),
+        "redispatch_resumes": activity.get("redispatch_resumes", 0),
+        "top_level_stop_triggers": stop_blocks.get("block", 0),
+        "subagent_stop_triggers": subagent_blocks.get("block", 0),
+    }
+    return (
+        '<div class="stats-grid">'
+        '<div class="stats-table"><h3>Requested Candidate Metrics</h3>'
+        f"{_stat_rows(requested)}</div>"
+        '<div class="stats-table"><h3>Result Settlement</h3>'
+        f"{_stat_rows(result_details)}</div>"
+        '<div class="stats-table"><h3>Continuation Sources</h3>'
+        f"{_stat_rows(continuation_details)}</div>"
+        "</div>"
+    )
+
+
 def _render_task(
     task: dict[str, Any],
     index: int,
@@ -2528,6 +3586,7 @@ def render_html_report(data: dict[str, Any]) -> str:
     goal = snapshot.get("goal_plus") or {}
     aggregate = snapshot.get("search_task_aggregate") or {}
     aggregate_stats = aggregate.get("statistics") or {}
+    candidate_activity = aggregate_stats.get("activity") or {}
     aggregate_usage = aggregate_stats.get("usage") or {}
     total_statistics = snapshot.get("statistics") or {}
     total_usage = total_statistics.get("total_usage") or {}
@@ -2545,6 +3604,8 @@ def render_html_report(data: dict[str, Any]) -> str:
     unavailable = total_statistics.get("unavailable_metrics") or []
     missing = (selected_stats.get("data_quality") or {}).get("missing") or []
     warnings = snapshot.get("warnings") or []
+    stop_hook_statistics = data.get("stop_hook_statistics") or {}
+    loop_agent_statistics = data.get("loop_agent_statistics") or {}
     goal_id = data.get("goal_plus_id")
     title_id = str(goal_id or report_run_id)
     state = goal.get("status") or (selected_task.get("run") or {}).get("state")
@@ -2644,6 +3705,8 @@ def render_html_report(data: dict[str, Any]) -> str:
         "snapshot": snapshot,
         "search_tasks": tasks,
         "timeline": data.get("timeline"),
+        "stop_hook_statistics": stop_hook_statistics,
+        "loop_agent_statistics": loop_agent_statistics,
     }
 
     print_icon = (
@@ -2680,6 +3743,7 @@ def render_html_report(data: dict[str, Any]) -> str:
   <nav class="section-nav no-print" aria-label="Report sections">
     <div class="wrap">
       <a href="#aggregate">Summary</a><a href="#goal">Goal</a>
+      <a href="#hooks">Candidate / hooks</a>
       <a href="#tasks">Search tasks ({escape(_number(search_count))})</a><a href="#audit">Audit</a>
     </div>
   </nav>
@@ -2720,6 +3784,21 @@ def render_html_report(data: dict[str, Any]) -> str:
         </dl>
       </div>
     </section>
+    <section id="hooks" class="report-section">
+      <div class="section-kicker">Candidate Loop And Host Hook Evidence</div>
+      <div class="activity-summary">
+      <h2>Candidate Loop Activity</h2>
+      {_render_candidate_loop_statistics(candidate_activity, stop_hook_statistics)}
+      <p class="footnote">Candidate submissions count durable candidate records. Completed with Result counts unique candidates with at least one verifier-settled iteration. Rejected Results are discard/failure dispositions. Agent resumes combine accepted same-session continuations and state redispatches. Stop-hook continue triggers count automatic Stop/SubagentStop block decisions.</p>
+      </div>
+      <div class="activity-summary">
+      <h2>Loop Agent Stop Outcomes</h2>
+      {_render_loop_agent_statistics(loop_agent_statistics)}
+      </div>
+      <h2>Stop Hook Activity</h2>
+      {_render_stop_hook_statistics(stop_hook_statistics)}
+      <p class="footnote">This is a static snapshot of durable automatic Stop and SubagentStop invocations available when the report was generated. Direct goal_plus_gate calls are excluded.</p>
+    </section>
     <section id="tasks" class="report-section">
       <div class="section-kicker">Per-Task Evidence</div>
       <h2>Search Tasks</h2>
@@ -2744,6 +3823,769 @@ def render_html_report(data: dict[str, Any]) -> str:
 """
 
 
+def _codex_report_hook_statistics(observation: dict[str, Any]) -> dict[str, Any]:
+    existing = observation.get("hook_statistics")
+    if isinstance(existing, dict):
+        return existing
+
+    hooks = observation.get("hooks")
+    hooks = hooks if isinstance(hooks, dict) else {}
+    by_decision = _stop_hook_decision_counts()
+    by_event: dict[str, dict[str, Any]] = {}
+    events_total = 0
+    for event_name, source_name in (
+        ("Stop", "stop"),
+        ("SubagentStop", "subagent_stop"),
+    ):
+        source = hooks.get(source_name)
+        source = source if isinstance(source, dict) else {}
+        started = int(source.get("started") or 0)
+        block = int(source.get("blocked") or 0)
+        allow = int(source.get("completed_or_allowed") or 0)
+        error = int(source.get("other_terminal_statuses") or 0)
+        unknown = max(0, started - block - allow - error)
+        decisions = {
+            "block": block,
+            "allow": allow,
+            "skipped": 0,
+            "error": error,
+            "unknown": unknown,
+        }
+        by_event[event_name] = {
+            "events_total": started,
+            "duration_ms_total": None,
+            "decisions": decisions,
+        }
+        events_total += started
+        for decision, count in decisions.items():
+            by_decision[decision] += count
+    return {
+        "schema_version": 1,
+        "events_total": events_total,
+        "duration_ms_total": None,
+        "captured_through": None,
+        "by_event": by_event,
+        "by_decision": by_decision,
+        "subagents": [],
+        "events": [],
+    }
+
+
+def _codex_trajectory_payload(observation: dict[str, Any]) -> dict[str, Any] | None:
+    evaluations = observation.get("evaluations")
+    evaluations = evaluations if isinstance(evaluations, dict) else {}
+    entries = evaluations.get("entries")
+    entries = entries if isinstance(entries, list) else []
+    if not entries:
+        return None
+
+    metric_name = str(evaluations.get("metric_name") or "score")
+    direction = str(evaluations.get("metric_direction") or "maximize")
+    if direction not in {"minimize", "maximize"}:
+        direction = "maximize"
+
+    normalized: list[dict[str, Any]] = []
+    for call, raw_entry in enumerate(entries, start=1):
+        if not isinstance(raw_entry, dict):
+            continue
+        score = _finite_float(raw_entry.get("score"))
+        round_name = str(raw_entry.get("round") or f"submission-{call}")
+        kind = str(raw_entry.get("kind") or "submission")
+        normalized.append(
+            {
+                "call": call,
+                "round": round_name,
+                "kind": kind,
+                "score": score,
+                "valid": raw_entry.get("valid") is not False and score is not None,
+                "at": raw_entry.get("at"),
+            }
+        )
+    scored = [entry for entry in normalized if entry["score"] is not None]
+    if not scored:
+        return None
+
+    trajectories: list[dict[str, Any]] = []
+    kinds = list(dict.fromkeys(str(entry["kind"]) for entry in scored))
+    for kind in kinds:
+        points = [entry for entry in scored if entry["kind"] == kind]
+        passing = [entry for entry in points if entry["valid"]]
+        failed = [entry for entry in points if not entry["valid"]]
+        trajectories.append(
+            {
+                "candidate_id": f"{kind} submissions",
+                "selected": any(
+                    entry["round"] == evaluations.get("best_round") for entry in points
+                ),
+                "calls": [entry["call"] for entry in passing],
+                "scores": [entry["score"] for entry in passing],
+                "details": [
+                    [
+                        entry["round"],
+                        f"{kind} submission",
+                        str(entry.get("at") or "timestamp unavailable"),
+                    ]
+                    for entry in passing
+                ],
+                "failed_calls": [entry["call"] for entry in failed],
+                "failed_scores": [entry["score"] for entry in failed],
+                "failed_details": [
+                    [
+                        entry["round"],
+                        f"{kind} submission",
+                        str(entry.get("at") or "timestamp unavailable"),
+                    ]
+                    for entry in failed
+                ],
+            }
+        )
+
+    global_calls: list[int] = []
+    global_scores: list[float] = []
+    current: float | None = None
+    for entry in normalized:
+        if not entry["valid"]:
+            continue
+        score = float(entry["score"])
+        if current is None or _is_better_score(score, current, direction):
+            current = score
+        global_calls.append(int(entry["call"]))
+        global_scores.append(float(current))
+
+    best_round = evaluations.get("best_round")
+    selected_entry = next(
+        (
+            entry
+            for entry in normalized
+            if entry["valid"] and entry["round"] == best_round
+        ),
+        None,
+    )
+    selected_point = (
+        {
+            "candidate_id": f"{selected_entry['kind']} submissions",
+            "call": selected_entry["call"],
+            "score": selected_entry["score"],
+        }
+        if selected_entry is not None
+        else None
+    )
+    passing_scores = [
+        float(entry["score"]) for entry in normalized if entry["valid"]
+    ]
+    passing_count = sum(entry["valid"] for entry in normalized)
+    return {
+        "title": "Submission Score Trajectory",
+        "aria_subject": "Codex submission score trajectory",
+        "unit_label": "submissions",
+        "group_label": "series",
+        "call_label": "Submission",
+        "point_label": "Round",
+        "best_label": "Best-so-far",
+        "failure_label": "invalid submission",
+        "failure_legend": "Invalid submission · not ranked",
+        "export_name": "codex-run-submission-trajectory",
+        "metric_name": metric_name,
+        "metric_direction": direction,
+        "baseline": None,
+        "selected": _finite_float(evaluations.get("best_score")),
+        "evaluations": len(entries),
+        "passing_evaluations": passing_count,
+        "failed_evaluations": len(entries) - passing_count,
+        "call_window": _trajectory_call_window(len(entries)),
+        "score_axis": _trajectory_score_axis(passing_scores),
+        "trajectories": trajectories,
+        "global_best": {"calls": global_calls, "scores": global_scores},
+        "selected_point": selected_point,
+    }
+
+
+def _render_stop_progress_chart(observation: dict[str, Any]) -> str:
+    hooks = observation.get("hooks")
+    hooks = hooks if isinstance(hooks, dict) else {}
+    stop = hooks.get("stop")
+    stop = stop if isinstance(stop, dict) else {}
+    raw_bins = stop.get("blocked_output_progress_bins")
+    bins = [int(value or 0) for value in raw_bins] if isinstance(raw_bins, list) else []
+    if not bins:
+        return '<p class="footnote">No output-progress distribution was persisted.</p>'
+
+    width = 1000.0
+    height = 210.0
+    chart_top = 18.0
+    chart_bottom = 178.0
+    chart_height = chart_bottom - chart_top
+    maximum = max(bins) or 1
+    step = width / len(bins)
+    gap = min(2.0, step * 0.18)
+    bars = []
+    for index, count in enumerate(bins):
+        bar_height = chart_height * count / maximum
+        x = index * step + gap / 2
+        y = chart_bottom - bar_height
+        bars.append(
+            f'<rect x="{x:.2f}" y="{y:.2f}" width="{max(0.5, step - gap):.2f}" '
+            f'height="{bar_height:.2f}" fill="var(--accent)">'
+            f"<title>Output progress bin {index + 1}: {count} blocked Stop attempts</title>"
+            "</rect>"
+        )
+    return (
+        '<div class="stop-progress-chart">'
+        f'<svg viewBox="0 0 1000 {height:.0f}" preserveAspectRatio="none" '
+        'role="img" aria-label="Blocked Stop attempts by execution output progress">'
+        f'<line x1="0" y1="{chart_bottom:.2f}" x2="{width:.2f}" y2="{chart_bottom:.2f}" '
+        'stroke="var(--border-strong)" stroke-width="1"/>'
+        + "".join(bars)
+        + f'<text x="4" y="12" fill="var(--muted)" font-size="10">max bin {maximum}</text>'
+        "</svg>"
+        '<div class="stop-progress-axis"><span>0% output</span>'
+        '<span>Execution-output progress, not wall-clock time</span>'
+        '<span>100% output</span></div></div>'
+    )
+
+
+def _render_codex_execution_timeline(observation: dict[str, Any]) -> str:
+    run = observation.get("run")
+    run = run if isinstance(run, dict) else {}
+    run_log = observation.get("run_log")
+    run_log = run_log if isinstance(run_log, dict) else {}
+    evaluations = observation.get("evaluations")
+    evaluations = evaluations if isinstance(evaluations, dict) else {}
+    entries = evaluations.get("entries")
+    entries = entries if isinstance(entries, list) else []
+    started_at = run_log.get("first_timestamp") or run.get("started_at")
+    ended_at = run_log.get("last_timestamp") or run.get("ended_at")
+    start_epoch = _epoch(started_at)
+    end_epoch = _epoch(ended_at)
+    if (
+        start_epoch is None
+        or end_epoch is None
+        or end_epoch <= start_epoch
+    ):
+        return (
+            '<div class="panel panel-body"><p>Execution start/end timestamps were not '
+            "available for a wall-clock timeline.</p></div>"
+        )
+
+    span = end_epoch - start_epoch
+    auto_points = []
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("kind") != "auto":
+            continue
+        timestamp = entry.get("at")
+        event_epoch = _epoch(timestamp)
+        if event_epoch is None:
+            continue
+        left = max(0.0, min(99.0, (event_epoch - start_epoch) / span * 100.0))
+        auto_points.append(
+            f'<span class="timeline-event parent point" style="left:{left:.3f}%;width:0.8%;" '
+            f'title="{escape(str(entry.get("round") or "auto evaluation"), quote=True)} · '
+            f'{escape(str(timestamp), quote=True)}"></span>'
+        )
+    terminal_state = str(
+        run.get("terminal_state")
+        or ("timed_out" if run.get("timed_out") else "completed")
+    )
+    terminal_label = terminal_state.replace("_", " ")
+    return (
+        '<div class="panel timeline-shell">'
+        '<div class="timeline-head"><h2>Codex Execution Timeline</h2>'
+        f'<span class="mono">Observed span: {escape(_duration(span))}</span></div>'
+        '<div class="timeline-scroll" tabindex="0" aria-label="Codex execution timeline">'
+        '<div class="timeline" style="--timeline-width:980px">'
+        '<div class="timeline-rows" data-track-count="2">'
+        '<div class="timeline-row"><div class="timeline-label">Codex process</div>'
+        '<div class="timeline-track"><span class="timeline-event main" '
+        f'style="left:0%;width:100%;" title="Codex execution · {escape(terminal_label, quote=True)}">'
+        f"Codex execution · {escape(terminal_label)}</span></div></div>"
+        '<div class="timeline-row"><div class="timeline-label">Auto evaluations</div>'
+        f'<div class="timeline-track">{"".join(auto_points)}</div></div>'
+        "</div>"
+        '<div class="timeline-axis">'
+        f"<span>{escape(str(started_at))}</span><span>+{escape(_duration(span / 2))}</span>"
+        f"<span>{escape(str(ended_at))}</span></div></div></div>"
+        '<div class="timeline-key"><span><i class="key-dot"></i>Codex process</span>'
+        '<span><i class="key-dot parent"></i>Timestamped auto evaluation</span>'
+        '<span>Agent submissions without persisted timestamps remain in submission order only.</span>'
+        "</div></div>"
+    )
+
+
+def _render_codex_submissions(observation: dict[str, Any]) -> str:
+    evaluations = observation.get("evaluations")
+    evaluations = evaluations if isinstance(evaluations, dict) else {}
+    entries = evaluations.get("entries")
+    entries = entries if isinstance(entries, list) else []
+    rows = []
+    for index, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            continue
+        passed = entry.get("passed")
+        total_tests = entry.get("total_tests")
+        test_result = (
+            f"{passed}/{total_tests}"
+            if isinstance(passed, int) and isinstance(total_tests, int)
+            else "Not observed"
+        )
+        rows.append(
+            "<tr>"
+            f'<td class="mono">{index}</td>'
+            f'<td class="mono"><strong>{_html(entry.get("round"))}</strong></td>'
+            f"<td>{_html(entry.get('kind'))}</td>"
+            f'<td class="mono">{_html(_number(entry.get("score"), digits=4))}</td>'
+            f'<td class="mono">{_html(_percent(entry.get("pass_rate")))}</td>'
+            f"<td>{_html(test_result)}</td>"
+            f"<td>{_html('Yes' if entry.get('valid') is True else 'No')}</td>"
+            f'<td class="mono">{_html(entry.get("at"))}</td>'
+            f"<td>{_html(entry.get('summary'))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        return "<p>No persisted submission history was found.</p>"
+    return (
+        '<div class="table-scroll"><table><thead><tr>'
+        "<th>#</th><th>Round</th><th>Kind</th><th>Score</th><th>Pass rate</th>"
+        "<th>Tests</th><th>Valid</th><th>Timestamp</th><th>Summary</th>"
+        f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+    )
+
+
+def _artifact_link(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        return "Not observed"
+    path = Path(value)
+    try:
+        uri = path.as_uri()
+    except ValueError:
+        return _html(value)
+    return f'<a href="{escape(uri, quote=True)}">{_html(path.name)}</a>'
+
+
+def _render_codex_goal_plus_finalization(observation: dict[str, Any]) -> str:
+    goal_plus = observation.get("goal_plus")
+    if not isinstance(goal_plus, dict) or not goal_plus.get("source_available"):
+        return ""
+    records = goal_plus.get("records")
+    records = records if isinstance(records, list) else []
+    rows = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        search_tasks = record.get("search_tasks")
+        search_tasks = search_tasks if isinstance(search_tasks, list) else []
+        search_state = ", ".join(
+            f"{task.get('run_id')}={task.get('state') or 'unknown'}"
+            for task in search_tasks
+            if isinstance(task, dict)
+        ) or "None"
+        rows.append(
+            "<tr>"
+            f"<td class=\"mono\"><strong>{_html(record.get('goal_plus_id'))}</strong></td>"
+            f"<td>{_status(record.get('status'))}</td>"
+            f"<td>{_html(record.get('phase'))}</td>"
+            f"<td>{_html(record.get('next_action'))}</td>"
+            f"<td>{_html(record.get('result_recorded_at'))}</td>"
+            f"<td class=\"mono\">{_html(record.get('selected_candidate_id'))}</td>"
+            f"<td class=\"mono\">{_html(search_state)}</td>"
+            "</tr>"
+        )
+    overall = str(goal_plus.get("overall_status") or "unknown")
+    overall_label = {
+        "complete": "Complete",
+        "incomplete": "Incomplete",
+        "unavailable": "Not observed",
+    }.get(overall, overall.replace("_", " ").title())
+    tone = "success" if overall == "complete" else "failure" if overall == "incomplete" else "warning"
+    table = (
+        '<div class="table-scroll"><table><thead><tr>'
+        "<th>Goal</th><th>Status</th><th>Phase</th><th>Next action</th>"
+        "<th>Result recorded</th><th>Selected candidate</th><th>Search runs</th>"
+        f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+        if rows
+        else "<p>No Goal Plus records were found in the persisted state archive.</p>"
+    )
+    return (
+        '<section id="goal-plus-finalization" class="report-section">'
+        '<div class="section-kicker">Goal Plus Durable State</div>'
+        '<div class="kpi-grid">'
+        f'{_metric_card("Goal Plus finalization", overall_label, f"{len(records)} persisted record(s)", tone)}'
+        f'{_metric_card("Active records", _number(goal_plus.get("active_records")), "must be zero for a final Goal Plus report", "failure" if goal_plus.get("active_records") else "success")}'
+        f'{_metric_card("Terminal records", _number(goal_plus.get("terminal_records")), "complete / blocked / abandoned")}'
+        f'{_metric_card("Persisted reports", _number(goal_plus.get("reports_generated")), "terminal Goal Plus report paths")}'
+        "</div>"
+        '<div class="panel panel-body">'
+        "<h3>Goal Plus Finalization Evidence</h3>"
+        "<p>Benchmark evaluator outcome and Goal Plus lifecycle completion are "
+        "independent facts. A valid promoted result does not make an active Goal "
+        "record terminal.</p>"
+        f"{table}</div></section>"
+    )
+
+
+def render_codex_observability_report(observation: dict[str, Any]) -> str:
+    run = observation.get("run")
+    run = run if isinstance(run, dict) else {}
+    result = observation.get("result")
+    result = result if isinstance(result, dict) else {}
+    usage = observation.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    evaluations = observation.get("evaluations")
+    evaluations = evaluations if isinstance(evaluations, dict) else {}
+    availability = observation.get("availability")
+    availability = availability if isinstance(availability, dict) else {}
+    evidence = observation.get("evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    warnings = observation.get("warnings")
+    warnings = warnings if isinstance(warnings, list) else []
+    hook_statistics = _codex_report_hook_statistics(observation)
+    stop = ((observation.get("hooks") or {}).get("stop") or {})
+    stop_observed = availability.get("stop_hook_events")
+    if not isinstance(stop_observed, bool):
+        stop_observed = bool(hook_statistics.get("events_total"))
+    hook_activity_html = (
+        _render_stop_hook_statistics(hook_statistics)
+        if stop_observed
+        else (
+            '<div class="panel panel-body"><p>Stop/SubagentStop activity was not '
+            "observed because no structured hook evidence or hook lifecycle output "
+            "was persisted for this run.</p></div>"
+        )
+    )
+    stop_progress_html = (
+        _render_stop_progress_chart(observation)
+        if stop_observed
+        else '<p class="footnote">No persisted hook evidence was available.</p>'
+    )
+    trajectory_payload = _codex_trajectory_payload(observation)
+    plotly_javascript = _load_plotly_javascript() if trajectory_payload else None
+    trajectory_html = (
+        _render_search_trajectory(trajectory_payload)
+        if trajectory_payload is not None and plotly_javascript
+        else (
+            '<div class="panel panel-body"><p>Submission history is available below, '
+            "but Plotly is not installed in this renderer environment.</p></div>"
+            if trajectory_payload is not None
+            else '<div class="panel panel-body"><p>No scored submission trajectory was found.</p></div>'
+        )
+    )
+    plotly_script = (
+        f"<script>{plotly_javascript}</script>" if plotly_javascript else ""
+    )
+
+    run_id = str(run.get("run_id") or "unknown")
+    task_id = str(run.get("task_id") or "unknown")
+    timed_out = bool(run.get("timed_out"))
+    termination_reason = str(
+        run.get("termination_reason")
+        or ("timeout" if timed_out else "completed")
+    )
+    outcome_status = str(result.get("outcome_status") or "unknown")
+    observed_terminal_state = run.get("terminal_state")
+    if isinstance(observed_terminal_state, str) and observed_terminal_state:
+        terminal_state = observed_terminal_state
+    elif timed_out:
+        terminal_state = (
+            "budget_reached"
+            if termination_reason == "budget_exhausted"
+            else "timed_out"
+        )
+    else:
+        terminal_state = "complete"
+    outcome_label = {
+        "success": "Successful",
+        "valid_result": "Valid result",
+        "no_valid_result": "No valid result",
+        "no_result": "No result",
+    }.get(outcome_status, outcome_status.replace("_", " ").title())
+    terminal_label = {
+        "budget_reached": "Budget reached",
+        "timed_out": "Timed out",
+        "complete": "Completed",
+        "completed": "Completed",
+        "completed_in_finalization_grace": "Completed in finalization grace",
+        "failed": "Failed",
+    }.get(terminal_state, terminal_state.replace("_", " ").title())
+    terminal_tone = (
+        "success"
+        if terminal_state == "budget_reached" and outcome_status == "success"
+        else _status_class(terminal_state)
+    )
+    total_submissions = int(result.get("total_rounds") or len(evaluations.get("entries") or []))
+    goal_plus = observation.get("goal_plus")
+    goal_plus = goal_plus if isinstance(goal_plus, dict) else {}
+    kpi_cards = [
+        _metric_card(
+            "Run status",
+            terminal_label,
+            f"{outcome_label} · resumes {_number(run.get('resume_count'))}",
+            terminal_tone,
+        ),
+        _metric_card(
+            "Runtime",
+            _duration(run.get("runtime_seconds")),
+            "observed agent runtime",
+        ),
+        _metric_card(
+            "Model",
+            _text(run.get("model")),
+            f"reasoning {_text(run.get('reasoning_effort'))}",
+        ),
+        _metric_card(
+            "Blocked Stop",
+            _number(stop.get("blocked")) if stop_observed else "Not observed",
+            (
+                f"{_number(stop.get('blocked_per_agent_hour'), digits=1)} / agent-hour"
+                if stop_observed
+                else "no persisted hook evidence"
+            ),
+            "warning",
+        ),
+    ]
+    if goal_plus.get("source_available"):
+        goal_status = str(goal_plus.get("overall_status") or "unknown")
+        kpi_cards.append(
+            _metric_card(
+                "Goal Plus finalization",
+                {
+                    "complete": "Complete",
+                    "incomplete": "Incomplete",
+                }.get(goal_status, goal_status.replace("_", " ").title()),
+                f"{_number(goal_plus.get('active_records'))} active record(s)",
+                "success" if goal_status == "complete" else "failure",
+            )
+        )
+    if total_submissions:
+        kpi_cards.extend(
+            [
+                _metric_card(
+                    "Best score",
+                    _number(result.get("best_score"), digits=4),
+                    f"round {_text(result.get('best_round'))}",
+                    "success",
+                ),
+                _metric_card(
+                    "Best pass rate",
+                    _percent(result.get("best_pass_rate")),
+                    "persisted evaluator evidence",
+                    "success",
+                ),
+                _metric_card(
+                    "Submissions",
+                    _number(total_submissions),
+                    f"{_number(result.get('agent_submissions'))} agent / "
+                    f"{_number(result.get('auto_submissions'))} auto",
+                ),
+                _metric_card(
+                    "Codex sessions",
+                    _number(len(run.get("session_ids") or [])),
+                    ", ".join(run.get("codex_versions") or [])
+                    or "version unavailable",
+                ),
+            ]
+        )
+    else:
+        kpi_cards.extend(
+            [
+                _metric_card(
+                    "Processed tokens",
+                    _number(usage.get("processed_tokens")),
+                    _text(usage.get("scope")),
+                ),
+                _metric_card(
+                    "API-equivalent cost",
+                    _cost(usage.get("cost_usd")),
+                    "estimate when complete",
+                ),
+                _metric_card(
+                    "Tool calls",
+                    _number(usage.get("tool_calls")),
+                    f"{_number(usage.get('assistant_messages'))} assistant messages",
+                ),
+                _metric_card(
+                    "Codex sessions",
+                    _number(len(run.get("session_ids") or [])),
+                    ", ".join(run.get("codex_versions") or [])
+                    or "version unavailable",
+                ),
+            ]
+        )
+    kpis = "".join(kpi_cards)
+    warning_items = "".join(
+        f"<li>{_html(item)}</li>" for item in warnings
+    ) or "<li>No evidence warnings.</li>"
+    artifact_rows = "".join(
+        "<tr>"
+        f"<th>{_html(key.replace('_', ' ').title())}</th>"
+        f"<td>{_artifact_link(value)}</td>"
+        "</tr>"
+        for key, value in evidence.items()
+    )
+    raw_payload = json.dumps(
+        observation,
+        indent=2,
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    goal_plus_section = _render_codex_goal_plus_finalization(observation)
+    goal_plus_nav = (
+        '<a href="#goal-plus-finalization">Goal Plus</a>'
+        if goal_plus_section
+        else ""
+    )
+    print_icon = (
+        '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" '
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 '
+        '2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>'
+    )
+    return f"""<!doctype html>
+<html lang="en" data-report-schema="codex-observability-report/v{REPORT_DOCUMENT_SCHEMA_VERSION}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Codex Execution Report: {escape(run_id)}</title>
+  <script>document.documentElement.classList.add('js');</script>
+  <style>{_REPORT_CSS}</style>
+</head>
+<body data-run-id="{escape(run_id, quote=True)}">
+  <header class="masthead">
+    <div class="wrap masthead-inner">
+      <div class="identity">
+        <div class="eyebrow">Codex Execution Report</div>
+        <div class="identity-line"><h1>{escape(run_id)}</h1><span class="status {_status_class(terminal_state)}">{escape(terminal_label)}</span></div>
+        <div class="id-line mono">Task: {escape(task_id)} · source: {_html(observation.get("source_kind"))}</div>
+      </div>
+      <div class="masthead-actions">
+        <div class="generated">Generated<strong class="mono">{_html(observation.get("generated_at"))}</strong></div>
+        <button class="button no-print" type="button" onclick="window.print()" title="Print report">{print_icon}<span>Print</span></button>
+      </div>
+    </div>
+  </header>
+  <nav class="section-nav no-print" aria-label="Report sections">
+    <div class="wrap">
+      <a href="#aggregate">Summary</a><a href="#execution">Execution</a>
+      {goal_plus_nav}<a href="#trajectory">Trajectory</a><a href="#hooks">Stop hooks</a>
+      <a href="#audit">Audit</a>
+    </div>
+  </nav>
+  <main class="wrap">
+    <section id="aggregate" class="report-section">
+      <div class="section-kicker">Codex Run Summary</div>
+      <div class="kpi-grid">{kpis}</div>
+    </section>
+    {goal_plus_section}
+    <section id="execution" class="report-section">
+      <div class="section-kicker">Host Execution Evidence</div>
+      {_render_codex_execution_timeline(observation)}
+      <div class="panel panel-body">
+        <h3>Run Facts</h3>
+        <dl class="fact-grid">
+          <div class="fact"><dt>Agent</dt><dd>{_html(run.get("agent"))}</dd></div>
+          <div class="fact"><dt>Model</dt><dd>{_html(run.get("model"))}</dd></div>
+          <div class="fact"><dt>Reasoning effort</dt><dd>{_html(run.get("reasoning_effort"))}</dd></div>
+          <div class="fact"><dt>Metric direction</dt><dd>{_html(evaluations.get("metric_direction"))}</dd></div>
+          <div class="fact"><dt>Termination reason</dt><dd>{_html(termination_reason.replace("_", " ").title())}</dd></div>
+          <div class="fact"><dt>Outcome</dt><dd>{_html(outcome_label)}</dd></div>
+          <div class="fact"><dt>Raw timeout flag</dt><dd>{_html(str(timed_out).lower())}</dd></div>
+          <div class="fact"><dt>Exploration budget</dt><dd>{_html(_duration(run.get("exploration_budget_seconds")))}</dd></div>
+          <div class="fact"><dt>Finalization grace</dt><dd>{_html(_duration(run.get("finalization_grace_seconds")))}</dd></div>
+          <div class="fact"><dt>Finalization runtime</dt><dd>{_html(_duration(run.get("finalization_runtime_seconds")))}</dd></div>
+        </dl>
+      </div>
+      <div class="panel panel-body">
+        <h3>Usage Evidence</h3>
+        <dl class="fact-grid">
+          <div class="fact"><dt>Processed tokens</dt><dd>{_html(_number(usage.get("processed_tokens")))}</dd></div>
+          <div class="fact"><dt>Input tokens</dt><dd>{_html(_number(usage.get("input_tokens")))}</dd></div>
+          <div class="fact"><dt>Cached input tokens</dt><dd>{_html(_number(usage.get("cached_input_tokens")))}</dd></div>
+          <div class="fact"><dt>Output tokens</dt><dd>{_html(_number(usage.get("output_tokens")))}</dd></div>
+          <div class="fact"><dt>API-equivalent cost</dt><dd>{_html(_cost(usage.get("cost_usd")))}</dd></div>
+          <div class="fact"><dt>Tool calls</dt><dd>{_html(_number(usage.get("tool_calls")))}</dd></div>
+          <div class="fact"><dt>Assistant messages</dt><dd>{_html(_number(usage.get("assistant_messages")))}</dd></div>
+          <div class="fact"><dt>Usage scope</dt><dd>{_html(usage.get("scope"))}</dd></div>
+        </dl>
+      </div>
+    </section>
+    <section id="trajectory" class="report-section">
+      <div class="section-kicker">Evaluator Evidence</div>
+      {trajectory_html}
+      <div class="panel panel-body">
+        <h3>Submission Evidence</h3>
+        {_render_codex_submissions(observation)}
+      </div>
+    </section>
+    <section id="hooks" class="report-section">
+      <div class="section-kicker">Codex Host Hook Evidence</div>
+      <h2>Stop Hook Activity</h2>
+      {hook_activity_html}
+      <div class="subsection">
+        <h3>Blocked Stop Distribution</h3>
+        {stop_progress_html}
+      </div>
+      <p class="footnote">When a source preserves hook lifecycle counts and output positions but not per-hook timestamps, output-progress bins must not be interpreted as wall-clock time.</p>
+    </section>
+    <section id="audit" class="report-section">
+      <h2>Report Audit</h2>
+      <div class="two-column">
+        <div class="panel panel-body"><h3>Evidence Warnings</h3><ul class="warning-list">{warning_items}</ul></div>
+        <div class="panel panel-body"><h3>Evidence Availability</h3>
+          <dl class="fact-grid">
+            <div class="fact"><dt>Stop hook events</dt><dd>{_html(availability.get("stop_hook_events"))}</dd></div>
+            <div class="fact"><dt>Per-event timestamps</dt><dd>{_html(availability.get("per_event_wall_clock_timestamps"))}</dd></div>
+            <div class="fact"><dt>stop_hook_active</dt><dd>{_html(availability.get("stop_hook_active"))}</dd></div>
+            <div class="fact"><dt>Token usage</dt><dd>{_html(availability.get("token_usage"))}</dd></div>
+            <div class="fact"><dt>Goal Plus state</dt><dd>{_html(availability.get("goal_plus_state"))}</dd></div>
+            <div class="fact"><dt>Reason</dt><dd>{_html(availability.get("reason"))}</dd></div>
+          </dl>
+        </div>
+      </div>
+      <div class="panel panel-body"><h3>Source Artifacts</h3>
+        <div class="table-scroll"><table><tbody>{artifact_rows}</tbody></table></div>
+      </div>
+      <details class="summary-block"><summary>Complete normalized report data</summary><pre>{escape(raw_payload)}</pre></details>
+      <p class="footnote">Schema codex-observability-report/v{REPORT_DOCUMENT_SCHEMA_VERSION}. This file is self-contained and contains normalized evidence only; prompts and assistant messages are excluded.</p>
+    </section>
+  </main>
+  {plotly_script}
+  <script>{_REPORT_SCRIPT}</script>
+</body>
+</html>
+"""
+
+
+def render_report_document(document: dict[str, Any]) -> str:
+    if not isinstance(document, dict):
+        raise TypeError("report document must be a mapping")
+    report_kind = document.get("report_kind")
+    data = document.get("data")
+    if not isinstance(data, dict):
+        raise ValueError("report document data must be a mapping")
+    if report_kind == "goal-plus":
+        return render_html_report(data)
+    if report_kind == "codex-run":
+        return render_codex_observability_report(data)
+    raise ValueError(f"unsupported report kind: {report_kind!r}")
+
+
+def _require_terminal_goal_plus_report(data: dict[str, Any]) -> None:
+    goal_plus_id = data.get("goal_plus_id")
+    if not goal_plus_id:
+        return
+    snapshot = data.get("snapshot")
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    goal = snapshot.get("goal_plus")
+    goal = goal if isinstance(goal, dict) else {}
+    status = str(goal.get("status") or "active")
+    if status in {"complete", "blocked", "abandoned"}:
+        return
+    raise RuntimeError(
+        "cannot generate a Goal Plus HTML report before the linked record "
+        "reaches a terminal status (complete, blocked, or abandoned); "
+        f"current: {goal_plus_id}={status}"
+    )
+
+
 def write_html_report(
     root_dir: Path | str,
     run_id: str,
@@ -2752,5 +4594,15 @@ def write_html_report(
     root = Path(root_dir).resolve()
     destination = output_path or root / "runs" / run_id / "report.html"
     data = build_html_report_data(root, run_id)
-    destination.write_text(render_html_report(data), encoding="utf-8")
+    _require_terminal_goal_plus_report(data)
+    destination.write_text(
+        render_report_document(
+            {
+                "schema_version": REPORT_DOCUMENT_SCHEMA_VERSION,
+                "report_kind": "goal-plus",
+                "data": data,
+            }
+        ),
+        encoding="utf-8",
+    )
     return destination

@@ -109,6 +109,52 @@ the next required action. A Search candidate SubagentStop block should name its
 `counters.verifier_runs` is positive, parent-only selection/report/promotion
 must not block the candidate return.
 
+Each automatic `Stop` or `SubagentStop` host-hook invocation against an existing
+runtime root writes one atomic, metadata-only record under
+`.gp/host-logs/codex-hook-events/<invocation_id>.json`. The record contains the
+event name, start/end time, duration, `block` / `allow` / `skipped` / `error`
+decision, bounded reason and error text, host `stop_reason`, and any resolved
+Goal/Search/session IDs. `SubagentStop` records also keep the opaque Codex
+`host_agent_id` when supplied, so an unbound child remains distinguishable
+without persisting its transcript path. It does not contain prompts,
+transcripts, tool input, or continuation text. Separate files avoid
+concurrent-worker append races.
+Direct `goal_plus_gate` calls do not create these records, so their counters do
+not masquerade as automatic Codex hook invocations. Disabled hooks and Stop
+events received before the runtime root exists write nothing.
+
+Generated `report.html` files include a Stop Hook Activity snapshot. It keeps
+`Stop` and `SubagentStop` totals separate, breaks decisions down by type, and
+groups candidate hooks by `agent_session_id` with a `host_agent_id` fallback.
+The expandable invocation table preserves the underlying low-level evidence.
+Because the HTML is static, it contains events durable when that report was
+generated; regenerate the report to include later hook invocations.
+If the event directory itself was not persisted, the report labels calls,
+decisions, and hook time as `Not observed` rather than presenting an
+unverifiable zero.
+
+The same section includes Candidate Loop Activity. Its stable counters use
+durable runtime facts: candidate records for submissions, candidates with at
+least one settled iteration for completed Results, `discard` / `failure`
+iteration dispositions for rejected Results, accepted native continuations plus
+state redispatches for Agent resumes, and automatic Stop/SubagentStop `block`
+decisions for stop-hook continuation triggers. Candidate/Result/resume counters
+are host-neutral; the stop-hook trigger counter is Codex-specific because Pi
+does not expose the same automatic host-hook evidence.
+
+For Codex `parallel_loops`, Loop Agent Stop Outcomes correlates those
+`SubagentStop` records with content-free native-session activity and durable
+candidate iterations. The summary reports each lane's blocked/allowed stops,
+blocked stops followed by a new immutable revision plus verifier, later
+improvements, context/global-evidence reads, post-last-verifier reply classes,
+and context pressure near the first block versus the final/max sample. The
+per-stop continuation table uses the interval from one hook completion to the
+next hook start. Tail labels such as `polling-only`, `answer-only`, and
+`empty-output` are deterministic diagnostic heuristics, not model intent or
+causal proof of a leader effect. If native Codex JSONL or hook records were not
+persisted, those cells remain `Not observed`; the report never reconstructs
+missing counts from prose.
+
 ### Pi RPC
 
 Pi workers are launched by `goal-plus-pi-worker`, not by the MCP
@@ -247,7 +293,10 @@ guard events, stop continuation messages, and `.gp/goal-plus/...`.
 
 Calling `search_report` writes both report files. For a linked Goal Plus run,
 the record must already be terminal; active and needs-user records are rejected
-so a static report cannot capture an in-progress status. Open `report.html`
+so a static report cannot capture an in-progress status. The same terminal
+check is enforced by the low-level HTML writer used by offline tooling; calling
+that renderer directly cannot bypass the lifecycle boundary or publish an
+`Active` Goal as if it were a final report. Open `report.html`
 directly for the coverage-aware statistical view, multi-Search breakdown,
 candidate/session tables, and timelines. Planning-round counts remain available
 in normalized data but are not rendered as a separate panel. The Goal Plus
