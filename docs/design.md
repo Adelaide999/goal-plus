@@ -56,7 +56,8 @@ therefore stored under `.gp/host-pools/pi/`, separate from run records.
     run.json
     plans/<plan_id>.json
     candidates/<candidate_id>/
-      plans/iteration-<n>.json
+      evidence-annotations/iteration-<n>.json
+    evidence-annotator/
     agent_sessions/<agent_session_id>.json
     workspace/<candidate_id>/
     report.md
@@ -73,12 +74,15 @@ The core records are:
   budget, strategy, and verifier commands.
 - `SearchPlan`: one planning decision/round.
 - `CandidateTask`: one isolated candidate workspace and its work order.
-- `CandidateIterationPlan`: one immutable, pre-edit sentence for a candidate
-  iteration; Global Plan joins it dynamically with the matching verifier record.
 - `AgentSessionRecord`: context/provenance plus a host launch payload; never a
   process lifecycle record.
+- `EvidenceAnnotationTask`: one internal, immutable Evidence identity and
+  resolved annotator profile plus bounded retry, usage, and an atomically
+  published optional `EvidenceViewRecord`.
 - `IterationRecord`: verifier result, failure, metrics, changed files, session
   provenance, and exact candidate Git commit.
+- `EvidenceViewRecord`: one immutable, exact-commit-bound, objective description
+  produced asynchronously for a settled worker iteration.
 - `RunRecord`: also stores optional verifier invalidation evidence,
   `source_run_id`, `replacement_run_id`, and policy-controlled
   `inherited_research`.

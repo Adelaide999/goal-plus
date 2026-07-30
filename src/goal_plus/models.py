@@ -142,6 +142,97 @@ class WorkerLaunchOptions(SearchModel):
         return value
 
 
+class EvidenceAnnotatorSpec(SearchModel):
+    model: str | None = None
+    reasoning_effort: str | None = None
+    timeout_seconds: int = Field(default=300, gt=0, le=600)
+    provider: "EvidenceAnnotatorProviderSpec | None" = None
+
+    @field_validator("model", "reasoning_effort")
+    @classmethod
+    def values_must_be_nonempty(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("annotator option must be non-empty when provided")
+        return value
+
+
+class EvidenceAnnotatorProviderSpec(SearchModel):
+    provider_id: str = Field(
+        default="goal-plus-evidence", pattern=r"^[A-Za-z0-9_-]+$"
+    )
+    name: str = Field(default="Goal Plus Evidence provider", min_length=1)
+    base_url: str = Field(min_length=1)
+    api_key_env: str = Field(default="OPENAI_API_KEY", min_length=1)
+    wire_api: str = Field(default="responses", min_length=1)
+
+
+class ResolvedCodexProvider(SearchModel):
+    provider_id: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1)
+    base_url: str | None = None
+    base_url_env: str | None = None
+    base_url_sha256: str | None = None
+    api_key_env: str = Field(min_length=1)
+    wire_api: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def require_provider_location(self) -> "ResolvedCodexProvider":
+        if bool(self.base_url) == bool(self.base_url_env):
+            raise ValueError("provider requires exactly one base URL source")
+        if self.base_url_env and not self.base_url_sha256:
+            raise ValueError("environment-backed provider requires a URL hash")
+        return self
+
+
+class ResolvedEvidenceAnnotatorProfile(SearchModel):
+    model: str | None = None
+    reasoning_effort: str | None = None
+    timeout_seconds: int = Field(gt=0, le=600)
+    codex_home: str | None = None
+    provider: ResolvedCodexProvider | None = None
+
+
+class EvidenceViewRecord(SearchModel):
+    run_id: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1)
+    iteration: int = Field(ge=1)
+    attempt_commit: str = Field(min_length=1)
+    description: str = Field(min_length=1, max_length=1000)
+    created_at: str
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def normalize_description(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if "\n" in value or "\r" in value:
+            raise ValueError("evidence view description must be one line")
+        return " ".join(value.strip().split())
+
+
+class EvidenceAnnotationTask(SearchModel):
+    run_id: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1)
+    iteration: int = Field(ge=1)
+    attempt_base_commit: str = Field(min_length=1)
+    attempt_commit: str = Field(min_length=1)
+    attempt_changed_files: list[str] = Field(default_factory=list)
+    profile: ResolvedEvidenceAnnotatorProfile | None = None
+    outer_deadline_at: str | None = None
+    state: Literal["pending", "retry_wait", "completed", "terminal_error"] = (
+        "pending"
+    )
+    attempts: int = Field(default=0, ge=0)
+    next_attempt_at: str | None = None
+    error_fingerprint: str | None = None
+    last_error: str | None = None
+    attempt_history: list[dict[str, Any]] = Field(default_factory=list)
+    usage: dict[str, int | float] = Field(default_factory=dict)
+    view: EvidenceViewRecord | None = None
+    created_at: str
+    updated_at: str
+
+
 class StrategySpec(SearchModel):
     name: str = "agent_guided"
     orchestration_mode: Literal["rolling_candidates", "parallel_loops"] = (
@@ -151,6 +242,9 @@ class StrategySpec(SearchModel):
     worker_agent_type: str | None = None
     worker_budget: WorkerBudget | None = None
     worker_launch: WorkerLaunchOptions | None = None
+    evidence_annotator: EvidenceAnnotatorSpec = Field(
+        default_factory=EvidenceAnnotatorSpec
+    )
     config: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("name")
@@ -518,6 +612,8 @@ class IterationRecord(SearchModel):
     score: float | None = None
     process_passed: bool | None = None
     git_head: str | None = None
+    attempt_base_git_head: str | None = None
+    attempt_changed_files: list[str] = Field(default_factory=list)
     ledger_git_head: str | None = None
     git_artifact_clean: bool | None = None
     git_status: list[str] = Field(default_factory=list)
@@ -535,24 +631,6 @@ class IterationRecord(SearchModel):
     restored_to_git_head: str | None = None
     workspace_git_head_after_settlement: str | None = None
     created_at: str
-
-
-class CandidateIterationPlan(SearchModel):
-    run_id: str = Field(min_length=1)
-    candidate_id: str = Field(min_length=1)
-    iteration: int = Field(ge=1)
-    agent_session_id: str = Field(min_length=1)
-    description: str = Field(min_length=1, max_length=240)
-    created_at: str
-
-    @field_validator("description", mode="before")
-    @classmethod
-    def normalize_description(cls, value: Any) -> Any:
-        if not isinstance(value, str):
-            return value
-        if "\n" in value or "\r" in value:
-            raise ValueError("plan description must be one line")
-        return " ".join(value.strip().split())
 
 
 class ResultLedgerEntry(SearchModel):

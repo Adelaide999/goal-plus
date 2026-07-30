@@ -78,7 +78,6 @@ def _codex_search_worker(
     plan = runtime.plan_next(run_id, requested_k=1)
     task = runtime.start_batch(run_id, plan.plan_id)[0]
     session = runtime.start_agent_session(run_id, task.candidate_id, {"goal": "test"})
-    runtime.submit_iteration_plan(session.agent_session_id, "Hook-owned worker evidence")
     old_start = datetime.now(timezone.utc) - timedelta(seconds=90)
     runtime._write_agent_session(
         session.model_copy(
@@ -485,6 +484,7 @@ def test_post_tool_time_advisory_only_targets_search_candidate_subagent_once(
         run_id,
         candidate_id,
         agent_session_id=agent_session_id,
+        hypothesis="Hook-owned worker evidence",
     )
     advisory = _run_hook(
         tmp_path,
@@ -659,6 +659,7 @@ def test_search_candidate_stop_is_owned_by_its_verifier_not_parent_next_action(
         run_id,
         candidate_id,
         agent_session_id=agent_session_id,
+        hypothesis="Hook-owned worker evidence",
     )
     after_verifier = _run_hook(
         tmp_path,
@@ -750,6 +751,7 @@ def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
         run_id,
         candidate_id,
         agent_session_id=agent_session_id,
+        hypothesis="Hook-owned worker evidence",
     )
 
     early_stop = _run_hook(
@@ -768,7 +770,8 @@ def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
     assert "AutoResearch lease" in blocked["reason"]
     assert "不要返回父级" in blocked["reason"]
     assert "不要休眠或忙等" in blocked["reason"]
-    assert "若下一 iteration 已有计划，沿用它" in blocked["reason"]
+    assert "search_get_global_evidence" in blocked["reason"]
+    assert "一句话 hypothesis" in blocked["reason"]
     assert "省略 scope 以使用 process verifier" in blocked["reason"]
     assert "继续深度搜索" in blocked["reason"]
     assert "不要通过重复返回来轮询此 hook" in blocked["reason"]
@@ -780,10 +783,10 @@ def test_search_candidate_autoresearch_lease_blocks_until_runtime_then_releases(
     assert "立即再次尝试结束" not in blocked["reason"]
     protocol = [
         "search_get_agent_context",
-        "search_get_global_plan",
-        "search_submit_iteration_plan",
+        "search_get_global_evidence",
         "实现",
         "search_run_verifier",
+        "hypothesis",
     ]
     assert all(step in blocked["reason"] for step in protocol)
     assert [blocked["reason"].index(step) for step in protocol] == sorted(

@@ -1,0 +1,346 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+import subprocess
+
+import pytest
+
+from goal_plus.models import EvidenceViewRecord, SearchSpec
+from goal_plus.runtime import FileSearchRuntime
+from tests._runtime_helpers import git_commit_all, make_project, spec_for
+
+
+def _search_with_candidates(
+    tmp_path: Path,
+    count: int,
+    *,
+    strategy_updates: dict | None = None,
+) -> tuple[FileSearchRuntime, str, list[tuple[str, str, Path]]]:
+    project = make_project(tmp_path)
+    (project / "evaluator.py").write_text(
+        "import json\n"
+        "from pathlib import Path\n"
+        "value = Path('initial_program.py').read_text().split('=', 1)[1].strip()\n"
+        "print(json.dumps({'combined_score': float(value)}))\n",
+        encoding="utf-8",
+    )
+    spec_data = spec_for(project, max_candidates=count).model_dump(mode="json")
+    spec_data["workspace"] = {"backend": "git_worktree"}
+    spec_data["strategy"].update(strategy_updates or {})
+    runtime = FileSearchRuntime(tmp_path / ".gp")
+    frozen = runtime.freeze_spec(
+        SearchSpec.model_validate(spec_data),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    search_plan = runtime.plan_next(run_id, requested_k=count)
+    tasks = runtime.start_batch(run_id, search_plan.plan_id)
+    candidates = []
+    for task in tasks:
+        session = runtime.start_agent_session(run_id, task.candidate_id)
+        candidates.append(
+            (task.candidate_id, session.agent_session_id, task.workspace)
+        )
+    return runtime, run_id, candidates
+
+
+def _git(workspace: Path, *args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=workspace, text=True).strip()
+
+
+def test_global_evidence_is_immediate_and_view_is_late_bound(tmp_path: Path) -> None:
+    runtime, run_id, candidates = _search_with_candidates(tmp_path, 2)
+    first, second = candidates
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(
+            pool.map(runtime.get_global_evidence, [first[1], second[1]])
+        ) == [[], []]
+
+    for (_, session_id, workspace), value, hypothesis in zip(
+        candidates,
+        (1, 2),
+        ("Raise the first value", "Raise the second value"),
+        strict=True,
+    ):
+        (workspace / "initial_program.py").write_text(
+            f"VALUE = {value}\n", encoding="utf-8"
+        )
+        report = runtime.run_verifier(
+            run_id,
+            runtime._load_agent_session_by_id(session_id).candidate_id,
+            agent_session_id=session_id,
+            hypothesis=hypothesis,
+        )
+        assert report.disposition == "keep"
+
+    (second[2] / "initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
+    discarded = runtime.run_verifier(
+        run_id,
+        second[0],
+        agent_session_id=second[1],
+        hypothesis="Replace the second value with a smaller constant",
+    )
+    assert discarded.disposition == "discard"
+
+    view = runtime.get_global_evidence(first[1])
+    assert [(entry["candidate_id"], entry["iteration"]) for entry in view] == [
+        (first[0], 1),
+        (second[0], 1),
+        (second[0], 2),
+    ]
+    assert [entry["score"] for entry in view] == [1.0, 2.0, 1.0]
+    assert [entry["disposition"] for entry in view] == [
+        "keep",
+        "keep",
+        "discard",
+    ]
+    assert all(entry["commit"] and entry["view"] is None for entry in view)
+
+    discarded_commit = view[-1]["commit"]
+    annotation_task = runtime._load_evidence_annotation_task(run_id, second[0], 2)
+    assert annotation_task is not None
+    runtime._write_evidence_annotation_task(
+        annotation_task.model_copy(
+            update={
+                "state": "completed",
+                "view": EvidenceViewRecord(
+                    run_id=run_id,
+                    candidate_id=second[0],
+                    iteration=2,
+                    attempt_commit=discarded_commit,
+                    description=(
+                        "Changed the candidate value from two to one without altering "
+                        "the evaluator."
+                    ),
+                    created_at="2026-01-01T00:00:00Z",
+                ),
+            }
+        )
+    )
+    assert runtime.get_global_evidence(first[1])[-1]["view"] == (
+        "Changed the candidate value from two to one without altering the evaluator."
+    )
+    assert (second[2] / "initial_program.py").read_text(encoding="utf-8") == (
+        "VALUE = 2\n"
+    )
+
+    peer_commit = view[1]["commit"]
+    subprocess.run(
+        ["git", "cat-file", "-e", f"{peer_commit}^{{commit}}"],
+        cwd=first[2],
+        check=True,
+    )
+    assert _git(first[2], "show", f"{peer_commit}:initial_program.py") == "VALUE = 2"
+
+
+def test_worker_hypothesis_is_required_and_parent_evidence_is_private(
+    tmp_path: Path,
+) -> None:
+    runtime, run_id, [candidate] = _search_with_candidates(tmp_path, 1)
+    candidate_id, session_id, workspace = candidate
+
+    runtime.run_verifier(run_id, candidate_id, hypothesis="parent verification")
+    assert runtime.get_global_evidence(session_id) == []
+
+    program = workspace / "initial_program.py"
+    program.write_text("VALUE = 1\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="requires a non-empty hypothesis"):
+        runtime.run_verifier(
+            run_id,
+            candidate_id,
+            agent_session_id=session_id,
+        )
+    assert len(runtime.list_iterations(run_id, candidate_id)) == 1
+
+    runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="  Index the candidate value once  ",
+    )
+    iterations = runtime.list_iterations(run_id, candidate_id)
+    assert iterations[-1]["hypothesis"] == "Index the candidate value once"
+    assert runtime.get_global_evidence(session_id)[0]["commit"] == (
+        iterations[-1]["git_head"]
+    )
+
+    runtime.select(run_id)
+    runtime.promote(run_id, candidate_id)
+    before = runtime.get_global_evidence(session_id)
+    with pytest.raises(RuntimeError, match="state promoted"):
+        runtime.run_verifier(
+            run_id,
+            candidate_id,
+            agent_session_id=session_id,
+            hypothesis="Mutate after promotion",
+        )
+    assert runtime.get_global_evidence(session_id) == before
+
+
+def test_annotator_config_overrides_then_inherits_worker_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_BASE_URL",
+        "http://proxy.example/v1",
+    )
+    runtime, run_id, [candidate] = _search_with_candidates(
+        tmp_path,
+        1,
+        strategy_updates={
+            "worker_launch": {
+                "model": "worker-model",
+                "reasoning_effort": "high",
+            },
+            "evidence_annotator": {
+                "reasoning_effort": "low",
+                "timeout_seconds": 90,
+            },
+        },
+    )
+    candidate_id, session_id, workspace = candidate
+    (workspace / "initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
+    runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Set the candidate value",
+    )
+
+    task = runtime._load_evidence_annotation_task(run_id, candidate_id, 1)
+    assert task is not None and task.profile is not None
+    assert task.profile.model == "worker-model"
+    assert task.profile.reasoning_effort == "low"
+    assert task.profile.timeout_seconds == 90
+    assert task.profile.provider is not None
+    assert task.profile.provider.base_url is None
+    assert task.profile.provider.base_url_env == (
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_BASE_URL"
+    )
+    assert "proxy.example" not in task.model_dump_json()
+
+    session = runtime._load_agent_session_by_id(session_id)
+    runtime._write_agent_session(
+        session.model_copy(update={"launch": {"continuation": "native_session"}})
+    )
+    context = runtime._evidence_annotation_context(run_id, candidate_id, 1)
+    assert context["annotator"]["model"] == "worker-model"
+    assert context["annotator"]["reasoning_effort"] == "low"
+
+    runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Verify without changing candidate files",
+    )
+    continued_context = runtime._evidence_annotation_context(
+        run_id, candidate_id, 2
+    )
+    assert continued_context["actual_diff"] == ""
+    assert continued_context["annotator"]["model"] == "worker-model"
+
+
+def test_pi_worker_model_is_not_reused_as_a_codex_annotator_model(
+    tmp_path: Path,
+) -> None:
+    runtime, run_id, [candidate] = _search_with_candidates(
+        tmp_path,
+        1,
+        strategy_updates={
+            "worker_host": "pi-rpc",
+            "worker_budget": {"max_runtime_seconds": 60},
+            "worker_launch": {
+                "model": "bench-openai/gpt-test",
+                "reasoning_effort": "high",
+            },
+        },
+    )
+    candidate_id, session_id, workspace = candidate
+    (workspace / "initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
+    runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Set the Pi candidate value",
+    )
+
+    task = runtime._load_evidence_annotation_task(run_id, candidate_id, 1)
+    assert task is not None
+    assert task.profile is None
+    assert task.state == "terminal_error"
+    assert "pi-rpc" in (task.last_error or "")
+
+
+def test_evidence_commit_captures_change_back_to_source(tmp_path: Path) -> None:
+    runtime, run_id, [candidate] = _search_with_candidates(tmp_path, 1)
+    candidate_id, session_id, workspace = candidate
+    program = workspace / "initial_program.py"
+
+    program.write_text("VALUE = 1\n", encoding="utf-8")
+    runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Set the candidate value to one",
+    )
+    settled_head = runtime._load_candidate_record(
+        run_id, candidate_id
+    ).results_ledger_git_head
+
+    program.write_text("VALUE = 0\n", encoding="utf-8")
+    report = runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Restore the source value",
+    )
+
+    iteration = runtime._load_candidate_record(run_id, candidate_id).iterations[-1]
+    assert report.disposition == "discard"
+    assert iteration.attempt_base_git_head == settled_head
+    assert iteration.attempt_changed_files == ["initial_program.py"]
+    assert _git(workspace, "show", f"{iteration.git_head}:initial_program.py") == (
+        "VALUE = 0"
+    )
+    context = runtime._evidence_annotation_context(run_id, candidate_id, 2)
+    assert "-VALUE = 1" in context["actual_diff"]
+    assert "+VALUE = 0" in context["actual_diff"]
+    assert program.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
+def test_evidence_diff_spans_all_manual_commits_in_attempt(tmp_path: Path) -> None:
+    runtime, run_id, [candidate] = _search_with_candidates(tmp_path, 1)
+    candidate_id, session_id, workspace = candidate
+    program = workspace / "initial_program.py"
+
+    program.write_text("VALUE = 1\n", encoding="utf-8")
+    runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Establish the first candidate value",
+    )
+    base = runtime._load_candidate_record(run_id, candidate_id).results_ledger_git_head
+
+    program.write_text("VALUE = 2\n", encoding="utf-8")
+    git_commit_all(workspace, "manual intermediate attempt")
+    program.write_text("VALUE = 3\n", encoding="utf-8")
+    attempt = git_commit_all(workspace, "manual final attempt")
+    runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Raise the value through two committed revisions",
+    )
+
+    iteration = runtime._load_candidate_record(run_id, candidate_id).iterations[-1]
+    context = runtime._evidence_annotation_context(run_id, candidate_id, 2)
+    assert iteration.attempt_base_git_head == base
+    assert iteration.git_head == attempt
+    assert iteration.attempt_changed_files == ["initial_program.py"]
+    assert "-VALUE = 1" in context["actual_diff"]
+    assert "+VALUE = 3" in context["actual_diff"]
+    assert "+VALUE = 2" not in context["actual_diff"]

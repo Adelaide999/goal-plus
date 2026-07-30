@@ -173,9 +173,6 @@ def test_run_pi_search_candidate_skips_duplicate_final_verify_for_infrastructure
     def fake_worker(launch: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
         worker_runtime = FileSearchRuntime(runtime.root_dir)
         worker_runtime.get_agent_context(launch["agent_session_id"])
-        worker_runtime.submit_iteration_plan(
-            launch["agent_session_id"], "Trigger verifier infrastructure failure"
-        )
         Path(launch["cwd"], "initial_program.py").write_text(
             "VALUE = 7\n",
             encoding="utf-8",
@@ -184,6 +181,7 @@ def test_run_pi_search_candidate_skips_duplicate_final_verify_for_infrastructure
             run_id,
             candidate.candidate_id,
             agent_session_id=launch["agent_session_id"],
+            hypothesis="Trigger verifier infrastructure failure",
         )
         assert report.verifier_results[0].failure_class == (
             "VerifierWorkspaceSideEffect"

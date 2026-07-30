@@ -69,6 +69,20 @@ def test_codex_mcp_config_registers_search_runtime() -> None:
     assert "[mcp_servers.goal-plus]" in text
     assert 'command = "goal-plus"' in text
     assert 'args = ["--root", ".gp"]' in text
+    for variable in (
+        "CODEX_HOME",
+        "OPENAI_API_KEY",
+        "SFORGE_AGENT_API_KEY",
+        "GOAL_PLUS_OUTER_DEADLINE_AT",
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL",
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT",
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_BASE_URL",
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_PROVIDER_ID",
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_PROVIDER_NAME",
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_API_KEY_ENV",
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_WIRE_API",
+    ):
+        assert f'"{variable}"' in text
     assert 'cwd = "."' not in text
     assert ".codex/config.toml" in gitignore
 
@@ -252,13 +266,14 @@ def test_codex_worker_agent_calls_context_and_verifier() -> None:
 
     assert 'name = "search_candidate_agent"' in text
     assert "search_get_agent_context" in text
-    assert "search_get_global_plan" in text
-    assert "search_submit_iteration_plan" in text
+    assert "search_get_global_evidence" in text
+    assert "search_submit_iteration_plan" not in text
     assert "search_run_verifier" in text
     assert "不要传 `scope`" in text
     assert "工作区根目录" in text
     assert "且只追加一条已验证记录" in text
-    assert "plan 提交后不可修改" in text
+    assert "view=null" in text
+    assert "hypothesis" in text
     assert "git diff HEAD <commit> -- <allowed-file>" in text
     assert "一条自主 Search 循环" in text
     assert "不要等待父 agent 选择方向" in text

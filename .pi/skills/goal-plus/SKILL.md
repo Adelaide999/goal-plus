@@ -280,11 +280,12 @@ closeout 或时间提示都只是历史；只遵守最新 launch 之后收到的
 candidate-local history 由运行时拥有，不是本地 plan 文件。worker 必须先调用
 `search_get_agent_context`，并使用 `context.resume`、`context.iterations`、
 `context.results` 和继承的 `context.results_tsv` 作为恢复来源。每轮修改前读取
-`search_get_global_plan`，再从 settled、Git-clean workspace 用
-`search_submit_iteration_plan` 提交不可变的一句话计划。其他 candidate 的尝试只通过这个
-窄视图披露；仅在 worker 独立判断确有必要时，才在当前 workspace 使用
-`git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace。
-worker verifier 不再提交独立 `hypothesis`，plan description 是唯一描述。运行时校验工作区根目录
+`search_get_global_evidence`。其他 candidate 的尝试只通过这个窄视图披露；`view=null`
+只表示 annotator 尚未更新，worker 不等待或轮询，先依据 commit、score、disposition 和
+自己的推理独立探索。仅在 worker 独立判断确有必要时，才在当前 workspace 使用
+`git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace，
+也不 checkout/reset peer commit。worker verifier 用一句话 `hypothesis` 客观概括本轮实际
+尝试。运行时校验工作区根目录
 `results.tsv`，为每份返回报告追加且只追加一条记录，并提交账本。worker 绝不直接编辑它。
 process verifier 同时返回 candidate-local `disposition`：严格改善为 `keep`，同分或退化
 为 `discard`，无有效排名证据为 `failure`。runtime 保留实际被测 commit，并在

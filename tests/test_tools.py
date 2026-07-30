@@ -148,17 +148,16 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         )
     ]
     runtime.start_agent_session.return_value = agent_session
-    runtime.get_global_plan.return_value = [
+    runtime.get_global_evidence.return_value = [
         {
             "candidate_id": "c001",
             "iteration": 1,
-            "description": "try one",
-            "score": None,
-            "disposition": None,
-            "commit": None,
+            "score": 1.0,
+            "disposition": "keep",
+            "commit": "abc123",
+            "view": "Changed the candidate value.",
         }
     ]
-    runtime.submit_iteration_plan.return_value = runtime.get_global_plan.return_value[0]
     runtime.redispatch_candidate.return_value = agent_session.model_copy(
         update={
             "agent_session_id": "agent_002",
@@ -257,8 +256,9 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
     continued = tools.search_continue_agent_session("agent_001")
     assert continued["launch"]["task_name"] == "search_agent_001"
     assert tools.search_get_agent_context("agent_001") == {"agent_session_id": "agent_001"}
-    assert tools.search_get_global_plan("agent_001")[0]["description"] == "try one"
-    assert tools.search_submit_iteration_plan("agent_001", "try one")["iteration"] == 1
+    assert tools.search_get_global_evidence("agent_001")[0]["view"] == (
+        "Changed the candidate value."
+    )
     assert tools.search_get_agent_observability("agent_001") == {
         "agent_session_id": "agent_001",
         "source": "codex_session_jsonl",
@@ -328,8 +328,7 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         worker_budget=None,
     )
     runtime.get_agent_observability.assert_called_once_with("agent_001")
-    runtime.get_global_plan.assert_called_once_with("agent_001")
-    runtime.submit_iteration_plan.assert_called_once_with("agent_001", "try one")
+    runtime.get_global_evidence.assert_called_once_with("agent_001")
 
 
 def test_search_tools_expose_no_lifecycle_methods() -> None:
@@ -345,6 +344,8 @@ def test_search_tools_expose_no_lifecycle_methods() -> None:
         "search_list_observations",
         "search_wait_agent_events",
         "search_submit_candidate",
+        "search_submit_iteration_plan",
+        "search_get_global_plan",
     ):
         assert not hasattr(tools, deleted), f"SearchTools should not expose {deleted}"
 

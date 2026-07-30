@@ -228,28 +228,17 @@ def create_mcp(
         return tools.search_get_agent_context(agent_session_id)
 
     @mcp.tool()
-    def search_get_global_plan(
+    def search_get_global_evidence(
         agent_session_id: str,
     ) -> list[dict[str, Any]]:
-        """返回当前 run 的窄 Global Plan 视图。
+        """返回当前 run 的窄 Global Evidence 视图。
 
-        每项只包含 candidate_id、iteration、一句话 description、score、
-        keep/discard/failure disposition 和 verifier attempt commit。worker 每轮修改前
-        读取一次；需要代码级证据时可自行通过 commit 做只读 Git 比较。
+        每项只包含 candidate_id、iteration、score、keep/discard/failure disposition、
+        verifier attempt commit 和可能延迟的客观 View。`view=null` 表示 annotator 尚未
+        更新；worker 不需要等待，可先依据 Evidence 独立探索，必要时再通过 commit 做
+        只读 Git 比较。
         """
-        return tools.search_get_global_plan(agent_session_id)
-
-    @mcp.tool()
-    def search_submit_iteration_plan(
-        agent_session_id: str,
-        description: Annotated[str, Field(min_length=1, max_length=240)],
-    ) -> dict[str, Any]:
-        """在修改代码前提交本轮不可变的一句话计划。
-
-        workspace 必须仍是 candidate-local settled HEAD 且 Git-clean。同一 iteration
-        重复提交相同描述是幂等的，不同描述不能覆盖。
-        """
-        return tools.search_submit_iteration_plan(agent_session_id, description)
+        return tools.search_get_global_evidence(agent_session_id)
 
     @mcp.tool()
     def search_run_verifier(
@@ -261,10 +250,10 @@ def create_mcp(
     ) -> dict[str, Any]:
         """Subagent 带 `agent_session_id` 自评分；主流程最终验证不带它。
 
-        subagent 传入自己的 `agent_session_id` 并省略 `scope`；运行时要求本轮已有
-        不可变 plan，并以 plan description 作为 iteration hypothesis。随后在继承的
-        `workspace/results.tsv` 中追加且只追加一条已验证记录并提交账本。主 agent
-        不带 `agent_session_id` 的内部复验不要求 plan；`promotion` 只属于主流程。带
+        subagent 传入自己的 `agent_session_id`、一句话 `hypothesis` 并省略 `scope`；
+        hypothesis 应客观概括本轮实际尝试。运行时随后在继承的 `workspace/results.tsv`
+        中追加且只追加一条已验证记录并提交账本。主 agent 不带 `agent_session_id` 的
+        内部复验不要求 hypothesis；`promotion` 只属于主流程。带
         `candidate_action="stop_and_report"` 的 `VerifierWorkspaceSideEffect` 是冻结
         verifier 的基础设施失败：worker 不能清理 verifier 输出或重试。
         """
