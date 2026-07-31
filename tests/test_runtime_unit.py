@@ -1702,6 +1702,66 @@ def test_codex_worker_budget_flows_to_watchdog_launch_payload(tmp_path: Path) ->
     }
 
 
+@pytest.mark.pi
+def test_pi_worker_budget_accepts_autoresearch_lease_fields(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    spec = spec_with_strategy(
+        project,
+        {
+            "name": "random",
+            "worker_host": "pi-rpc",
+            "worker_budget": {
+                "min_runtime_seconds": 300,
+                "min_verifier_runs": 1,
+                "max_runtime_seconds": 420,
+                "on_exceed": "interrupt",
+            },
+        },
+        max_candidates=1,
+    )
+
+    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    plan = runtime.plan_next(run_id, requested_k=1)
+    task = runtime.start_batch(run_id, plan.plan_id)[0]
+    session = runtime.start_agent_session(run_id, task.candidate_id)
+
+    assert frozen.spec.strategy.worker_budget is not None
+    assert frozen.spec.strategy.worker_budget.min_runtime_seconds == 300
+    assert frozen.spec.strategy.worker_budget.min_verifier_runs == 1
+    assert session.launch["budget_control"]["autoresearch_lease"][
+        "min_runtime_seconds"
+    ] == 300
+
+
+@pytest.mark.pi
+def test_freeze_rejects_worker_lease_fields_in_strategy_config(
+    tmp_path: Path,
+) -> None:
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    spec = spec_with_strategy(
+        project,
+        {
+            "name": "random",
+            "worker_host": "pi-rpc",
+            "worker_budget": {
+                "max_runtime_seconds": 420,
+                "on_exceed": "interrupt",
+            },
+            "config": {
+                "min_runtime_seconds": 300,
+                "min_verifier_runs": 1,
+            },
+        },
+        max_candidates=1,
+    )
+
+    with pytest.raises(ValueError, match="strategy.worker_budget"):
+        runtime.freeze_spec(spec, [project / "evaluator.py"])
+
+
 @pytest.mark.codex
 def test_codex_worker_launch_options_flow_to_spawn_payload(tmp_path: Path) -> None:
     project = make_project(tmp_path)
@@ -2978,6 +3038,45 @@ def test_select_does_not_reverify_duplicate_latest_artifact_option(
 
     assert selection["selected_candidate_id"] == "c002"
     assert calls == {"c001": 2, "c002": 2}
+
+
+def test_select_reuses_exact_worker_evidence_without_parent_verifier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    frozen = runtime.freeze_spec(spec_for(project, max_candidates=1), [project / "evaluator.py"])
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    plan = runtime.plan_next(run_id, requested_k=1)
+    task = runtime.start_batch(run_id, plan.plan_id)[0]
+    session = runtime.start_agent_session(run_id, task.candidate_id)
+    calls = 0
+
+    def fake_run(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout='{"combined_score": 0.9}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(runtime, "_execute_verifier_process", fake_run)
+    runtime.run_verifier(
+        run_id,
+        task.candidate_id,
+        agent_session_id=session.agent_session_id,
+        hypothesis="worker attempt",
+    )
+
+    selection = runtime.select(run_id)
+
+    assert selection["selected_candidate_id"] == task.candidate_id
+    assert selection["selected_score"] == 0.9
+    assert calls == 1
+    assert runtime.promote(run_id, task.candidate_id).exists()
+    assert calls == 1
 
 
 def test_select_uses_best_iteration_when_artifact_is_current(

@@ -159,11 +159,15 @@ missing counts from prose.
 
 Pi workers are launched by `goal-plus-pi-worker`, not by the MCP
 server. Normal Pi Search Mode uses the durable `pi_search_pool_*` supervisor:
-open launches the fixed initial lanes, wait-any returns each candidate-ready
-event, continue resumes an existing lane, snapshot rediscovers pools by
-`run_id`, and close drains or terminates them. Pool jobs internally start agent
-sessions, run foreground Pi RPC worker processes, bind returned handles, and
-can run final verifiers; these mechanical steps are not public main-agent APIs.
+open launches the fixed initial lanes, wait-any returns terminal pool events,
+continue resumes an existing candidate-ready lane, snapshot rediscovers pools
+by `run_id`, and close drains or terminates them. `candidate_ready` requires a
+satisfied minimum lease and durable Evidence; an exhausted unsatisfied lease is
+`timed_out`. Pool jobs internally start agent sessions, run foreground Pi RPC
+worker processes, bind returned handles, and reuse current durable Evidence or
+run a fallback final verifier; these mechanical steps are not public main-agent
+APIs. A configured minimum lease may span several such foreground processes
+while retaining one pool job and native session.
 
 The runner starts:
 

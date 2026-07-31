@@ -354,9 +354,9 @@ runtime 成为 rollback 的唯一 owner 后，worker 不再负责在回归后执
 - 下一轮从 runtime 已结算的 workspace 继续。
 
 这样可以避免 worker reset 掉 ledger commit、进入 detached history，或让 prompt 行为
-与 runtime provenance 冲突。Main final verification、`search_select` 和 promotion 会在
-当前历史之上恢复并重新验证最佳 immutable revision，而不 detached checkout；
-candidate-local rollback 不替代最终选择。
+与 runtime provenance 冲突。`search_select` 会在当前历史之上恢复最佳 immutable
+revision；准确 worker Evidence 可直接复用，旧记录才补 parent process verification，
+promotion gate 仍对选中 revision 执行最终验证。candidate-local rollback 不替代最终选择。
 
 ## 故障与恢复
 
@@ -458,7 +458,8 @@ Global Plan 不参与本阶段的回滚判定，也不改变 candidate-local bes
 ### 兼容性
 
 - 旧 `disposition=null` iteration 仍可读取和选择；
-- `search_select` 仍按 attempt commit 选择并执行 parent final verification；
+- `search_select` 仍按 attempt commit 选择；准确 worker Evidence 直接复用，旧记录回退到
+  parent process verification；
 - report/history 同时保留 best 与 latest regression/failure；
 - Codex/Pi assets 不再要求 worker 手动 reset verifier-backed 状态。
 

@@ -85,7 +85,8 @@ def test_pi_goal_plus_skill_records_modes_and_gate() -> None:
     assert "max_parallel=<budget.max_parallel>" in text
     assert "pi_search_run_batch" not in text
     assert "pi_search_run_candidate" not in text
-    assert "最终 `search_run_verifier`" in text
+    assert "复用当前 durable Evidence" in text
+    assert "缺失时补父级 `search_run_verifier`" in text
     assert "search_select" in text
     assert "search_report" in text
     assert "search_promote" in text
@@ -151,8 +152,13 @@ def test_pi_goal_plus_skill_documents_parallel_loop_policy() -> None:
     assert "pi_search_pool_submit" not in text
     assert "pi_search_pool_close" in text
     assert "worker_budgets" in text
+    assert "每个 proposal 都必须包含 `intent`" in normalized
+    assert "`worker_budgets` 必须按 `candidate_id` 映射" in normalized
     assert "继续同一条自主搜索循环" in text
     assert "candidate_ready" in text
+    assert "最低累计 lease" in normalized
+    assert "自动恢复同一个 session 和 worktree" in normalized
+    assert "复用匹配当前产物的 durable Evidence" in normalized
     assert "同一工作区" in normalized
     assert "保留 `agent_session_id` 和候选身份" in normalized
     assert "不要调用 `search_plan_next`、`search_start_batch`" in normalized
@@ -185,6 +191,7 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     assert "任何长优化循环前" in text
     assert "一条自主 Pi Search 循环" in text
     assert "不要等待主 agent" in text
+    assert "最低时间与 verifier 次数在这些派发间累计" in text
     assert ".tmp/handoff.json" in text
     assert "key_results" in text
     assert "pitfalls" in text
@@ -213,8 +220,9 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     assert "single_observation" in text
     assert "先编辑允许的候选产物" in text
     assert "验证未修改的初始状态" in text
-    assert "先记录一个有效 baseline iteration" in text
-    assert "由 verifier 记录的 iteration" in text
+    assert "先记录一个有效 baseline iteration" not in text
+    assert '`run_id`、`candidate_id`、你的 `agent_session_id`' in text
+    assert '`scope="process"`' not in text
     assert "停止启动新的优化 iteration" in text
     assert "最终 verifier" in text
     assert "工具结果后的时间提示仅供参考" in text
@@ -344,6 +352,10 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     assert "metric_direction: Type.Union" in text
     assert "process_verifiers: Type.Array(VerifierCommand" in text
     assert "worker_budget: Type.Optional(Type.Union" in text
+    assert "min_runtime_seconds: Type.Optional(NullablePositiveInteger)" in text
+    assert "min_verifier_runs: Type.Optional(NullablePositiveInteger)" in text
+    assert "const CandidateProposal = Type.Object" in text
+    assert "proposals: Type.Optional(Type.Array(CandidateProposal))" in text
     assert "inherited_feature_limit" not in text
     assert "inherited_pitfall_limit" not in text
     assert "const RuntimeToolDescriptions" in text

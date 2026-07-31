@@ -100,6 +100,37 @@ def _verifier_infrastructure_report(
     return None
 
 
+def _current_process_evidence(
+    tools: SearchTools,
+    run_id: str,
+    candidate_id: str,
+) -> dict[str, Any] | None:
+    runtime = tools.runtime
+    run = runtime._load_run(run_id)
+    frozen = runtime._load_frozen_spec(run.frozen_spec_id)
+    record = runtime._load_candidate_record(run_id, candidate_id)
+    state = runtime._candidate_artifact_state(run, frozen, record)
+    if not state.git_artifact_clean:
+        return None
+    iteration = runtime._best_git_iteration_record(
+        record,
+        frozen.spec.metric_direction,
+    )
+    if iteration is None or iteration.artifact_hash != state.artifact_hash:
+        return None
+    return {
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "aggregate_score": iteration.score,
+        "process_passed": True,
+        "disposition": iteration.disposition,
+        "best_iteration": iteration.iteration,
+        "best_git_head": iteration.git_head,
+        "workspace_git_head_after_settlement": state.git_head,
+        "evidence_agent_session_id": iteration.agent_session_id,
+    }
+
+
 def _pi_resume_agent_session_id(
     tools: SearchTools,
     *,
@@ -319,6 +350,22 @@ def run_pi_search_candidate(
                 "status": "skipped_duplicate_infrastructure_failure",
                 "failure_class": "VerifierWorkspaceSideEffect",
                 "candidate_action": "stop_and_report",
+            }
+        )
+    elif final_verify and (
+        current_evidence := _current_process_evidence(tools, run_id, candidate_id)
+    ) is not None:
+        final_score_report = current_evidence
+        steps.append(
+            {
+                "tool": "search_run_verifier",
+                "candidate_id": candidate_id,
+                "status": "reused_durable_evidence",
+                "aggregate_score": current_evidence["aggregate_score"],
+                "process_passed": True,
+                "evidence_agent_session_id": current_evidence[
+                    "evidence_agent_session_id"
+                ],
             }
         )
     elif final_verify:

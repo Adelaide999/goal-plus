@@ -113,6 +113,18 @@ const WorkerBudget = Type.Object(
 		max_runtime_seconds: Type.Optional(NullablePositiveInteger),
 		max_turns: Type.Optional(NullablePositiveInteger),
 		on_exceed: Type.Optional(Type.Literal("interrupt")),
+		min_runtime_seconds: Type.Optional(NullablePositiveInteger),
+		min_verifier_runs: Type.Optional(NullablePositiveInteger),
+	},
+	{ additionalProperties: false },
+);
+const CandidateProposal = Type.Object(
+	{
+		intent: Type.String({ minLength: 1 }),
+		hypothesis: Type.Optional(NullableString),
+		expected_tradeoff: Type.Optional(Type.String()),
+		instructions: Type.Optional(Type.Array(Type.String())),
+		metadata: Type.Optional(LooseObject),
 	},
 	{ additionalProperties: false },
 );
@@ -363,7 +375,7 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 		{
 			run_id: Type.String(),
 			plan_id: Type.String(),
-			proposals: Type.Optional(Type.Array(LooseObject)),
+			proposals: Type.Optional(Type.Array(CandidateProposal)),
 		},
 		{ additionalProperties: false },
 	),
@@ -503,7 +515,7 @@ const RuntimeToolDescriptions: Record<string, string> = {
 	pi_search_pool_open:
 		"打开持久化 Pi 候选 pool，并启动完整初始候选集合。启动后立即返回，并强制执行冻结的 max_parallel 限制。",
 	pi_search_pool_wait_any:
-		"等待任一 Pi pool worker 在 handle 绑定和最终验证后达到 candidate_ready。验证每个事件，观察持久化最佳结果；除非全局停止条件为 true，否则继续同一个候选。",
+		"等待任一 Pi pool worker 的终态事件。candidate_ready 要求 handle 已绑定、最低累计 lease 已满足且存在持久化验证证据；最低 lease 到硬上限仍未满足时返回 timed_out。已有当前产物的 durable Evidence 时不会重复运行父级 process verifier；只对 candidate_ready 应用后续继续策略。",
 	pi_search_pool_snapshot:
 		"无需等待即可检查持久化 Pi pool 状态、active worker、终态结果和空闲 slot。主 session 中断后传入 run_id 重新发现 pool，或传入 pool_id 指定准确 pool。",
 	pi_search_pool_continue:

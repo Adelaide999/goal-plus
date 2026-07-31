@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "fastmcp>=2.3,<3.0",
+  "plotly>=6.5,<7.0",
   "pydantic>=2.0,<3.0",
 ]
 
@@ -22,10 +23,6 @@ dev = [
 bench = [
   "datasets>=2.18",
 ]
-report = [
-  "plotly>=6.5,<7.0",
-]
-
 [project.scripts]
 goal-plus = "goal_plus.server:main"
 goal-plus-pi-tool = "goal_plus.pi_tool:main"

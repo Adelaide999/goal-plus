@@ -17,6 +17,7 @@ from goal_plus.pi_pool import (
     run_pool_worker,
     wait_any_pi_search_pool,
 )
+from goal_plus.models import SearchSpec
 from goal_plus.runtime import FileSearchRuntime, exclusive_file_lock, load_json, utc_timestamp, write_json
 from tests.test_pi_driver import _make_project, _pi_rpc_spec_with_budget
 
@@ -263,3 +264,413 @@ def test_pi_pool_worker_publishes_candidate_ready_after_driver_completion(
         "search_bind_agent_handle",
         "search_run_verifier",
     ]
+
+
+def test_pi_pool_worker_continues_same_session_until_cumulative_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    frozen = runtime.freeze_spec(
+        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    candidate_id = _planned_candidates(runtime, run_id, 1)[0]
+    monkeypatch.setattr(pi_pool, "_launch_pool_job", lambda **_kwargs: os.getpid())
+    opened = open_pi_search_pool(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_ids=[candidate_id],
+        worker_budgets={
+            candidate_id: {
+                "min_runtime_seconds": 10,
+                "min_verifier_runs": 2,
+                "max_runtime_seconds": 20,
+                "on_exceed": "interrupt",
+            }
+        },
+    )
+    submitted = opened["submitted"][0]
+    now = [0.0]
+    calls: list[dict[str, Any]] = []
+
+    def fake_driver(**request: Any) -> dict[str, Any]:
+        calls.append(request)
+        now[0] += 4
+        verifier_runs = 2 if len(calls) >= 2 else 1
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "agent_session_id": "agent_same",
+            "bound_session": {"counters": {"verifier_runs": verifier_runs}},
+            "steps": [],
+            "final_score_report": {
+                "aggregate_score": float(verifier_runs),
+                "process_passed": True,
+            },
+        }
+
+    monkeypatch.setattr(pi_pool.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(pi_pool, "run_pi_search_candidate", fake_driver)
+
+    assert run_pool_worker(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        job_id=submitted["job_id"],
+    ) == 0
+
+    assert len(calls) == 3
+    assert [call["redispatch"] for call in calls] == [False, True, True]
+    assert [call["resume_agent_session_id"] for call in calls] == [
+        None,
+        "agent_same",
+        "agent_same",
+    ]
+    assert [call["worker_budget"]["max_runtime_seconds"] for call in calls] == [
+        20,
+        16,
+        12,
+    ]
+    assert [call["worker_budget"].get("min_runtime_seconds") for call in calls] == [
+        10,
+        6,
+        2,
+    ]
+    assert [call["worker_budget"].get("min_verifier_runs") for call in calls] == [
+        2,
+        1,
+        None,
+    ]
+    result = load_json(
+        pi_pool._job_dir(runtime.root_dir, opened["pool_id"], submitted["job_id"])
+        / "result.json"
+    )
+    assert result["lease"]["satisfied"] is True
+    assert result["lease"]["dispatch_count"] == 3
+    assert result["lease"]["elapsed_seconds"] == 12
+
+
+def test_pi_pool_continuation_counts_only_new_job_verifier_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    frozen = runtime.freeze_spec(
+        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    candidate_id = _planned_candidates(runtime, run_id, 1)[0]
+    session = runtime.start_agent_session(run_id, candidate_id)
+    runtime._write_agent_session(
+        session.model_copy(update={"counters": {"verifier_runs": 3}})
+    )
+    opened = open_pi_search_pool(root_dir=runtime.root_dir, run_id=run_id)
+    monkeypatch.setattr(pi_pool, "_launch_pool_job", lambda **_kwargs: os.getpid())
+    submitted = continue_pi_search_pool(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        candidate_id=candidate_id,
+        worker_budget={
+            "min_verifier_runs": 2,
+            "max_runtime_seconds": 10,
+            "on_exceed": "interrupt",
+        },
+    )
+    now = [0.0]
+    calls = 0
+
+    def fake_driver(**_request: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        now[0] += 1
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "agent_session_id": session.agent_session_id,
+            "bound_session": {"counters": {"verifier_runs": 3 + calls}},
+            "steps": [],
+            "final_score_report": {
+                "aggregate_score": float(calls),
+                "process_passed": True,
+            },
+        }
+
+    monkeypatch.setattr(pi_pool.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(pi_pool, "run_pi_search_candidate", fake_driver)
+
+    assert run_pool_worker(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        job_id=submitted["job_id"],
+    ) == 0
+    assert calls == 2
+    result = load_json(
+        pi_pool._job_dir(runtime.root_dir, opened["pool_id"], submitted["job_id"])
+        / "result.json"
+    )
+    assert result["lease"]["verifier_runs"] == 2
+
+
+def test_pi_pool_wait_any_rejects_completed_job_with_unsatisfied_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    frozen = runtime.freeze_spec(
+        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    candidate_id = _planned_candidates(runtime, run_id, 1)[0]
+    monkeypatch.setattr(pi_pool, "_launch_pool_job", lambda **_kwargs: os.getpid())
+    opened = open_pi_search_pool(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_ids=[candidate_id],
+        worker_budgets={
+            candidate_id: {
+                "min_runtime_seconds": 5,
+                "min_verifier_runs": 1,
+                "max_runtime_seconds": 10,
+                "on_exceed": "interrupt",
+            }
+        },
+    )
+    job_id = opened["submitted"][0]["job_id"]
+    with exclusive_file_lock(
+        pi_pool._pool_lock_path(runtime.root_dir, opened["pool_id"])
+    ):
+        write_json(
+            pi_pool._job_dir(runtime.root_dir, opened["pool_id"], job_id)
+            / "result.json",
+            {"ok": True, "lease": {"satisfied": False}},
+        )
+        job = pi_pool._load_job(runtime.root_dir, opened["pool_id"], job_id)
+        job.update({"status": "completed", "finished_at": utc_timestamp()})
+        pi_pool._write_job(runtime.root_dir, opened["pool_id"], job)
+
+    waited = wait_any_pi_search_pool(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        timeout_seconds=0,
+    )
+
+    assert waited["events"][0]["kind"] == "timed_out"
+
+
+def test_pi_pool_worker_does_not_continue_driver_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    frozen = runtime.freeze_spec(
+        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    candidate_id = _planned_candidates(runtime, run_id, 1)[0]
+    monkeypatch.setattr(pi_pool, "_launch_pool_job", lambda **_kwargs: os.getpid())
+    opened = open_pi_search_pool(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_ids=[candidate_id],
+        worker_budgets={
+            candidate_id: {
+                "min_runtime_seconds": 10,
+                "min_verifier_runs": 1,
+                "max_runtime_seconds": 20,
+                "on_exceed": "interrupt",
+            }
+        },
+    )
+    calls = 0
+
+    def failed_driver(**_request: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {
+            "ok": False,
+            "candidate_id": candidate_id,
+            "agent_session_id": "agent_failed",
+            "failure": {
+                "stage": "worker_runner",
+                "error_type": "RuntimeError",
+                "message": "provider failed",
+            },
+            "error": "provider failed",
+        }
+
+    monkeypatch.setattr(pi_pool, "run_pi_search_candidate", failed_driver)
+
+    assert run_pool_worker(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        job_id=opened["submitted"][0]["job_id"],
+    ) == 1
+    assert calls == 1
+    waited = wait_any_pi_search_pool(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        timeout_seconds=0,
+    )
+    assert waited["events"][0]["kind"] == "failed"
+
+
+def test_pi_pool_lease_reports_hard_limit_when_minimum_is_also_satisfied(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    frozen = runtime.freeze_spec(
+        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    candidate_id = _planned_candidates(runtime, run_id, 1)[0]
+    monkeypatch.setattr(pi_pool, "_launch_pool_job", lambda **_kwargs: os.getpid())
+    opened = open_pi_search_pool(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_ids=[candidate_id],
+        worker_budgets={
+            candidate_id: {
+                "min_runtime_seconds": 5,
+                "min_verifier_runs": 1,
+                "max_runtime_seconds": 10,
+                "on_exceed": "interrupt",
+            }
+        },
+    )
+    now = [0.0]
+
+    def fake_driver(**_request: Any) -> dict[str, Any]:
+        now[0] = 10.1
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "agent_session_id": "agent_same",
+            "bound_session": {"counters": {"verifier_runs": 1}},
+            "steps": [],
+            "final_score_report": {
+                "aggregate_score": 1.0,
+                "process_passed": True,
+            },
+        }
+
+    monkeypatch.setattr(pi_pool.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(pi_pool, "run_pi_search_candidate", fake_driver)
+
+    assert run_pool_worker(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        job_id=opened["submitted"][0]["job_id"],
+    ) == 0
+    result = load_json(
+        pi_pool._job_dir(
+            runtime.root_dir,
+            opened["pool_id"],
+            opened["submitted"][0]["job_id"],
+        )
+        / "result.json"
+    )
+    assert result["lease"]["satisfied"] is True
+    assert result["lease"]["release_reason"] == "max_runtime_reached"
+
+
+def test_pi_pool_lease_without_required_verifier_times_out_instead_of_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    frozen = runtime.freeze_spec(
+        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    candidate_id = _planned_candidates(runtime, run_id, 1)[0]
+    monkeypatch.setattr(pi_pool, "_launch_pool_job", lambda **_kwargs: os.getpid())
+    opened = open_pi_search_pool(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_ids=[candidate_id],
+        worker_budgets={
+            candidate_id: {
+                "min_runtime_seconds": 5,
+                "min_verifier_runs": 1,
+                "max_runtime_seconds": 10,
+                "on_exceed": "interrupt",
+            }
+        },
+    )
+    now = [0.0]
+
+    def fake_driver(**_request: Any) -> dict[str, Any]:
+        now[0] = 10.1
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "agent_session_id": "agent_same",
+            "bound_session": {"counters": {"verifier_runs": 0}},
+            "steps": [],
+            "final_score_report": {
+                "aggregate_score": 1.0,
+                "process_passed": True,
+            },
+        }
+
+    monkeypatch.setattr(pi_pool.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(pi_pool, "run_pi_search_candidate", fake_driver)
+
+    assert run_pool_worker(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        job_id=opened["submitted"][0]["job_id"],
+    ) == 0
+    waited = wait_any_pi_search_pool(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        timeout_seconds=0,
+    )
+    assert waited["events"][0]["kind"] == "timed_out"
+    assert waited["events"][0]["result"]["lease"]["satisfied"] is False
+
+
+def test_pi_pool_lease_reserves_outer_closeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    spec_data = _pi_rpc_spec_with_budget(
+        project, max_candidates=1, max_parallel=1
+    ).model_dump(mode="json")
+    spec_data["strategy"]["config"] = {"closeout_reserve_seconds": 30}
+    frozen = runtime.freeze_spec(
+        SearchSpec.model_validate(spec_data),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    monkeypatch.setenv(
+        "GOAL_PLUS_OUTER_DEADLINE_AT", "1970-01-01T00:18:50+00:00"
+    )
+    monkeypatch.setattr(pi_pool.time, "time", lambda: 1000.0)
+
+    effective = pi_pool._lease_max_runtime_seconds(
+        runtime.root_dir,
+        run_id,
+        {"max_runtime_seconds": 200},
+    )
+
+    assert effective == 100

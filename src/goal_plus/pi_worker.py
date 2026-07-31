@@ -319,6 +319,7 @@ class _RpcClient:
         self._condition = threading.Condition()
         self._responses: dict[str, dict[str, Any]] = {}
         self._completed_tools: list[str] = []
+        self._terminal_error: str | None = None
         self._counter = 0
         self._auto_retry_until = 0.0
         self._stdout_thread = threading.Thread(target=self._read_stdout, daemon=True)
@@ -372,6 +373,7 @@ class _RpcClient:
                 event = {"type": "raw_stdout", "text": text}
             self._append_event(event)
             self._append_text(line)
+            self._track_terminal_error(event)
             if event.get("type") == "response" and event.get("id"):
                 with self._condition:
                     self._responses[str(event["id"])] = event
@@ -426,6 +428,20 @@ class _RpcClient:
             completed = list(self._completed_tools)
             self._completed_tools.clear()
         return completed
+
+    def _track_terminal_error(self, event: dict[str, Any]) -> None:
+        if event.get("type") != "agent_end" or event.get("willRetry"):
+            return
+        messages = event.get("messages")
+        last_message = messages[-1] if isinstance(messages, list) and messages else {}
+        if not isinstance(last_message, dict):
+            return
+        error = last_message.get("errorMessage") or last_message.get("error")
+        if last_message.get("stopReason") == "error" or error:
+            self._terminal_error = _bounded_error(error) or "Pi agent ended with error"
+
+    def terminal_error(self) -> str | None:
+        return self._terminal_error
 
 
 def default_extension_path() -> Path:
@@ -719,6 +735,7 @@ def run_pi_rpc_worker(
             str(session_dir),
             "--session-id",
             session_id,
+            "--no-extensions",
             "-e",
             str(extension),
         ]
@@ -873,6 +890,9 @@ def run_pi_rpc_worker(
                 assistant_text = (response.get("data") or {}).get("text")
             except TimeoutError:
                 assistant_text = None
+            terminal_error = getattr(rpc, "terminal_error", lambda: None)()
+            if terminal_error:
+                raise PiRpcError(f"Pi agent failed: {terminal_error}")
     finally:
         ended_at = _utc_timestamp()
         duration_seconds = time.monotonic() - started_monotonic

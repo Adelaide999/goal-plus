@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 from pathlib import Path
 import signal
@@ -23,7 +24,7 @@ from goal_plus.runtime import (
 
 PoolCloseMode = Literal["drain", "interrupt"]
 ACTIVE_JOB_STATES = {"starting", "running"}
-TERMINAL_JOB_STATES = {"completed", "failed", "interrupted"}
+TERMINAL_JOB_STATES = {"completed", "failed", "interrupted", "timed_out"}
 POOL_SCHEMA_VERSION = 1
 
 
@@ -134,6 +135,65 @@ def _validate_candidate(root_dir: Path | str, run_id: str, candidate_id: str) ->
         raise RuntimeError(
             f"cannot dispatch candidate {candidate_id} in status {record.status}"
         )
+
+
+def _resolve_worker_budget(
+    root_dir: Path | str,
+    run_id: str,
+    candidate_id: str,
+    override: dict[str, Any] | None,
+) -> dict[str, Any]:
+    runtime = FileSearchRuntime(root_dir)
+    run = runtime._load_run(run_id)
+    frozen = runtime._load_frozen_spec(run.frozen_spec_id)
+    record = runtime._load_candidate_record(run_id, candidate_id)
+    base = runtime._candidate_worker_budget(frozen, record) or {}
+    budget = runtime._normalize_worker_budget_override(
+        worker_host="pi-rpc",
+        worker_budget={**base, **(override or {})},
+    )
+    if budget is None or budget.get("max_runtime_seconds") is None:
+        raise ValueError("Pi pool workers require worker_budget.max_runtime_seconds")
+    return budget
+
+
+def _lease_max_runtime_seconds(
+    root_dir: Path | str,
+    run_id: str,
+    worker_budget: dict[str, Any],
+) -> float:
+    configured = float(worker_budget["max_runtime_seconds"])
+    outer_deadline = FileSearchRuntime._outer_deadline_epoch(
+        os.environ.get("GOAL_PLUS_OUTER_DEADLINE_AT")
+    )
+    if outer_deadline is None:
+        return configured
+    runtime = FileSearchRuntime(root_dir)
+    run = runtime._load_run(run_id)
+    frozen = runtime._load_frozen_spec(run.frozen_spec_id)
+    config = frozen.spec.strategy.config
+    reserve = float(
+        config.get("closeout_reserve_seconds")
+        or config.get("reserve_closeout_seconds")
+        or 0
+    )
+    return min(configured, max(0.0, outer_deadline - time.time() - reserve))
+
+
+def _lease_verifier_runs(result: dict[str, Any]) -> int:
+    bound_session = result.get("bound_session")
+    if not isinstance(bound_session, dict):
+        return 0
+    counters = bound_session.get("counters")
+    if not isinstance(counters, dict):
+        return 0
+    value = counters.get("verifier_runs")
+    return int(value) if isinstance(value, int) and value >= 0 else 0
+
+
+def _pool_is_open(root_dir: Path | str, pool_id: str) -> bool:
+    with exclusive_file_lock(_pool_lock_path(root_dir, pool_id)):
+        return _load_pool(root_dir, pool_id)["state"] == "open"
 
 
 def _resume_agent_session_id(
@@ -321,6 +381,12 @@ def _submit_pi_search_pool(
             if redispatch
             else None
         )
+        effective_worker_budget = _resolve_worker_budget(
+            root_dir,
+            str(pool["run_id"]),
+            candidate_id,
+            worker_budget,
+        )
 
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         now = utc_timestamp()
@@ -346,7 +412,7 @@ def _submit_pi_search_pool(
             "candidate_id": candidate_id,
             "redispatch": bool(redispatch),
             "resume_agent_session_id": resume_agent_session_id,
-            "worker_budget": worker_budget,
+            "worker_budget": effective_worker_budget,
             "final_verify": bool(final_verify),
         }
         job_dir = _job_dir(root_dir, pool_id, job_id)
@@ -522,14 +588,30 @@ def _event_from_job(
     job: dict[str, Any],
 ) -> WorkerPoolEvent:
     status = str(job["status"])
+    result = _job_result(root_dir, str(pool["pool_id"]), job)
+    request_path = (
+        _job_dir(root_dir, str(pool["pool_id"]), str(job["job_id"]))
+        / "request.json"
+    )
+    request = load_json(request_path) if request_path.exists() else {}
+    worker_budget = request.get("worker_budget") or {}
+    lease = result.get("lease") if isinstance(result, dict) else None
+    lease_required = any(
+        worker_budget.get(field) is not None
+        for field in ("min_runtime_seconds", "min_verifier_runs")
+    )
+    lease_unsatisfied = (lease_required or lease is not None) and not (
+        isinstance(lease, dict) and lease.get("satisfied") is True
+    )
     kind: Literal["candidate_ready", "failed", "interrupted", "timed_out"]
-    if status == "completed":
+    if status == "completed" and not lease_unsatisfied:
         kind = "candidate_ready"
     elif status == "interrupted":
         kind = "interrupted"
+    elif status in {"completed", "timed_out"}:
+        kind = "timed_out"
     else:
         kind = "failed"
-    result = _job_result(root_dir, str(pool["pool_id"]), job)
     return WorkerPoolEvent(
         event_id=f"event_{job['job_id']}",
         host="pi-rpc",
@@ -683,7 +765,135 @@ def run_pool_worker(
     signal.signal(signal.SIGINT, _worker_signal_handler)
     try:
         try:
-            result = run_pi_search_candidate(**request)
+            worker_budget = dict(request["worker_budget"])
+            min_runtime_seconds = int(
+                worker_budget.get("min_runtime_seconds") or 0
+            )
+            min_verifier_runs = int(
+                worker_budget.get("min_verifier_runs")
+                or (1 if min_runtime_seconds else 0)
+            )
+            max_runtime_seconds = _lease_max_runtime_seconds(
+                root_dir,
+                str(request["run_id"]),
+                worker_budget,
+            )
+            lease_started = time.monotonic()
+            verifier_runs = 0
+            dispatch_count = 0
+            agent_session_id = request.get("resume_agent_session_id")
+            verifier_run_baseline = 0
+            if agent_session_id is not None:
+                prior_session = FileSearchRuntime(root_dir)._load_agent_session_by_id(
+                    str(agent_session_id),
+                    run_id=str(request["run_id"]),
+                )
+                verifier_run_baseline = int(
+                    prior_session.counters.get("verifier_runs", 0)
+                )
+            release_reason = "no_minimum_lease"
+
+            while True:
+                elapsed = max(0.0, time.monotonic() - lease_started)
+                remaining = max_runtime_seconds - elapsed
+                if remaining <= 0:
+                    raise TimeoutError(
+                        "Pi candidate lease had no time remaining before dispatch"
+                    )
+                dispatch_budget = dict(worker_budget)
+                dispatch_budget["max_runtime_seconds"] = max(1, math.floor(remaining))
+                remaining_minimum = max(0.0, min_runtime_seconds - elapsed)
+                if 0 < remaining_minimum < dispatch_budget["max_runtime_seconds"]:
+                    dispatch_budget["min_runtime_seconds"] = math.ceil(
+                        remaining_minimum
+                    )
+                else:
+                    dispatch_budget.pop("min_runtime_seconds", None)
+                remaining_verifiers = max(0, min_verifier_runs - verifier_runs)
+                if remaining_verifiers:
+                    dispatch_budget["min_verifier_runs"] = remaining_verifiers
+                else:
+                    dispatch_budget.pop("min_verifier_runs", None)
+
+                dispatch_request = {
+                    **request,
+                    "redispatch": bool(request.get("redispatch"))
+                    if dispatch_count == 0
+                    else True,
+                    "resume_agent_session_id": agent_session_id,
+                    "worker_budget": dispatch_budget,
+                }
+                result = run_pi_search_candidate(**dispatch_request)
+                dispatch_count += 1
+                if result.get("ok") is False:
+                    failure = result.get("failure") or {
+                        "stage": "pool_worker",
+                        "error_type": "CandidateDriverFailure",
+                        "message": str(result.get("error") or "Pi candidate driver failed"),
+                    }
+                    with exclusive_file_lock(_pool_lock_path(root_dir, pool_id)):
+                        write_json(
+                            _job_dir(root_dir, pool_id, job_id) / "result.json",
+                            result,
+                        )
+                        job = _load_job(root_dir, pool_id, job_id)
+                        job.update(
+                            {
+                                "status": "failed",
+                                "finished_at": utc_timestamp(),
+                                "error": failure,
+                            }
+                        )
+                        _write_job(root_dir, pool_id, job)
+                    return 1
+
+                returned_session_id = result.get("agent_session_id")
+                if not isinstance(returned_session_id, str) or not returned_session_id:
+                    raise RuntimeError("Pi candidate driver returned no agent_session_id")
+                if agent_session_id is not None and returned_session_id != agent_session_id:
+                    raise RuntimeError(
+                        "Pi candidate continuation changed the native agent session"
+                    )
+                agent_session_id = returned_session_id
+                verifier_runs = max(
+                    verifier_runs,
+                    max(
+                        0,
+                        _lease_verifier_runs(result) - verifier_run_baseline,
+                    ),
+                )
+                elapsed = max(0.0, time.monotonic() - lease_started)
+                runtime_complete = elapsed >= min_runtime_seconds
+                verifier_complete = verifier_runs >= min_verifier_runs
+                lease_satisfied = runtime_complete and verifier_complete
+                if elapsed >= max_runtime_seconds:
+                    release_reason = "max_runtime_reached"
+                    break
+                if lease_satisfied:
+                    release_reason = (
+                        "minimum_satisfied"
+                        if min_runtime_seconds or min_verifier_runs
+                        else "no_minimum_lease"
+                    )
+                    break
+                if not _pool_is_open(root_dir, pool_id):
+                    release_reason = "pool_closing"
+                    break
+
+            result = {
+                **result,
+                "lease": {
+                    "satisfied": lease_satisfied,
+                    "release_reason": release_reason,
+                    "elapsed_seconds": elapsed,
+                    "min_runtime_seconds": min_runtime_seconds,
+                    "max_runtime_seconds": max_runtime_seconds,
+                    "verifier_runs": verifier_runs,
+                    "min_verifier_runs": min_verifier_runs,
+                    "dispatch_count": dispatch_count,
+                    "agent_session_id": agent_session_id,
+                },
+            }
         except _PoolWorkerInterrupted:
             with exclusive_file_lock(_pool_lock_path(root_dir, pool_id)):
                 job = _load_job(root_dir, pool_id, job_id)
@@ -722,11 +932,29 @@ def run_pool_worker(
         with exclusive_file_lock(_pool_lock_path(root_dir, pool_id)):
             write_json(_job_dir(root_dir, pool_id, job_id) / "result.json", result)
             job = _load_job(root_dir, pool_id, job_id)
+            terminal_status = (
+                "completed"
+                if lease_satisfied
+                else "timed_out"
+                if release_reason == "max_runtime_reached"
+                else "interrupted"
+            )
             job.update(
                 {
-                    "status": "completed",
+                    "status": terminal_status,
                     "finished_at": utc_timestamp(),
-                    "error": None,
+                    "error": (
+                        None
+                        if terminal_status == "completed"
+                        else {
+                            "stage": "lease",
+                            "error_type": "MinimumLeaseUnsatisfied",
+                            "message": (
+                                "Pi candidate stopped before its cumulative minimum "
+                                "lease was satisfied"
+                            ),
+                        }
+                    ),
                 }
             )
             _write_job(root_dir, pool_id, job)

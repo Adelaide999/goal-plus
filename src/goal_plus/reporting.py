@@ -1200,12 +1200,17 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
                 "hypothesis": candidate.task.hypothesis,
                 "selected": candidate.candidate_id == run.selected_candidate_id,
                 "score": (
-                    candidate.score_report.aggregate_score
+                    best.score
+                    if best is not None
+                    else candidate.score_report.aggregate_score
                     if candidate.score_report is not None
+                    and candidate.score_report.process_passed
                     else None
                 ),
                 "process_passed": (
-                    candidate.score_report.process_passed
+                    True
+                    if best is not None
+                    else candidate.score_report.process_passed
                     if candidate.score_report is not None
                     else None
                 ),
@@ -3203,7 +3208,7 @@ def _render_statistics(task: dict[str, Any]) -> str:
     efficiency = statistics.get("efficiency") or {}
     lineage = statistics.get("lineage") or {}
     tables = [
-        ("Timing", timing, {key: _duration for key in timing}),
+        ("Timing", timing, {key: _duration for key in timing if "_seconds" in key}),
         ("Workers", workers, {key: _percent for key in workers if key.endswith("_rate")}),
         ("Verifiers", verifiers, {key: _percent for key in verifiers if key.endswith("_rate")}),
         (

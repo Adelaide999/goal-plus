@@ -29,7 +29,7 @@ current `spawn_agent` schema rather than assumed optional metadata.
 | Launch | async `spawn_agent` | detached local supervisor + foreground Pi child |
 | Wait mode | `wait_agent` any-event wake + `list_agents` | `pi_search_pool_wait_any` |
 | Continuation | same worker via `followup_task` | same native session in a new process |
-| Deadline | per-dispatch parent watchdog | Pi process watchdog |
+| Deadline | per-dispatch parent watchdog | cumulative pool lease + Pi process watchdog |
 | Recovery | native agent registry + `.gp` | persisted `.gp/host-pools/pi/` + `.gp` |
 | Goal gate | `UserPromptSubmit`, `SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStop` | extension input/tool/turn events |
 | Strategy coverage | initial parallel loops | initial parallel loops |
@@ -58,14 +58,18 @@ The accepted initial planners are `agent_guided`/`agent`/`default` and
 Codex and Pi both satisfy asynchronous wait-any semantics:
 
 - **Codex** launches the initial candidate set once, waits for any mailbox
-  update, then uses `list_agents` to discover all newly terminal workers. After
-  parent completion verification it continues that same worker through
+  update, then uses `list_agents` to discover all newly terminal workers. It
+  reuses exact worker Evidence and runs a parent verifier only when matching
+  Evidence is absent. It then continues that same worker through
   `search_continue_agent_session` plus `followup_task` unless a global stop
   condition is true.
-- **Pi** persists pool/job state, returns candidate-ready only after the full
-  Pi driver chain and final verification, and never auto-refills. After each
-  terminal event main calls `continue` for that same candidate unless a global
-  stop condition is true. Pi reloads the same native session in a new process.
+- **Pi** persists pool/job state, automatically resumes an early native turn
+  inside the same job when a minimum lease is active, and never auto-refills.
+  It returns `candidate_ready` only after the minimum lease and durable Evidence
+  are satisfied; an exhausted unsatisfied lease returns `timed_out`. After each
+  candidate-ready event main calls `continue` for that same candidate unless a
+  global stop condition is true. Pi reloads the same native session in a new
+  process.
 
 New Pi/Codex specs set `orchestration_mode="parallel_loops"`; one initial round
 creates the durable candidate loops. Neither adapter turns that round into a
@@ -82,13 +86,16 @@ completion barrier. Low score or no improvement never causes replacement.
 distinct candidate workspaces; `max_parallel` limits live workers. None of
 these is a forced round count.
 
-Codex additionally supports a lower-bound single-worker AutoResearch lease
-through `worker_budget.min_runtime_seconds` and `min_verifier_runs`. Its
+Codex supports a lower-bound single-worker AutoResearch lease through
+`worker_budget.min_runtime_seconds` and `min_verifier_runs`. Its
 `SubagentStop` hook continues the same child turn until the lower bound is
 satisfied, while `max_runtime_seconds` remains the independent parent-watchdog
 upper bound. The adapter requires the lease to release before the parent soft
-closeout, preventing the two controls from racing. This lower-bound lease is
-currently Codex-only.
+closeout, preventing the two controls from racing. Pi exposes the same fields,
+but its host-local pool supervisor enforces them cumulatively across
+cross-process resumes of the same native session. Each resume receives only the
+remaining max runtime; infrastructure failure and pool/outer closeout terminate
+the lease.
 
 `strategy.worker_launch` carries optional host launch preferences. Codex maps
 `model`, `reasoning_effort`, and `service_tier` when exposed; Pi maps model and
