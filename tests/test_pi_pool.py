@@ -143,7 +143,7 @@ def test_pi_pool_enforces_frozen_parallel_limit(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=2, max_parallel=1),
+        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)

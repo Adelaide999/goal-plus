@@ -454,6 +454,16 @@ class FileSearchRuntime:
     def freeze_spec(self, spec: SearchSpec, verifier_artifacts: list[Path]) -> FrozenSpec:
         spec = _normalize_verifier_cwds_for_candidate_workspace(spec)
         self._validate_strategy_config(spec.strategy)
+        legacy_max_candidates = spec.budget.__dict__.get("max_candidates")
+        if (
+            legacy_max_candidates is not None
+            and int(legacy_max_candidates) != int(spec.budget.max_parallel)
+        ):
+            raise ValueError(
+                "budget.max_candidates is deprecated and conflicts with "
+                "budget.max_parallel; omit max_candidates or set it equal to "
+                "max_parallel for legacy compatibility"
+            )
         source_root = Path(spec.source_path).resolve()
         verifier_hashes: dict[str, str] = {}
         artifact_entries: list[tuple[Path, str]] = []
@@ -900,8 +910,8 @@ class FileSearchRuntime:
                 "Search permits one initial SearchPlan; resume or "
                 "redispatch the existing candidates instead of planning a new batch"
             )
-        remaining = max(0, spec.budget.max_candidates - run.candidates_total)
-        planned_k = min(requested_k, remaining, spec.budget.max_parallel)
+        remaining = max(0, spec.budget.max_parallel - run.candidates_total)
+        planned_k = min(requested_k, remaining)
         strategy = spec.strategy
         self._validate_host_strategy(strategy)
         mode = self._strategy_mode(strategy)
@@ -982,7 +992,10 @@ class FileSearchRuntime:
         if plan.status != "planned":
             raise RuntimeError(f"plan {plan_id} has already been started")
 
-        remaining = max(0, frozen.spec.budget.max_candidates - run.candidates_total)
+        remaining = max(
+            0,
+            frozen.spec.budget.max_parallel - run.candidates_total,
+        )
         target_count = min(plan.planned_k, len(plan_records) + remaining)
         if target_count <= 0:
             return []

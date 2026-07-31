@@ -94,24 +94,24 @@ def _assert_codex_redispatch(report: StReport) -> None:
 
 
 def _assert_codex_circle_packing_cycle(report: StReport) -> None:
-    expected_ids = ["c001", "c002", "c003", "c004"]
+    expected_ids = ["c001", "c002"]
     assert [candidate.get("candidate_id") for candidate in report.candidates] == expected_ids, (
-        "Codex cycle must report exactly c001 through c004 in order"
+        "Codex cycle must report exactly c001 and c002 in order"
     )
     assert all(
         candidate.get("status") == "evaluated"
         and int(candidate.get("iterations") or 0) >= 1
         for candidate in report.candidates
-    ), "all four Codex cycle candidates must be evaluated with verifier iterations"
+    ), "both Codex cycle candidates must be evaluated with verifier iterations"
 
     extra = report.extra
     assert extra.get("host") == "codex"
     assert extra.get("model") == "gpt-5.6-terra"
-    assert extra.get("rounds") == 2
-    assert extra.get("batch_sizes") == [2, 2]
+    assert extra.get("rounds") == 1
+    assert extra.get("batch_sizes") == [2]
     session_ids = extra.get("agent_session_ids") or []
-    assert len(session_ids) == 4, "cycle must report four agent_session_id values"
-    assert len(set(session_ids)) == 4, "cycle agent_session_id values must be distinct"
+    assert len(session_ids) == 2, "cycle must report two agent_session_id values"
+    assert len(set(session_ids)) == 2, "cycle agent_session_id values must be distinct"
 
 
 def _assert_codex_rolling_followup(report: StReport) -> None:

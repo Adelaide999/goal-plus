@@ -2027,6 +2027,39 @@ def test_plan_next_caps_batch_size_to_max_parallel(tmp_path: Path) -> None:
         runtime.plan_next(run_id, requested_k=4)
 
 
+def test_freeze_rejects_conflicting_deprecated_max_candidates(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    spec_data = spec_for(project, max_candidates=2).model_dump(mode="json")
+    spec_data["budget"]["max_candidates"] = 3
+
+    with pytest.raises(
+        ValueError,
+        match="max_candidates is deprecated and conflicts with budget.max_parallel",
+    ):
+        runtime.freeze_spec(
+            SearchSpec.model_validate(spec_data),
+            [project / "evaluator.py"],
+        )
+
+
+def test_freeze_accepts_matching_legacy_max_candidates_but_omits_it(
+    tmp_path: Path,
+) -> None:
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    spec_data = spec_for(project, max_candidates=2).model_dump(mode="json")
+    spec_data["budget"]["max_candidates"] = 2
+
+    frozen = runtime.freeze_spec(
+        SearchSpec.model_validate(spec_data),
+        [project / "evaluator.py"],
+    )
+
+    assert frozen.spec.budget.max_parallel == 2
+    assert "max_candidates" not in frozen.spec.model_dump(mode="json")["budget"]
+
+
 def test_parallel_loops_rejects_second_plan_and_reuses_initial_candidates(
     tmp_path: Path,
 ) -> None:

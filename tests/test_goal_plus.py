@@ -25,7 +25,7 @@ def _complete_search_spec() -> dict:
         "metric_direction": "minimize",
         "source_path": ".",
         "edit_surface": {"allow": ["kernel.py"], "deny": ["verify.py"]},
-        "budget": {"max_candidates": 2, "max_parallel": 1},
+        "budget": {"max_parallel": 1},
         "process_verifiers": [
             {
                 "name": "latency",

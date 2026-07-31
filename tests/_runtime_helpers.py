@@ -48,7 +48,6 @@ def spec_for(project: Path, *, max_candidates: int = 4, direction: str = "maximi
                 "deny": ["evaluator.py", "config.yaml"],
             },
             "budget": {
-                "max_candidates": max_candidates,
                 "max_parallel": max_candidates,
             },
             "process_verifiers": [

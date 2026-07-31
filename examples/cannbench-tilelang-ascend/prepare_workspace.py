@@ -121,7 +121,6 @@ def _search_spec(
     function_name: str,
     device_id: str | None,
     timeout_seconds: int,
-    max_candidates: int,
     max_parallel: int,
 ) -> dict[str, Any]:
     command = [
@@ -176,7 +175,6 @@ def _search_spec(
             }
         ],
         "budget": {
-            "max_candidates": max_candidates,
             "max_parallel": max_parallel,
         },
         "strategy": {
@@ -221,7 +219,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--spec-out")
     parser.add_argument("--device-id")
     parser.add_argument("--timeout-seconds", type=int, default=7200)
-    parser.add_argument("--max-candidates", type=int, default=4)
     parser.add_argument("--max-parallel", type=int, default=2)
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
@@ -295,7 +292,6 @@ def main() -> int:
         function_name=function_name,
         device_id=args.device_id,
         timeout_seconds=args.timeout_seconds,
-        max_candidates=args.max_candidates,
         max_parallel=args.max_parallel,
     )
     _write_text(spec_out, json.dumps(spec, indent=2, ensure_ascii=False) + "\n")

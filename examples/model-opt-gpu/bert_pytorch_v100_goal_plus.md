@@ -96,9 +96,10 @@ with these properties; do not wait for user confirmation:
 - metric_direction: minimize;
 - source_path: the complete prepared/BERT_pytorch_standalone directory;
 - workspace.backend: git_worktree;
-- max_candidates: choose a bounded campaign size appropriate for available
-  time; candidate count may exceed GPU count;
 - max_parallel: derived from detected_gpu_count and the explicit resource map;
+  it is the single initial candidate/live-worker count;
+- omit deprecated max_candidates; continue the same candidate/session instead
+  of creating later replacement candidates;
 - allow: bert_pytorch/**, runner integration needed for optimized kernels, and
   triton_ops/**;
 - deny: verifier.py, benchmark policy, frozen inputs/references,

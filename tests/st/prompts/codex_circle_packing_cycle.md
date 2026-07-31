@@ -9,7 +9,7 @@ exact changes before freezing it:
 
 - Set `source_path` to the absolute path
   `{{PROJECT_ROOT}}/tests/st/fixtures/circle_packing`.
-- Set `budget` to `{"max_candidates": 4, "max_parallel": 2}`.
+- Set `budget` to `{"max_parallel": 2}`; do not set deprecated `max_candidates`.
 - Set `strategy.name="random"`.
 - Set `strategy.worker_host="codex"`.
 - Set `strategy.worker_agent_type="search_candidate_agent"`.
@@ -24,9 +24,9 @@ onto that schema: pass only `task_name`, `message`, and `fork_turns` to
 `service_tier`, and do not treat their omission as an error.
 
 Freeze {{PROJECT_ROOT}}/tests/st/fixtures/circle_packing/evaluator.py, then call
-`search_create`. Execute exactly two rounds with batch size two.
+`search_create`. Execute exactly one initial batch with size two.
 
-## Round 1
+## Initial batch
 
 1. Call `search_plan_next(k=2)` and `search_start_batch`; require exactly
    candidates `c001` and `c002`.
@@ -43,20 +43,10 @@ Freeze {{PROJECT_ROOT}}/tests/st/fixtures/circle_packing/evaluator.py, then call
 6. Run a main-agent `search_run_verifier(..., phase="process")` for both
    candidates after the workers return or are interrupted.
 
-## Round 2
-
-1. Call `search_plan_next(k=2)` and `search_start_batch`; require exactly
-   candidates `c003` and `c004`.
-2. Start one agent session for each candidate with distinct directives:
-   - `c003`: implement concentric rings with tuned ring radii.
-   - `c004`: implement a boundary-hugging layout followed by center filling.
-3. Again launch both workers before waiting, bind both handles, apply the same
-   two-stage watchdog, and run a main-agent process verifier for both.
-
-After both rounds, call `search_list_iterations`, `search_list_history`,
+After the initial batch, call `search_list_iterations`, `search_list_history`,
 `search_status`, `search_select`, and `search_report`. Do not report success
-unless there are exactly four evaluated candidates, each with at least one
-verifier iteration, and four distinct `agent_session_id` values.
+unless there are exactly two evaluated candidates, each with at least one
+verifier iteration, and two distinct `agent_session_id` values.
 
 ## ST Output Contract
 
@@ -65,20 +55,19 @@ message, with no prose after it. The JSON MUST conform to this schema:
 
 - scenario: "codex_circle_packing_cycle"
 - run_id: string
-- candidates: array of exactly four
+- candidates: array of exactly two
   `{ candidate_id, score: number|null, iterations: integer, status: string }`
-  objects ordered `c001`, `c002`, `c003`, `c004`
+  objects ordered `c001`, `c002`
 - selected_candidate_id: string
 - best_score: number
 - report_path: string
 - extra: {
     host: "codex",
     model: "gpt-5.6-terra",
-    rounds: 2,
-    batch_sizes: [2, 2],
-    agent_session_ids: array of four distinct strings,
-    task_names: array of strings,
-    round_2_parent_candidate_ids: array of strings
+    rounds: 1,
+    batch_sizes: [2],
+    agent_session_ids: array of two distinct strings,
+    task_names: array of strings
   }
 
 If the run fails before producing a complete report, keep known identifiers,

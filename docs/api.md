@@ -50,11 +50,13 @@ New Pi/Codex specs use `strategy.orchestration_mode="parallel_loops"`.
 the existing candidates. It plans:
 
 ```text
-min(requested_k, remaining max_candidates, max_parallel)
+min(requested_k, remaining max_parallel)
 ```
 
-The default `requested_k=4` is a request for that one planning call.
-`max_candidates` is the immutable cap on distinct workspaces.
+The standard flow passes `requested_k=budget.max_parallel` for that one planning
+call. `budget.max_parallel` is the single initial candidate/live-worker count.
+`budget.max_candidates` is deprecated; new specs omit it, while matching legacy
+input remains readable.
 
 `search_invalidate_run` requires a typed verifier reason, non-empty summary,
 and concrete evidence. It changes the run to `aborted` and blocks new planning,
@@ -209,8 +211,8 @@ goal-plus-pi-tool goal_plus_monitor_snapshot \
 | `process_verifiers` | correctness gates |
 | `ranking_signals` | metric-producing commands |
 | `promotion_verifiers` | checks required before promotion |
-| `budget.max_candidates` | whole-run distinct candidate cap |
-| `budget.max_parallel` | live-worker/planned-batch cap |
+| `budget.max_parallel` | single initial candidate/live-worker count |
+| `budget.max_candidates` | deprecated compatibility field; omit in new specs |
 | `strategy.worker_host` | maintained execution host: `pi-rpc` or `codex` |
 | `strategy.worker_budget` | host-enforced upper bound and optional minimum lease |
 | `workspace.backend` | `git_worktree` (default) or `copy` |

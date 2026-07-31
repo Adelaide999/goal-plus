@@ -64,7 +64,7 @@ Step 3 — fill and freeze this SearchSpec:
     {"name": "frozen_hash_gate", "role": "anti_cheat_gate",
      "command": ["goal-plus-internal", "check-frozen-hashes"]}
   ],
-  "budget": {"max_candidates": 4, "max_parallel": 2},
+  "budget": {"max_parallel": 2},
   "strategy": {
     "name": "agent_guided",
     "orchestration_mode": "parallel_loops",

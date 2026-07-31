@@ -51,7 +51,8 @@ Maintained hosts are Codex and Pi RPC. Use one of these strategy shapes:
 the main agent to provide the initial lane intents to `search_start_batch`.
 Neither strategy permits a second `search_plan_next` call.
 
-Set `budget.max_candidates` equal to `budget.max_parallel` for normal runs.
+Set only `budget.max_parallel` for normal runs. It is the initial number of
+long-lived candidate lanes; deprecated `budget.max_candidates` is omitted.
 Each candidate workspace is a long-lived lane, not a disposable attempt.
 
 ## Host Flow

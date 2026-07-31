@@ -153,16 +153,13 @@ def test_freeze_spec_exposes_complete_nested_search_spec_schema(tmp_path: Path) 
     assert "evidence_annotator" in strategy["properties"]
 
     budget = spec_schema["properties"]["budget"]["properties"]
-    assert "整个冻结 Search run 和所有规划轮次" in budget[
-        "max_candidates"
-    ]["description"]
-    assert "不是单轮限制" in budget["max_candidates"]["description"]
-    assert "一个规划 batch" in budget["max_parallel"]["description"]
-    assert "不控制候选总数" in budget["max_parallel"]["description"]
+    assert budget["max_candidates"]["deprecated"] is True
+    assert "已弃用的兼容字段" in budget["max_candidates"]["description"]
+    assert "初始创建并实际并行工作" in budget["max_parallel"]["description"]
 
     freeze_description = " ".join(tools["search_freeze_spec"].description.split())
-    assert "不可变的候选总上限" in freeze_description
-    assert "每个 batch 的规划上限" in freeze_description
+    assert "唯一决定初始候选 Agent 数" in freeze_description
+    assert "已弃用" in freeze_description
     assert "一次性源码副本" in freeze_description
     assert "GOAL_PLUS_VERIFIER_TMPDIR" in freeze_description
     assert "固定 `/tmp` 路径不安全" in freeze_description
@@ -183,11 +180,10 @@ def test_plan_next_exposes_per_round_budget_semantics(tmp_path: Path) -> None:
 
     assert requested_k["default"] == 4
     assert requested_k["exclusiveMinimum"] == 0
-    assert "仅为本规划轮次" in requested_k["description"]
-    assert "剩余候选总预算" in requested_k["description"]
-    assert "不是整个 run 的预算" in requested_k["description"]
-    assert "`requested_k`、剩余" in plan_tool.description
-    assert "`budget.max_candidates`" in plan_tool.description
+    assert "请求初始候选数" in requested_k["description"]
+    assert "标准流程必须传入 budget.max_parallel" in requested_k["description"]
+    assert "`requested_k` 与" in plan_tool.description
+    assert "标准流程必须令两者相等" in plan_tool.description
 
 
 def test_spec_draft_exposes_partial_nested_search_spec_schema(tmp_path: Path) -> None:
@@ -211,10 +207,9 @@ def test_spec_draft_exposes_partial_nested_search_spec_schema(tmp_path: Path) ->
         for option in draft_budget_schema["anyOf"]
         if option.get("type") == "object"
     )["properties"]
-    assert "整个冻结 Search run 和所有规划轮次" in draft_budget[
-        "max_candidates"
-    ]["description"]
-    assert "一个规划 batch" in draft_budget["max_parallel"]["description"]
+    assert draft_budget["max_candidates"]["deprecated"] is True
+    assert "已弃用的兼容字段" in draft_budget["max_candidates"]["description"]
+    assert "初始创建并实际并行工作" in draft_budget["max_parallel"]["description"]
 
 
 def test_goal_plus_gate_exposes_hook_friendly_schema(tmp_path: Path) -> None:

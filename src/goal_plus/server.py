@@ -39,9 +39,9 @@ def create_mcp(
         `GOAL_PLUS_VERIFIER_TMPDIR`、`TMPDIR`、`TMP` 或 `TEMP`；并发验证候选时固定
         `/tmp` 路径不安全。可选自定义 verifier 必须在 Spec Discovery 期间写入源码拥有
         的路径，绝不能放在 `.gp` 或 `.search`。`expected_outputs` 只包含产物路径/glob，
-        不是 stdout parser 配置。`spec.budget.max_candidates` 是整个 run 和所有轮次中
-        不可变的候选总上限；`spec.budget.max_parallel` 是每个 batch 的规划上限。
-        两者相等通常只允许一个完整 batch。
+        不是 stdout parser 配置。`spec.budget.max_parallel` 唯一决定初始候选 Agent 数；
+        `spec.budget.max_candidates` 已弃用，新 spec 不得设置。旧输入只有在两者相等时
+        才能通过冻结兼容检查。
         """
         return tools.search_freeze_spec(spec, verifier_artifact_paths)
 
@@ -117,18 +117,17 @@ def create_mcp(
             Field(
                 gt=0,
                 description=(
-                    "仅为本规划轮次请求的候选数。运行时按 min(requested_k, 剩余候选总预算, "
-                    "budget.max_parallel) 进行规划。默认值 4 是 batch size 请求，"
-                    "不是整个 run 的预算。"
+                    "请求初始候选数。运行时按 min(requested_k, budget.max_parallel 的"
+                    "剩余可用数量) 进行规划。标准流程必须传入 budget.max_parallel。"
                 ),
             ),
         ] = 4,
     ) -> dict[str, Any]:
         """从冻结的整个 run 预算中规划一个候选 batch/轮次。
 
-        `requested_k` 只适用于本次调用。实际 `planned_k` 是 `requested_k`、剩余
-        `budget.max_candidates` 和 `budget.max_parallel` 的最小值。返回 `plan_id`
-        和候选任务。
+        `requested_k` 只适用于这一次初始规划。实际 `planned_k` 是 `requested_k` 与
+        `budget.max_parallel` 剩余可用数量的最小值。标准流程必须令两者相等。返回
+        `plan_id` 和候选任务。
         """
         return tools.search_plan_next(run_id, requested_k)
 

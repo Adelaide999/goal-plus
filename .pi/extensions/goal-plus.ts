@@ -94,15 +94,10 @@ const EditSurface = Type.Object(
 );
 const SearchBudget = Type.Object(
 	{
-		max_candidates: Type.Integer({
-			exclusiveMinimum: 0,
-			description:
-				"整个冻结 Search run 和所有规划轮次中不同候选工作区总数的硬上限。这不是单轮限制，冻结后不能增加。将其设为与 max_parallel 相同通常只允许一个完整 batch。",
-		}),
 		max_parallel: Type.Integer({
 			exclusiveMinimum: 0,
 			description:
-				"search_plan_next 在一个规划 batch 中最多可放置的候选数。它控制 batch 宽度或建议并发度，不控制候选总数。",
+				"一个 Search run 初始创建并实际并行工作的候选 Agent 数量；后续继续已有 candidate/session。",
 		}),
 		max_tokens: Type.Optional(NullablePositiveInteger),
 	},
@@ -499,7 +494,7 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 };
 const RuntimeToolDescriptions: Record<string, string> = {
 	goal_plus_save_spec_draft:
-		"保存发现的 SearchSpec draft。新的 Pi spec 使用 orchestration_mode=parallel_loops，并让 max_candidates 等于初始 max_parallel 候选数。",
+		"保存发现的 SearchSpec draft。新的 Pi spec 使用 orchestration_mode=parallel_loops，只设置 max_parallel 作为初始 candidate/subagent 数，不设置已弃用的 max_candidates。",
 	search_freeze_spec:
 		"冻结不可变的 SearchSpec 和 verifier bundle。预检使用一次性源码副本，并拒绝 verifier 工作区副作用；并发 Search 下 verifier 临时文件必须放入唯一的 GOAL_PLUS_VERIFIER_TMPDIR/TMPDIR，绝不能使用固定 /tmp 路径。parallel_loops 模式由一份初始 plan 创建长期候选。",
 	search_get_global_evidence:
@@ -511,7 +506,7 @@ const RuntimeToolDescriptions: Record<string, string> = {
 	search_report:
 		"生成最终 report.md 和 report.html。对已链接的 Goal Plus run，只能在 Goal Plus 记录达到终态后调用且只调用一次；独立 Search 在提升后调用。active 的已链接 Goal Plus 记录会被拒绝。",
 	search_plan_next:
-		"规划初始候选。parallel_loops 模式下只能调用一次；后续工作恢复现有候选。planned_k 为 min(requested_k, 剩余 max_candidates, max_parallel)。",
+		"规划初始候选。parallel_loops 模式下只能调用一次；后续工作恢复现有候选。标准流程令 requested_k 等于 max_parallel。",
 	pi_search_pool_open:
 		"打开持久化 Pi 候选 pool，并启动完整初始候选集合。启动后立即返回，并强制执行冻结的 max_parallel 限制。",
 	pi_search_pool_wait_any:

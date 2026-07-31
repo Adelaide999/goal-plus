@@ -89,7 +89,7 @@ def _pi_spec(*, max_runtime_seconds: int = 300) -> SearchSpec:
             "allow": ["initial_program.py"],
             "deny": ["evaluator.py", "config.yaml"],
         },
-        "budget": {"max_candidates": 1, "max_parallel": 1},
+        "budget": {"max_parallel": 1},
         "process_verifiers": [
             {
                 "name": "k_module_score",
@@ -129,7 +129,7 @@ def _circle_packing_pi_spec(*, max_runtime_seconds: int = 300) -> SearchSpec:
         },
         "config": {"seed": 42},
     }
-    data["budget"] = {"max_candidates": 4, "max_parallel": 2}
+    data["budget"] = {"max_parallel": 2}
     return SearchSpec.model_validate(data)
 
 
@@ -140,7 +140,7 @@ def _edgebench_pi_spec(*, max_runtime_seconds: int = 180) -> SearchSpec:
         )
     )
     data["source_path"] = str(EDGE_BENCH)
-    data["budget"] = {"max_candidates": 1, "max_parallel": 1}
+    data["budget"] = {"max_parallel": 1}
     data["strategy"]["worker_budget"] = {
         "max_runtime_seconds": max_runtime_seconds,
         "max_turns": 6,
@@ -333,7 +333,7 @@ def test_pi_rpc_parallel_loop_cycle(st_project_root: Path) -> None:
     spec_data = _circle_packing_pi_spec(
         max_runtime_seconds=int(os.environ.get("ST_PI_CYCLE_WORKER_SECONDS", "90"))
     ).model_dump(mode="json")
-    spec_data["budget"] = {"max_candidates": 2, "max_parallel": 2}
+    spec_data["budget"] = {"max_parallel": 2}
     spec_data["strategy"]["orchestration_mode"] = "parallel_loops"
     worker_launch = {
         key: value

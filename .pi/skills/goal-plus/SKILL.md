@@ -97,9 +97,9 @@ Pi 支持的 strategy name 仅限以下可移植内置子集：
 ### Search Run 预算规划
 
 调用 `search_freeze_spec` 前选择整个 run 的候选预算；预算一旦冻结，不能在该 run 内增长。
-普通 `parallel_loops` 执行中，将 `budget.max_candidates` 设为与
-`budget.max_parallel` 相同：每个初始候选工作区都是长期自主循环，不创建后续规划轮次
-或基于质量的替代项。
+普通 `parallel_loops` 执行只设置 `budget.max_parallel`：它唯一决定初始
+candidate/subagent 数。`budget.max_candidates` 已弃用，不得写入新 spec。
+每个初始候选工作区都是长期自主循环，不创建后续规划轮次或基于质量的替代项。
 
 用户或外层 harness 提供 wall-clock、attempt 或 token 预算时：
 

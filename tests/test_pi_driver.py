@@ -47,7 +47,6 @@ def _pi_rpc_spec(project: Path) -> SearchSpec:
                 "deny": ["evaluator.py"],
             },
             "budget": {
-                "max_candidates": 1,
                 "max_parallel": 1,
             },
             "process_verifiers": [
@@ -77,8 +76,9 @@ def _pi_rpc_spec_with_budget(
     max_candidates: int,
     max_parallel: int,
 ) -> SearchSpec:
+    if max_candidates != max_parallel:
+        raise ValueError("legacy max_candidates must equal max_parallel")
     data = _pi_rpc_spec(project).model_dump(mode="json")
-    data["budget"]["max_candidates"] = max_candidates
     data["budget"]["max_parallel"] = max_parallel
     return SearchSpec.model_validate(data)
 

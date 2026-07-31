@@ -572,8 +572,8 @@ initial SearchPlan
 -> no recurring SearchPlan from main
 ```
 
-`max_parallel` 表示同时活跃的初始搜索链数量。若不启用污染恢复，
-`max_candidates` 可以直接等于初始 loop 数量。
+`max_parallel` 表示同时活跃的初始搜索链数量，也是唯一的初始 candidate 数量。
+`max_candidates` 已弃用；后续工作继续已有 candidate/session，不再创建替代 loop。
 
 ### 10.2 搜索决策归属
 

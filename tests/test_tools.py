@@ -36,7 +36,6 @@ def spec_dict() -> dict:
             "deny": ["evaluator.py"],
         },
         "budget": {
-            "max_candidates": 4,
             "max_parallel": 2,
         },
         "process_verifiers": [

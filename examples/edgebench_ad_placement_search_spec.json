@@ -26,7 +26,6 @@
   ],
   "promotion_verifiers": [],
   "budget": {
-    "max_candidates": 4,
     "max_parallel": 2
   },
   "strategy": {

@@ -35,7 +35,6 @@
     }
   ],
   "budget": {
-    "max_candidates": 2,
     "max_parallel": 2
   },
   "strategy": {

@@ -47,19 +47,24 @@ class FeedbackPolicy(str, Enum):
 
 
 class Budget(SearchModel):
-    max_candidates: int = Field(
+    max_candidates: int | None = Field(
+        default=None,
         gt=0,
+        exclude=True,
+        deprecated=(
+            "budget.max_candidates 已弃用；候选工作区数量由 budget.max_parallel "
+            "唯一决定。兼容输入只能与 max_parallel 相等。"
+        ),
         description=(
-            "整个冻结 Search run 和所有规划轮次中不同候选工作区总数的硬上限。"
-            "这不是单轮限制，冻结后不能增加。将其设为与 max_parallel 相同通常只允许"
-            "一个完整 batch。"
+            "已弃用的兼容字段。新 SearchSpec 不应设置；若旧输入仍提供该字段，"
+            "search_freeze_spec 只在它等于 max_parallel 时接受。"
         ),
     )
     max_parallel: int = Field(
         gt=0,
         description=(
-            "search_plan_next 在一个规划 batch 中最多可放置的候选数。"
-            "它控制 batch 宽度或建议并发度，不控制候选总数。"
+            "一个 Search run 初始创建并实际并行工作的候选 Agent 数量。"
+            "parallel_loops 只创建这一组长期候选，后续继续已有 candidate/session。"
         ),
     )
     max_tokens: int | None = Field(default=None, gt=0)
