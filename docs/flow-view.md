@@ -74,11 +74,12 @@ round for the run.
 `planned_k` is:
 
 ```text
-min(requested_k, remaining max_candidates, max_parallel)
+min(requested_k, remaining max_parallel)
 ```
 
-Normally `max_candidates == max_parallel`: the first number caps distinct
-candidate workspaces, and the second caps concurrently live workers.
+The standard flow passes `requested_k=max_parallel`. `max_parallel` is the
+single initial candidate/live-worker count. New specs omit deprecated
+`max_candidates`; a legacy value is accepted only when it equals `max_parallel`.
 
 ### 2. Launch each autonomous loop
 

@@ -82,7 +82,7 @@ def test_codex_redispatch_prompt_names_required_runtime_evidence() -> None:
 
 
 @pytest.mark.codex
-def test_codex_circle_packing_cycle_is_strict_two_by_two_scenario() -> None:
+def test_codex_circle_packing_cycle_is_one_fixed_parallel_batch() -> None:
     from tests.st.test_st_scenarios import SCENARIO_CASES
 
     case = next(
@@ -98,10 +98,10 @@ def test_codex_circle_packing_cycle_is_strict_two_by_two_scenario() -> None:
         'worker_agent_type="search_candidate_agent"',
         "inherits the parent Codex model",
         "only `task_name`, `message`, and `fork_turns`",
-        '"max_candidates": 4',
         '"max_parallel": 2',
-        "batch_sizes: [2, 2]",
-        "rounds: 2",
+        "do not set deprecated `max_candidates`",
+        "batch_sizes: [2]",
+        "rounds: 1",
     ):
         assert required in prompt
 
@@ -120,28 +120,28 @@ def test_codex_circle_packing_cycle_assertion_requires_complete_cycle() -> None:
             "iterations": 1,
             "status": "evaluated",
         }
-        for index in range(1, 5)
+        for index in range(1, 3)
     ]
     report = StReport(
         scenario="codex_circle_packing_cycle",
         run_id="run_cycle",
         candidates=candidates,
-        selected_candidate_id="c004",
-        best_score=4.0,
+        selected_candidate_id="c002",
+        best_score=2.0,
         report_path="/tmp/report.md",
         extra={
             "host": "codex",
             "model": "gpt-5.6-terra",
-            "rounds": 2,
-            "batch_sizes": [2, 2],
-            "agent_session_ids": ["agent_1", "agent_2", "agent_3", "agent_4"],
+            "rounds": 1,
+            "batch_sizes": [2],
+            "agent_session_ids": ["agent_1", "agent_2"],
         },
         raw="{}",
     )
 
     assertion(report)
 
-    incomplete = StReport(**{**report.__dict__, "candidates": candidates[:3]})
+    incomplete = StReport(**{**report.__dict__, "candidates": candidates[:1]})
     with pytest.raises(AssertionError):
         assertion(incomplete)
 
@@ -150,7 +150,7 @@ def test_codex_circle_packing_cycle_assertion_requires_complete_cycle() -> None:
             **report.__dict__,
             "extra": {
                 **report.extra,
-                "agent_session_ids": ["agent_1", "agent_1", "agent_3", "agent_4"],
+                "agent_session_ids": ["agent_1", "agent_1"],
             },
         }
     )
@@ -158,7 +158,7 @@ def test_codex_circle_packing_cycle_assertion_requires_complete_cycle() -> None:
         assertion(duplicate_sessions)
 
     wrong_batches = StReport(
-        **{**report.__dict__, "extra": {**report.extra, "batch_sizes": [2, 1]}}
+        **{**report.__dict__, "extra": {**report.extra, "batch_sizes": [1]}}
     )
     with pytest.raises(AssertionError):
         assertion(wrong_batches)

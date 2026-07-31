@@ -133,7 +133,6 @@ def test_search_spec_adapter_verifies_case_workspace(tmp_path: Path) -> None:
 
     spec = build_search_spec(
         workspace,
-        max_candidates=1,
         max_parallel=1,
         worker_host="pi-rpc",
         max_runtime_seconds=60,
@@ -141,6 +140,7 @@ def test_search_spec_adapter_verifies_case_workspace(tmp_path: Path) -> None:
     assert spec["metric_name"] == "accuracy"
     assert spec["edit_surface"]["allow"] == ["answer.json"]
     assert spec["strategy"]["worker_host"] == "pi-rpc"
+    assert spec["budget"] == {"max_parallel": 1}
     assert spec["objective"].startswith("解答 benchmark case")
     assert spec["root_hypotheses"] == [
         "直接推理，只写最终答案标签或数字。",

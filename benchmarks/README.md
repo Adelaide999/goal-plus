@@ -123,7 +123,7 @@ goal-plus-bench run-one \
   --worker-backend pi-rpc \
   --pi-provider openai \
   --pi-model-id gpt-5.4-mini \
-  --max-candidates 1 \
+  --max-parallel 1 \
   --root benchmarks/runs/formal_logic-pi
 ```
 

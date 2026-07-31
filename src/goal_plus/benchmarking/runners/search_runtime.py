@@ -23,8 +23,8 @@ def run_search_case(
     root_dir: Path,
     worker_backend: WorkerBackend = "fixed",
     fixed_answer: str | None = None,
-    max_candidates: int = 1,
-    max_parallel: int = 1,
+    max_candidates: int | None = None,
+    max_parallel: int | None = None,
     worker_host: str = "pi-rpc",
     strategy_name: str = "random",
     max_runtime_seconds: int = 180,
@@ -34,12 +34,27 @@ def run_search_case(
     pi_model_id: str | None = None,
     pi_thinking: str | None = None,
 ) -> dict[str, Any]:
+    if (
+        max_candidates is not None
+        and max_parallel is not None
+        and max_candidates != max_parallel
+    ):
+        raise ValueError(
+            "max_candidates is deprecated and must equal max_parallel when both "
+            "are provided"
+        )
+    parallel_num = (
+        max_parallel
+        if max_parallel is not None
+        else max_candidates
+        if max_candidates is not None
+        else 1
+    )
     root_dir.mkdir(parents=True, exist_ok=True)
     workspace = prepare_case_workspace(case, root_dir / "workspaces")
     spec_dict = build_search_spec(
         workspace,
-        max_candidates=max_candidates,
-        max_parallel=max_parallel,
+        max_parallel=parallel_num,
         worker_host=worker_host,  # type: ignore[arg-type]
         strategy_name=strategy_name,
         max_runtime_seconds=max_runtime_seconds,
@@ -48,7 +63,7 @@ def run_search_case(
     runtime = FileSearchRuntime(root_dir / DEFAULT_RUNTIME_ROOT)
     frozen = runtime.freeze_spec(SearchSpec.model_validate(spec_dict), [])
     run_id = runtime.create_run(frozen.frozen_spec_id)
-    plan = runtime.plan_next(run_id, requested_k=max_candidates)
+    plan = runtime.plan_next(run_id, requested_k=parallel_num)
     tasks = runtime.start_batch(run_id, plan.plan_id)
 
     handles: list[dict[str, Any]] = []

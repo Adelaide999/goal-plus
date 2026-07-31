@@ -8,7 +8,7 @@ Build a SearchSpec from
 {{PROJECT_ROOT}}/tests/st/fixtures/k_module_problem/spec.json with these edits:
 
 - Set `source_path` to the absolute fixture path.
-- Set `budget.max_candidates=1` and `budget.max_parallel=1`.
+- Set `budget.max_parallel=1`; do not set deprecated `budget.max_candidates`.
 - Set `strategy.name="random"`.
 - Set `strategy.worker_host="codex"`.
 - Set `strategy.worker_agent_type="search_candidate_agent"`.

@@ -33,7 +33,6 @@ def valid_spec_dict() -> dict:
             "allow": ["initial_program.py"],
             "deny": ["evaluator.py"]},
         "budget": {
-            "max_candidates": 4,
             "max_parallel": 2},
         "process_verifiers": [
             {

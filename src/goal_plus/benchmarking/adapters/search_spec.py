@@ -57,7 +57,6 @@ def prepare_case_workspace(case: BenchmarkCase, root: Path) -> CaseWorkspace:
 def build_search_spec(
     workspace: CaseWorkspace,
     *,
-    max_candidates: int,
     max_parallel: int,
     worker_host: WorkerHost = "pi-rpc",
     strategy_name: str = "random",
@@ -83,7 +82,7 @@ def build_search_spec(
             "deny": ["QUESTION.md", "README.md"],
             "max_file_changes": 1,
         },
-        "budget": {"max_candidates": max_candidates, "max_parallel": max_parallel},
+        "budget": {"max_parallel": max_parallel},
         "process_verifiers": [
             {
                 "name": "benchmark_accuracy",

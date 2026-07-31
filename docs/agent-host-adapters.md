@@ -82,9 +82,9 @@ completion barrier. Low score or no improvement never causes replacement.
 | Codex | `worker_budget.max_runtime_seconds` | initial wait, one closeout message, final wait, interrupt |
 | Pi RPC | `worker_budget.max_runtime_seconds` | closeout steer plus hard process watchdog |
 
-`max_turns` is only a prompt hint for Codex and Pi. `max_candidates` limits
-distinct candidate workspaces; `max_parallel` limits live workers. None of
-these is a forced round count.
+`max_turns` is only a prompt hint for Codex and Pi. `max_parallel` uniquely
+sets the initial candidate/live-worker count. `max_candidates` is deprecated;
+new specs omit it because later work continues the same candidates.
 
 Codex supports a lower-bound single-worker AutoResearch lease through
 `worker_budget.min_runtime_seconds` and `min_verifier_runs`. Its

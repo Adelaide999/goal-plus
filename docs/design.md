@@ -159,9 +159,11 @@ artifact hash. Changing the selected artifact invalidates that evidence.
    fall back to parent process verification. Promotion gates still run on the
    selected immutable revision.
 7. **Do not silently mutate source.** Promotion exports a patch.
-8. **Make limits explicit.** `max_candidates` is the whole-run workspace cap;
-   `max_parallel` is the live-worker cap. Upper budgets constrain host work;
-   Pi minimum leases may span several native dispatches in one pool job.
+8. **Make concurrency explicit.** `max_parallel` is the single initial
+   candidate/live-worker count. `max_candidates` is deprecated because a run
+   has one initial plan and continues the same candidates. Upper budgets
+   constrain host work; Pi minimum leases may span several native dispatches
+   in one pool job.
 9. **Keep exploration policy in the goal.** `mode=autonomous|probe` is
    normalized into the final line of `raw_goal`; it is not another runtime
    phase, lifecycle field, or deadline.
@@ -232,8 +234,12 @@ records remain readable, but new execution does not implement or advertise it.
 The initial `search_plan_next` plans:
 
 ```text
-min(requested_k, remaining max_candidates, max_parallel)
+min(requested_k, remaining max_parallel)
 ```
+
+The standard flow passes `requested_k=max_parallel`. New specs omit deprecated
+`max_candidates`; compatibility input is accepted at freeze only when it equals
+`max_parallel`.
 
 Parallel-loop execution is not a completion barrier. When one candidate
 returns, main validates it and resumes that same loop without waiting for

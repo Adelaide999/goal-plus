@@ -360,11 +360,9 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     assert "inherited_pitfall_limit" not in text
     assert "const RuntimeToolDescriptions" in text
     assert "RuntimeToolDescriptions[name]" in text
-    assert "不同候选工作区总数的硬上限" in text
-    assert "不是单轮限制" in text
-    assert "search_plan_next 在一个规划 batch 中最多可放置的候选数" in text
-    assert "默认值 4 是 batch size 请求，不是整个 run 的预算" in text
-    assert "planned_k 为 min(requested_k, 剩余 max_candidates, max_parallel)" in text
+    assert "max_candidates: Type.Integer" not in text
+    assert "初始创建并实际并行工作的候选 Agent 数量" in text
+    assert "标准流程令 requested_k 等于 max_parallel" in text
     freeze_schema = text.split("search_freeze_spec: Type.Object", 1)[1].split(
         "search_create: Type.Object", 1
     )[0]

@@ -20,13 +20,13 @@ EXAMPLE_SPECS = [
         "circle_packing_search_spec.json",
         ["tests/fixtures/circle_packing/evaluator.py"],
         "combined_score",
-        {"max_candidates": 4, "max_parallel": 2, "worker_agent_type": "search_candidate_agent"},
+        {"max_parallel": 2, "worker_agent_type": "search_candidate_agent"},
     ),
     (
         "signal_processing_search_spec.json",
         ["tests/fixtures/signal_processing/evaluator.py"],
         "overall_score",
-        {"max_candidates": 8, "max_parallel": 4, "worker_agent_type": "search_candidate_agent"},
+        {"max_parallel": 4, "worker_agent_type": "search_candidate_agent"},
     ),
     (
         "edgebench_ad_placement_search_spec.json",
@@ -37,7 +37,6 @@ EXAMPLE_SPECS = [
         ],
         "local_score_sum",
         {
-            "max_candidates": 4,
             "max_parallel": 2,
             "strategy_name": "agent_guided",
             "worker_host": "pi-rpc",
@@ -78,8 +77,8 @@ def test_parallel_loop_example_specs_are_valid(
     parsed = SearchSpec.model_validate(spec)
 
     assert parsed.metric_name == metric_name
-    assert parsed.budget.max_candidates == expected["max_candidates"]
     assert parsed.budget.max_parallel == expected["max_parallel"]
+    assert "max_candidates" not in parsed.budget.model_dump(mode="json")
     assert parsed.root_hypotheses == []
     assert parsed.constraints["suggested_batch_size"] == 4
     assert parsed.strategy.orchestration_mode == "parallel_loops"

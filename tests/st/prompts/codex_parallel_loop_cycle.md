@@ -8,7 +8,7 @@ Load {{PROJECT_ROOT}}/tests/st/fixtures/circle_packing/spec.json and make these
 exact changes before freezing it:
 
 - `source_path={{PROJECT_ROOT}}/tests/st/fixtures/circle_packing`
-- `budget={"max_candidates": 2, "max_parallel": 2}`
+- `budget={"max_parallel": 2}`; do not set deprecated `max_candidates`
 - `strategy.name="random"`
 - `strategy.orchestration_mode="parallel_loops"`
 - `strategy.worker_host="codex"`

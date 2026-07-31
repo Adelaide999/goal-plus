@@ -18,8 +18,8 @@ Plugin, hook, approval flow, branch workflow, or verifier.
 Direct Invoke operator. Resolve https://gitcode.com/cann/cann-bench.git at an
 exact commit and use tasks/level1/gelu plus the repository's official evaluation
 contract as the semantics, cases, tolerances, Golden, and scoring reference.
-Run on the available Ascend NPU. Use max_candidates=2 and max_parallel=2, then
-complete selection, promotion verification, and reporting.
+Run on the available Ascend NPU. Use max_parallel=2, omit deprecated
+max_candidates, then complete selection, promotion verification, and reporting.
 ```
 
 The request may instead name an AKG implementation, another local repository,
@@ -97,8 +97,7 @@ scripts/run_ascendc_cannbench_e2e.sh
 
 The script installs the current Goal Plus checkout, loads the NPU environment,
 and invokes Pi's native `/goal-plus` command. The main Pi host opens one fixed
-pool to run two Pi RPC candidates concurrently (`max_candidates=2`,
-`max_parallel=2`). The test requires full selection,
+pool to run two Pi RPC candidates concurrently (`max_parallel=2`). The test requires full selection,
 promotion evidence, immutable-revision patch generation, and a completed Goal
 Plus record. It is gated by `GOAL_PLUS_RUN_ASCENDC_NPU_ST=1` and is not part of
 ordinary unit or ST runs.

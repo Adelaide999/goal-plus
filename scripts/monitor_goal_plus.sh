@@ -683,7 +683,7 @@ def render_verbose_run(item: dict[str, Any]) -> None:
     run_age_label = "age" if run.get("state") in {"promoted", "aborted", "failed"} else "elapsed"
     print(
         f"  progress: candidates={run.get('candidates_evaluated', 0)}/{run.get('candidates_total', 0)} "
-        f"cap={budget.get('max_candidates', '-')} parallel={budget.get('max_parallel', '-')} "
+        f"parallel={budget.get('max_parallel', '-')} "
         f"rounds={run.get('started_rounds_total', 0)}/{run.get('planning_rounds_total', 0)} "
         f"sessions={main.get('subagent_count', 0)} verifiers={main.get('verifier_count', 0)} "
         f"{run_age_label}={duration(main.get('elapsed_seconds'))} cost={money(main.get('estimated_cost_total'))}"

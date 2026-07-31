@@ -22,7 +22,7 @@ Policy、Reference、Platform、Verifier 和 Knowledge。SearchSpec 必须使用
 
 ```json
 {
-  "budget": {"max_candidates": 2, "max_parallel": 2},
+  "budget": {"max_parallel": 2},
   "strategy": {
     "name": "random",
     "orchestration_mode": "parallel_loops",
