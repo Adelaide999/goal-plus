@@ -393,6 +393,37 @@ def test_expired_outer_deadline_never_starts_annotation(
     assert kick_evidence_annotator(runtime.root_dir, run_id) is False
 
 
+def test_unix_outer_deadline_allows_annotation_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outer_deadline = str(time.time() + 3600)
+    monkeypatch.setenv("GOAL_PLUS_OUTER_DEADLINE_AT", outer_deadline)
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".gp")
+    frozen = runtime.freeze_spec(
+        spec_for(project, max_candidates=1), [project / "evaluator.py"]
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    plan = runtime.plan_next(run_id, requested_k=1)
+    task = runtime.start_batch(run_id, plan.plan_id)[0]
+    session = runtime.start_agent_session(run_id, task.candidate_id)
+    runtime.run_verifier(
+        run_id,
+        task.candidate_id,
+        agent_session_id=session.agent_session_id,
+        hypothesis="Accept the harness-provided Unix deadline",
+    )
+
+    annotation_task = runtime._load_evidence_annotation_task(
+        run_id, task.candidate_id, 1
+    )
+    assert annotation_task is not None
+    assert annotation_task.outer_deadline_at == outer_deadline
+    assert annotation_task.state == "pending"
+    assert annotation_task.attempts == 0
+
+
 def test_transient_annotation_failure_has_bounded_persistent_retries(
     tmp_path: Path,
 ) -> None:

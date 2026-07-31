@@ -5071,12 +5071,20 @@ class FileSearchRuntime:
         if not value:
             return None
         try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            numeric = float(value)
         except ValueError:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        if not math.isfinite(numeric):
             return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.timestamp()
+        if numeric > 10_000_000_000:
+            numeric /= 1000
+        return numeric
 
     def _resolve_evidence_annotator_profile(
         self,
