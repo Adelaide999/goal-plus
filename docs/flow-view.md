@@ -170,8 +170,9 @@ Missing/unknown scope becomes `candidate_local`; missing confidence becomes
 ### 3. Wait for any completion
 
 The host wait-any primitive wakes the main agent when at least one worker is
-terminal. The main agent processes every new terminal event and runs a final
-verifier without `agent_session_id` against that exact candidate state.
+terminal. The main agent processes every new terminal event, reuses matching
+durable worker Evidence, and runs a parent verifier without `agent_session_id`
+only when that exact candidate state has no matching Evidence.
 
 After validation, main reads the verifier-backed best before/after the event.
 If the result improved the run, runtime updates `best_score` and
@@ -258,7 +259,9 @@ There are three distinct execution shapes:
   history, and the structured handoff. This is the portable fallback.
 - **Cross-process native-session continuation** starts a new OS process while
   reloading the same native session and preserving `agent_session_id`. Pi uses
-  this shape. It is not a persistent same-PID supervisor.
+  this shape. A Pi minimum lease can invoke it automatically inside one pool
+  job while retaining the slot and accumulating elapsed time/verifier count.
+  It is not a persistent same-PID supervisor.
 
 Neither operation changes the frozen spec or creates another candidate.
 
@@ -271,9 +274,9 @@ and final-check policy. The main agent audits every requirement, including any
 time condition already written in the goal, then either continues or records a
 truthful terminal status. Goal Plus stores no separate task deadline.
 
-Candidate and ordinary-subagent stop rules are unchanged: a candidate may
-return after its own verifier evidence is durable, while selection, promotion,
-and the complete-goal audit remain parent-owned.
+Candidate and ordinary-subagent stop rules remain host-owned: a Pi candidate
+turn that ends before its cumulative minimum is automatically resumed, while
+selection, promotion, and the complete-goal audit remain parent-owned.
 
 ## Failure Rules
 

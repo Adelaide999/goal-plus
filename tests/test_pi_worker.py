@@ -142,6 +142,31 @@ def test_rpc_client_raw_logging_keeps_stream_updates_and_text(
     assert text_log.read_text(encoding="utf-8") == '{"type":"message_update"}\n'
 
 
+def test_rpc_client_surfaces_terminal_agent_error_after_retries_end(
+    tmp_path: Path,
+) -> None:
+    client = pi_worker._RpcClient(  # type: ignore[arg-type]
+        proc=object(),
+        event_log=tmp_path / "events.jsonl",
+        text_log=None,
+    )
+    failed_message = {
+        "role": "assistant",
+        "stopReason": "error",
+        "errorMessage": "Request timed out.",
+    }
+
+    client._track_terminal_error(
+        {"type": "agent_end", "willRetry": True, "messages": [failed_message]}
+    )
+    assert client.terminal_error() is None
+
+    client._track_terminal_error(
+        {"type": "agent_end", "willRetry": False, "messages": [failed_message]}
+    )
+    assert client.terminal_error() == "Request timed out."
+
+
 def test_run_pi_rpc_worker_returns_run_delta_metrics(
     monkeypatch,
     tmp_path: Path,
@@ -268,6 +293,9 @@ def test_run_pi_rpc_worker_returns_run_delta_metrics(
     assert "set_thinking_level" in commands
     assert popen_cmd[0:3] == ["pi", "--model", "gpt-5.4-mini"]
     assert "--no-session" not in popen_cmd
+    assert "--no-extensions" in popen_cmd
+    assert popen_cmd.index("--no-extensions") < popen_cmd.index("-e")
+    assert popen_cmd.count("-e") == 1
     assert popen_cmd[popen_cmd.index("--session-dir") + 1] == str(
         tmp_path / ".search" / "host-sessions" / "pi"
     )

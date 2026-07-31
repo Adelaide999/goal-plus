@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from goal_plus.goal_plus import FileGoalPlusRuntime
-from goal_plus.models import GoalPlusRecord, IterationRecord, SearchSpec
+from goal_plus.models import GoalPlusRecord, IterationRecord, ScoreReport, SearchSpec
 from goal_plus.reporting import (
     _build_loop_agent_statistics,
     _build_stop_hook_statistics,
@@ -16,6 +16,7 @@ from goal_plus.reporting import (
     _render_loop_agent_statistics,
     _render_stop_hook_statistics,
     _render_timeline,
+    _render_statistics,
     _search_trajectory_payload,
     build_html_report_data,
     render_html_report,
@@ -1110,6 +1111,65 @@ def test_worker_duration_uses_search_scale_not_goal_record_lifecycle() -> None:
     assert search_timeline["duration_seconds"] == 329.0
     assert _epoch(worker["end_at"]) - _epoch(worker["start_at"]) == 60.0
     assert goal_timeline["events"][0]["label"] == "Goal record activity window"
+
+
+def test_statistics_renders_observed_session_count_as_count() -> None:
+    html = _render_statistics(
+        {
+            "statistics": {
+                "timing": {
+                    "worker_duration_seconds_total": 12.5,
+                    "worker_duration_sessions_observed": 4,
+                }
+            }
+        }
+    )
+
+    assert "12.5s" in html
+    assert ">4</strong>" in html
+    assert "4.0s" not in html
+
+
+def test_report_candidate_final_score_uses_settled_best_after_failure(
+    tmp_path: Path,
+) -> None:
+    project = make_project(tmp_path)
+    root = tmp_path / ".search"
+    search = FileSearchRuntime(root)
+    frozen = search.freeze_spec(spec_for(project, max_candidates=1), [project / "evaluator.py"])
+    run_id = search.create_run(frozen.frozen_spec_id)
+    plan = search.plan_next(run_id, requested_k=1)
+    candidate = search.start_batch(run_id, plan.plan_id)[0]
+    record = search._load_candidate_record(run_id, candidate.candidate_id)
+    record.iterations = [
+        IterationRecord(
+            iteration=1,
+            score=0.9,
+            process_passed=True,
+            created_at="2026-01-01T00:00:01Z",
+        ),
+        IterationRecord(
+            iteration=2,
+            score=0.0,
+            process_passed=False,
+            created_at="2026-01-01T00:00:02Z",
+        ),
+    ]
+    record.score_report = ScoreReport(
+        run_id=run_id,
+        candidate_id=candidate.candidate_id,
+        validity_passed=False,
+        process_passed=False,
+        aggregate_score=0.0,
+        verifier_results=[],
+    )
+    search._write_candidate_record(run_id, record)
+
+    [payload] = build_html_report_data(root, run_id)["search_tasks"][0]["candidates"]
+
+    assert payload["score"] == 0.9
+    assert payload["process_passed"] is True
+    assert payload["best_score"] == 0.9
 
 
 def test_metric_lens_combines_score_progression_and_session_efficiency() -> None:

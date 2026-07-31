@@ -479,6 +479,67 @@ def test_pi_rpc_k_module(st_project_root: Path) -> None:
 @pytest.mark.st
 @pytest.mark.st_pi_rpc
 @pytest.mark.skipif(
+    os.environ.get("ST_PI_RPC_LEASE") != "1",
+    reason="set ST_PI_RPC_LEASE=1 to run the Pi minimum-lease smoke",
+)
+def test_pi_rpc_pool_minimum_lease(st_project_root: Path) -> None:
+    runtime = FileSearchRuntime(st_project_root / ".search")
+    spec_data = _pi_spec(max_runtime_seconds=105).model_dump(mode="json")
+    spec_data["strategy"]["worker_budget"].update(
+        {"min_runtime_seconds": 75, "min_verifier_runs": 1}
+    )
+    spec_data["strategy"]["worker_launch"] = {
+        key: value
+        for key, value in {
+            "model": os.environ.get("ST_PI_MODEL"),
+            "reasoning_effort": os.environ.get("ST_PI_THINKING"),
+        }.items()
+        if value
+    }
+    frozen = runtime.freeze_spec(
+        SearchSpec.model_validate(spec_data),
+        [K_MODULE / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    plan = runtime.plan_next(run_id, requested_k=1)
+    task = runtime.start_batch(run_id, plan.plan_id)[0]
+    opened = open_pi_search_pool(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_ids=[task.candidate_id],
+        max_parallel=1,
+    )
+    waited = wait_any_pi_search_pool(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        timeout_seconds=150,
+    )
+    closed = close_pi_search_pool(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        mode="drain",
+        timeout_seconds=15,
+    )
+
+    assert closed["active_count"] == 0
+    assert len(waited["events"]) == 1
+    event = waited["events"][0]
+    assert event["kind"] == "candidate_ready"
+    lease = event["result"]["lease"]
+    assert lease["satisfied"] is True
+    assert lease["elapsed_seconds"] >= 75
+    assert lease["elapsed_seconds"] < 106
+    assert lease["dispatch_count"] >= 2
+    session = runtime._load_agent_session_by_id(event["agent_session_id"], run_id=run_id)
+    assert session.host_handle.metadata["dispatch_count"] == lease["dispatch_count"]
+    iterations = runtime.list_iterations(run_id, task.candidate_id)
+    assert iterations
+    assert all(iteration["agent_session_id"] is not None for iteration in iterations)
+
+
+@pytest.mark.st
+@pytest.mark.st_pi_rpc
+@pytest.mark.skipif(
     os.environ.get("ST_PI_RPC_EXTENDED") != "1",
     reason="set ST_PI_RPC_EXTENDED=1 to run Pi timeout/redispatch smoke",
 )

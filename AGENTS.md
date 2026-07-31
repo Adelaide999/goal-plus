@@ -165,7 +165,11 @@ Current host expectations:
   condition is true. Main must not choose later technical directions or create
   quality-based replacements.
 - Pi RPC supports the portable builtin strategy subset. `worker_budget`
-  requires `max_runtime_seconds`; `max_turns` is only a prompt hint. Pi uses
+  requires `max_runtime_seconds`; `max_turns` is only a prompt hint. Optional
+  `min_runtime_seconds`/`min_verifier_runs` form a cumulative pool-supervisor
+  lease: an early native turn resumes the same Pi session in the same slot and
+  worktree until the minimum is met or the cumulative upper bound/outer
+  closeout is reached. Pi uses
   `goal-plus-pi-worker` to launch foreground `pi --mode rpc` workers
   from candidate workspaces, persists native sessions under
   `.gp/host-sessions/pi/`, and explicitly loads `.pi/extensions/goal-plus.ts`.
@@ -176,7 +180,8 @@ Current host expectations:
   incremental `get_entries(since=...)` metrics avoid retransferring the prior
   transcript. New Pi specs use `orchestration_mode="parallel_loops"`; the same
   native session resumes after each validated completion while no global stop
-  condition is true. Pi has
+  condition is true. Exact durable worker Evidence is reused by pool completion
+  and selection instead of creating duplicate parent process iterations. Pi has
   extension pre-tool guarding and skill stop gates, but no Codex Stop hook
   parity. Its main-agent pool is a durable host supervisor under
   `.gp/host-pools/pi/` with explicit open/wait-any/snapshot/continue/close

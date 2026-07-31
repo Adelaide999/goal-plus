@@ -385,6 +385,20 @@ def build_run_statistics(
             for iteration in selected_candidate.iterations
         )
     )
+    worker_verified = bool(
+        selected_candidate
+        and any(
+            iteration.agent_session_id is not None
+            and iteration.process_passed is True
+            and iteration.iteration == run.selected_iteration
+            and iteration.git_head == run.selected_git_head
+            and (
+                run.selected_artifact_hash is None
+                or iteration.artifact_hash == run.selected_artifact_hash
+            )
+            for iteration in selected_candidate.iterations
+        )
+    )
     promotion_required = bool(frozen.spec.promotion_verifiers)
     promotion_verified = bool(
         selected_candidate
@@ -393,7 +407,7 @@ def build_run_statistics(
     )
     selection_survived = bool(
         run.selected_candidate_id
-        and parent_verified
+        and (worker_verified or parent_verified)
         and (promotion_verified or not promotion_required)
     )
     missing: list[str] = []
@@ -492,6 +506,7 @@ def build_run_statistics(
         "lineage": _lineage_statistics(candidates),
         "selection": {
             "selected": run.selected_candidate_id is not None,
+            "worker_verified": worker_verified,
             "parent_verified": parent_verified,
             "promotion_required": promotion_required,
             "promotion_verified": promotion_verified,

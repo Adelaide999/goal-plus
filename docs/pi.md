@@ -65,6 +65,8 @@ Use `worker_host="pi-rpc"` and a wall-clock budget:
     "orchestration_mode": "parallel_loops",
     "worker_host": "pi-rpc",
     "worker_budget": {
+      "min_runtime_seconds": 500,
+      "min_verifier_runs": 1,
       "max_runtime_seconds": 600,
       "max_turns": 8,
       "on_exceed": "interrupt"
@@ -73,10 +75,12 @@ Use `worker_host="pi-rpc"` and a wall-clock budget:
 }
 ```
 
-`max_runtime_seconds` is required and enforced by the Pi process watchdog.
-Before the hard limit, the runner sends one closeout steer. `max_turns` is only
-a prompt hint. A separate informational advisory may fire after a worker tool
-completion when observed verifier time no longer fits the remaining window.
+`max_runtime_seconds` is required. Optional `min_runtime_seconds` and
+`min_verifier_runs` are enforced cumulatively by the pool wrapper: an early Pi
+turn restarts the same native session in the same slot/worktree with only the
+remaining upper budget. Infrastructure failure, pool close, or outer closeout
+stops this automatic continuation. Before each remaining hard limit, the runner
+sends one closeout steer. `max_turns` is only a prompt hint.
 
 ## Parallel Loops
 
@@ -85,10 +89,11 @@ Normal Pi Search follows the shared [Flow](flow-view.md):
 1. set `orchestration_mode="parallel_loops"`, then plan and materialize the
    initial candidates exactly once;
 2. `pi_search_pool_open(..., max_parallel=<frozen limit>)`;
-3. `pi_search_pool_wait_any` for the first candidate-ready event;
-4. observe any verifier-backed best update and call
+3. `pi_search_pool_wait_any` for the first terminal event;
+4. for `candidate_ready`, observe any verifier-backed best update and call
    `pi_search_pool_continue` for that exact candidate unless a global stop
-   condition is true;
+   condition is true; treat `timed_out`, `interrupted`, and `failed` as
+   incomplete rather than continuing them as ready candidates;
 5. recover interrupted main turns with `pi_search_pool_snapshot(run_id=...)`;
 6. `pi_search_pool_close`, then select and promote;
 7. record the Search result, finish the raw-goal audit, set a terminal Goal Plus
@@ -96,9 +101,11 @@ Normal Pi Search follows the shared [Flow](flow-view.md):
 
 The supervisor enforces `max_parallel` and never auto-refills. Main never calls
 submit after initial pool creation and never replaces a candidate because of
-low score or lack of improvement. A terminal event
-is published only after the driver has completed the worker, bound its handle,
-and run final verification.
+low score or lack of improvement. A `candidate_ready` event is published only
+after the driver has bound the handle, released any minimum lease, and confirmed
+durable Evidence for the current artifact. An exhausted unsatisfied lease emits
+`timed_out` instead. The driver reuses matching worker Evidence instead of adding
+a duplicate parent process iteration; parent verification is only a fallback.
 
 There is no public synchronous candidate/batch runner. Pool open owns the
 initial fixed lane set; pool continue owns later dispatches for those same
