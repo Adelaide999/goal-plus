@@ -250,7 +250,8 @@ def create_mcp(
     ) -> dict[str, Any]:
         """Subagent 带 `agent_session_id` 自评分；主流程最终验证不带它。
 
-        subagent 传入自己的 `agent_session_id`、一句话 `hypothesis` 并省略 `scope`；
+        subagent 传入准确 `run_id`、`candidate_id`、自己的 `agent_session_id`、一句话
+        `hypothesis` 并省略 `scope`；
         hypothesis 应客观概括本轮实际尝试。运行时随后在继承的 `workspace/results.tsv`
         中追加且只追加一条已验证记录并提交账本。主 agent 不带 `agent_session_id` 的
         内部复验不要求 hypothesis；`promotion` 只属于主流程。带

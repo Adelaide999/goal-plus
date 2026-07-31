@@ -125,15 +125,22 @@ subagent 负责其候选工作区内的瓶颈分析、假设选择、特性迁�
 3. `goal_plus_link_search_run`
 4. 调用且只调用一次 `search_plan_next(requested_k=budget.max_parallel)`，再调用且只调用
    一次 `search_start_batch`，创建全部初始候选。运行时会拒绝 `parallel_loops` 模式下的
-   第二份 plan。
+   第二份 plan。需要传 proposals 时，每个 proposal 都必须包含 `intent`；`hypothesis`、
+   `expected_tradeoff`、`instructions` 和 `metadata` 是可选字段。
 5. 调用 `pi_search_pool_open(run_id, candidate_ids, directive?, worker_budgets?, final_verify=true, max_parallel=<budget.max_parallel>)`。
-   它启动 detached 受管 worker，并立即返回持久化 `pool_id`。
+   `worker_budgets` 必须按 `candidate_id` 映射，例如
+   `{"c001": {"min_runtime_seconds": 500, "min_verifier_runs": 1, "max_runtime_seconds": 600, "on_exceed": "interrupt"}}`，不能直接传一份
+   WorkerBudget。它启动 detached 受管 worker，并立即返回持久化 `pool_id`。
 6. 调用 `pi_search_pool_wait_any(pool_id, timeout_seconds=...)`。处理每个返回事件。
-   `candidate_ready` 表示 driver 已启动并绑定 agent session，且完成主 agent 最终 verifier；
-   仅有原始进程退出不代表成功。
+   `candidate_ready` 表示 driver 已启动并绑定 agent session，最低累计 lease 已释放，且当前产物
+   有 durable process Evidence；仅有一次原始进程退出不代表成功。原生 turn 在最低时间或最低
+   verifier 次数前结束时，supervisor 会占用同一个 slot，自动恢复同一个 session 和 worktree。
+   最低 lease 到硬上限仍未满足时返回 `timed_out`；pool 关闭返回 `interrupted`，执行失败返回
+   `failed`。这些事件都不是 candidate ready，必须按未完成处理。
 7. 对每个 `candidate_ready`，从 `search_list_history` 或
    `goal_plus_monitor_snapshot` 读取之前和当前的最佳结果。pool 的 `final_verify=true`
-   路径已运行父级完成 verifier，因此持久化最佳候选/分数是最新的。检查
+   路径会复用匹配当前产物的 durable Evidence；仅在没有匹配 Evidence 时补一次父级 process
+   verifier，因此持久化最佳候选/分数是最新的。检查
    `handle.metadata.progress_handoff.model_handoff` 和 `verifier_assessment` 以便恢复或
    识别具体 verifier 失败，但不要用它们选择下一技术方向。诊断稀疏、分数低或没有改进，
    都不是重新冻结、停止或替换候选的理由。如果主 agent 确认 verifier 契约、覆盖范围、
@@ -146,9 +153,10 @@ subagent 负责其候选工作区内的瓶颈分析、假设选择、特性迁�
       链接到同一个 `goal_plus_id`。
    绝不能选择或提升已失效的 run。其产物、限定范围的问题和特性仍可作为研究输入，
    但每个旧分数都只是历史，每个导入特性都必须在后继契约下重新验证。
-8. 每个终态事件验证后，只执行全局停止 policy。如果 policy 为 false，使用能适应剩余时间的
-   预算，对该准确 `candidate_id` 调用 `pi_search_pool_continue`。运行时提供以下固定中性
-   continuation prompt：
+8. 每个 `candidate_ready` 验证后，只执行全局停止 policy。如果 policy 为 false，使用能适应
+   剩余时间的预算，对该准确 `candidate_id` 调用 `pi_search_pool_continue`。不要把
+   `timed_out`、`interrupted` 或 `failed` 当作 candidate-ready continuation。运行时提供以下
+   固定中性 continuation prompt：
 
    ```text
    根据最新提交的证据继续同一条自主搜索循环。
@@ -165,8 +173,9 @@ subagent 负责其候选工作区内的瓶颈分析、假设选择、特性迁�
    后续准确 snapshot 使用 `pool_id`。
 9. 选择前调用 `pi_search_pool_close(mode="drain")`；需要停止剩余工作时使用
    `mode="interrupt"`。然后按提升要求调用 `search_select` 和 `search_promote`。
-   `search_select` 对 verifier 记录的 iteration 排名，checkout 最佳已提交候选的
-   `git_head`，并在记录所选候选前对该准确 commit 运行主 agent 最终 verifier。
+   `search_select` 对 verifier 记录的 iteration 排名并 checkout 最佳已提交候选的
+   `git_head`。准确 worker Evidence 已经覆盖该产物时直接用于选择；没有这种证据的旧记录才
+   使用父级 process verifier。配置的 promotion verifier 仍是选中 revision 的最终 gate。
 10. 调用 `goal_plus_record_search_result`。此时不要调用 `search_report`；结果记录只预留
     规范报告路径，不生成 Markdown 或 HTML。
 11. 执行原始目标审计。评估/编辑契约仍充分时保留同一个 run。新 incumbent 或低性能路线
@@ -234,7 +243,7 @@ triage 和新检查，而旧 Search 任务仅保留为审计历史。
 其持久化状态位于 `.gp/host-pools/pi/`。它们强制执行 `max_parallel`，返回 `wait_any`
 事件，并能在主 Pi 轮次断开后继续存在。每个 pool job 内部执行相同链条：
 `search_start_agent_session`、前台 Pi RPC worker 启动、`search_bind_agent_handle`，
-以及 `final_verify=true` 时不带 `agent_session_id` 的最终 `search_run_verifier`。
+以及 `final_verify=true` 时复用当前 durable Evidence 或在缺失时补父级 `search_run_verifier`。
 这些机械步骤不是公开的 Pi 主 agent 工具。
 
 不要从 Pi 主 agent 调用 `search_start_agent_session`、`search_bind_agent_handle` 或
@@ -244,14 +253,17 @@ triage 和新检查，而旧 Search 任务仅保留为审计历史。
 
 初始 pool 启动和 continuation 都是非阻塞的；detached wrapper 负责前台 Pi RPC 子进程及其
 清理。`worker_budget.max_runtime_seconds` 是必需字段，并映射到 Pi RPC 进程 watchdog。
-`worker_budget.max_turns` 只是 prompt 提示。没有公开的同步候选/batch runner 或手动 pool
-提交 API。
+`min_runtime_seconds`/`min_verifier_runs` 由 wrapper 按一个 pool job 的累计时间和 worker
+verifier 计数执行；提前结束会自动缩减剩余 max budget 并恢复同一原生 session。基础设施失败、
+pool close 或外层 closeout 会停止自动恢复。最低 lease 到硬上限仍未满足的 job 终态为
+`timed_out`，不会发布 `candidate_ready`。`worker_budget.max_turns` 只是 prompt 提示。没有公开
+的同步候选/batch runner 或手动 pool 提交 API。
 
-Pi worker 把原生 session JSONL 持久化到 `.gp/host-sessions/pi/`。如果 worker 超时、失败，
-或在全局停止 policy 为 false 时正常完成，调用 `pi_search_pool_continue`。driver 启动另一
-Pi 进程，重新加载同一个原生 session，保留 `agent_session_id`，并且只请求上次持久化
-metrics cursor 之后的 entry。如果原生 session 加载失败，MCP history、verifier iteration、
-Git 状态和有界 handoff 仍是权威恢复证据。
+Pi worker 把原生 session JSONL 持久化到 `.gp/host-sessions/pi/`。只有 pool 返回
+`candidate_ready` 且全局停止 policy 为 false 时，才调用 `pi_search_pool_continue`。driver
+启动另一 Pi 进程，重新加载同一个原生 session，保留 `agent_session_id`，并且只请求上次
+持久化 metrics cursor 之后的 entry。如果原生 session 加载失败，MCP history、verifier
+iteration、Git 状态和有界 handoff 仍是权威恢复证据。
 
 每次 continuation launch 都开始新的派发级预算。原生会话中早期派发保存的 deadline、
 closeout 或时间提示都只是历史；只遵守最新 launch 之后收到的警告。

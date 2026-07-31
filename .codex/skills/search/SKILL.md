@@ -102,8 +102,9 @@ strategy:
    - 需要原生 model、token、时长、上下文或终态证据时，使用
      `search_get_agent_observability(agent_session_id)`；它只读，不能替代
      `list_agents` 判断存活状态；
-   - 不传 `agent_session_id`，调用
-     `search_run_verifier(hypothesis="主流程完成验证")`；
+   - 当前产物已有准确 worker Evidence 时直接复用；仅在没有匹配 Evidence 时，才不传
+     `agent_session_id`，使用准确 `run_id` 和 `candidate_id` 补一次父级
+     `search_run_verifier`；
    - 刷新 history/monitor，记录 verifier 支持的全局最佳候选/分数是否变化；
    - 只有出现具体评估契约或基础设施失败时才检查 `verifier_assessment`。诊断稀疏、
      分数低或没有改进不代表 verifier 不充分，也不会阻止继续。

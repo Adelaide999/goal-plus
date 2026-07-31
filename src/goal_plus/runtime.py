@@ -453,6 +453,7 @@ class FileSearchRuntime:
 
     def freeze_spec(self, spec: SearchSpec, verifier_artifacts: list[Path]) -> FrozenSpec:
         spec = _normalize_verifier_cwds_for_candidate_workspace(spec)
+        self._validate_strategy_config(spec.strategy)
         source_root = Path(spec.source_path).resolve()
         verifier_hashes: dict[str, str] = {}
         artifact_entries: list[tuple[Path, str]] = []
@@ -1911,6 +1912,7 @@ class FileSearchRuntime:
         selected_iteration: int | None = None
         selected_git_head: str | None = None
         final_report: ScoreReport | None = None
+        selection_evidence_source = "parent_verifier"
         for option_score, option_record, option_iteration, option_git_head in ranked:
             option_record = self._load_candidate_record(
                 run_id,
@@ -1926,6 +1928,29 @@ class FileSearchRuntime:
                         f"iteration {option_iteration}"
                     ),
                 )
+            worker_iteration = next(
+                (
+                    iteration
+                    for iteration in option_record.iterations
+                    if iteration.iteration == option_iteration
+                    and iteration.git_head == option_git_head
+                    and iteration.agent_session_id is not None
+                ),
+                None,
+            )
+            current = self._candidate_artifact_state(run, frozen, option_record)
+            if (
+                worker_iteration is not None
+                and self._git_iteration_eligible(worker_iteration)
+                and worker_iteration.artifact_hash == current.artifact_hash
+                and current.git_artifact_clean
+            ):
+                selected_score = option_score
+                selected_record = option_record
+                selected_iteration = option_iteration
+                selected_git_head = option_git_head
+                selection_evidence_source = "worker_evidence"
+                break
             report = self.run_verifier(run_id, option_record.candidate_id)
             if report.process_passed and report.aggregate_score is not None:
                 selected_score = report.aggregate_score
@@ -1938,9 +1963,9 @@ class FileSearchRuntime:
         if selected_record is None or selected_score is None:
             self._mark_selection_blocked(
                 run_id,
-                "all eligible candidate revisions failed final verification",
+                "all eligible candidate revisions failed verification",
             )
-            raise RuntimeError("no selected candidate passed final verification")
+            raise RuntimeError("no selected candidate has passing verification")
 
         selected_changed_files = self._detect_changed_files(
             Path(run.source_path), selected_record.task.workspace
@@ -1986,7 +2011,10 @@ class FileSearchRuntime:
                     selected_score,
                 )
             ),
-            "final_verifier_score": final_report.aggregate_score if final_report else None,
+            "final_verifier_score": (
+                final_report.aggregate_score if final_report else selected_score
+            ),
+            "selection_evidence_source": selection_evidence_source,
             "best_candidate_id": run.best_candidate_id,
             "best_score": run.best_score,
         }
@@ -2088,9 +2116,6 @@ class FileSearchRuntime:
             passed = ""
             latest_iteration = record.iterations[-1] if record.iterations else None
             git_head = latest_iteration.git_head if latest_iteration else ""
-            if record.score_report:
-                score = "" if record.score_report.aggregate_score is None else str(record.score_report.aggregate_score)
-                passed = str(record.score_report.process_passed)
             payload = self._history_candidate_payload(record, frozen.spec)
             key_metrics = ", ".join(
                 f"{key}={value}" for key, value in payload["key_metrics"].items()
@@ -2100,6 +2125,16 @@ class FileSearchRuntime:
                 session["agent_session_id"] for session in payload["agent_sessions"]
             )
             best_iteration = self._best_iteration_record(record, frozen.spec.metric_direction)
+            if best_iteration is not None:
+                score = "" if best_iteration.score is None else str(best_iteration.score)
+                passed = "True"
+            elif record.score_report and record.score_report.process_passed:
+                score = (
+                    ""
+                    if record.score_report.aggregate_score is None
+                    else str(record.score_report.aggregate_score)
+                )
+                passed = "True"
             best_iteration_value = (
                 "" if best_iteration is None else str(best_iteration.iteration)
             )
@@ -2266,7 +2301,20 @@ class FileSearchRuntime:
             reject_promotion(
                 "cannot promote candidate because the selected artifact changed"
             )
-        if not record.score_report or not record.score_report.process_passed:
+        selected_iteration_evidence = next(
+            (
+                iteration
+                for iteration in record.iterations
+                if iteration.iteration == run.selected_iteration
+                and iteration.git_head == run.selected_git_head
+                and self._git_iteration_eligible(iteration)
+                and iteration.artifact_hash == selected.artifact_hash
+            ),
+            None,
+        )
+        if selected_iteration_evidence is None and (
+            not record.score_report or not record.score_report.process_passed
+        ):
             reject_promotion(
                 "cannot promote candidate without a passing score report"
             )
@@ -2338,6 +2386,7 @@ class FileSearchRuntime:
         )
 
     def _validate_host_strategy(self, strategy: StrategySpec) -> None:
+        self._validate_strategy_config(strategy)
         self._validate_worker_launch_for_host(strategy)
         self._validate_worker_budget_for_host(
             worker_host=strategy.worker_host,
@@ -2347,6 +2396,19 @@ class FileSearchRuntime:
             raise ValueError(
                 f"{strategy.worker_host} worker_host does not support strategy "
                 f"{strategy.name}; use default/agent_guided or random"
+            )
+
+    @staticmethod
+    def _validate_strategy_config(strategy: StrategySpec) -> None:
+        misplaced = sorted(
+            {"min_runtime_seconds", "min_verifier_runs"}.intersection(
+                strategy.config
+            )
+        )
+        if misplaced:
+            raise ValueError(
+                "strategy.config cannot contain worker lease fields "
+                f"{', '.join(misplaced)}; place them in strategy.worker_budget"
             )
 
     def _validate_worker_launch_for_host(self, strategy: StrategySpec) -> None:
@@ -2383,18 +2445,6 @@ class FileSearchRuntime:
             )
         if worker_budget is None:
             return
-        if (
-            worker_host != "codex"
-            and (
-                worker_budget.min_runtime_seconds is not None
-                or worker_budget.min_verifier_runs is not None
-            )
-        ):
-            raise ValueError(
-                "worker_budget AutoResearch lease fields "
-                "min_runtime_seconds/min_verifier_runs are currently supported "
-                "only for codex"
-            )
         if worker_host == "codex" and worker_budget.max_runtime_seconds is None:
             raise ValueError(
                 "codex worker_budget requires max_runtime_seconds so the "

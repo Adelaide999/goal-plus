@@ -154,12 +154,14 @@ artifact hash. Changing the selected artifact invalidates that evidence.
    remains available for fully independent snapshots.
 5. **Commit verifier-backed states.** Candidate edits are committed before an
    iteration is recorded, so selection can restore the exact best state.
-6. **Final verification outranks worker claims.** The main agent re-verifies
-   ranked commits before selecting one.
+6. **Durable verification outranks model claims.** Selection reuses an exact,
+   passing worker Evidence commit; legacy or otherwise unrepresented options
+   fall back to parent process verification. Promotion gates still run on the
+   selected immutable revision.
 7. **Do not silently mutate source.** Promotion exports a patch.
 8. **Make limits explicit.** `max_candidates` is the whole-run workspace cap;
-   `max_parallel` is the live-worker cap; a worker budget controls one host
-   dispatch.
+   `max_parallel` is the live-worker cap. Upper budgets constrain host work;
+   Pi minimum leases may span several native dispatches in one pool job.
 9. **Keep exploration policy in the goal.** `mode=autonomous|probe` is
    normalized into the final line of `raw_goal`; it is not another runtime
    phase, lifecycle field, or deadline.
@@ -181,8 +183,9 @@ artifact hash. Changing the selected artifact invalidates that evidence.
     equal, regressed, or invalid attempts remain in history while runtime
     restores the candidate artifact before appending the iteration ledger row.
 
-If no verifier-backed revision is eligible, or all ranked revisions fail parent
-final verification, selection records a recoverable `selection_blocked` reason.
+If no verifier-backed revision is eligible, or every ranked revision lacks
+reusable Evidence and fails fallback parent verification, selection records a
+recoverable `selection_blocked` reason.
 Promotion always reruns configured gates against the selected immutable
 revision. It emits no patch on failure; on success, patch content comes from the
 selected Git object rather than mutable live-workspace contents.

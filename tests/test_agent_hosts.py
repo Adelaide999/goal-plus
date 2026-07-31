@@ -272,6 +272,33 @@ def test_pi_rpc_adapter_builds_worker_payload() -> None:
 
 
 @pytest.mark.pi
+def test_pi_rpc_adapter_exposes_supervisor_autoresearch_lease() -> None:
+    adapter = get_agent_host_adapter("pi-rpc")
+
+    payload = adapter.build_launch_payload(
+        worker_agent_type=None,
+        candidate_id="c001",
+        agent_session_id="agent_0001",
+        short_intent="try",
+        one_paragraph_idea="try",
+        worker_budget={
+            "min_runtime_seconds": 300,
+            "min_verifier_runs": 2,
+            "max_runtime_seconds": 420,
+            "on_exceed": "interrupt",
+        },
+    )
+
+    assert payload["budget_control"]["autoresearch_lease"] == {
+        "mode": "pool_supervisor",
+        "min_runtime_seconds": 300,
+        "min_verifier_runs": 2,
+        "start_event": "initial_pool_dispatch",
+        "cumulative_across_dispatches": True,
+    }
+
+
+@pytest.mark.pi
 def test_pi_rpc_adapter_maps_native_worker_launch_options() -> None:
     adapter = get_agent_host_adapter("pi-rpc")
 

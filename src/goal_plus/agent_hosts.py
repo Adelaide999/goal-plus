@@ -355,6 +355,16 @@ class PiRpcAdapter:
             budget_control["soft_closeout_seconds"] = _soft_closeout_seconds(
                 int(max_runtime_seconds)
             )
+        min_runtime_seconds = worker_budget.get("min_runtime_seconds")
+        min_verifier_runs = worker_budget.get("min_verifier_runs")
+        if min_runtime_seconds is not None or min_verifier_runs is not None:
+            budget_control["autoresearch_lease"] = {
+                "mode": "pool_supervisor",
+                "min_runtime_seconds": int(min_runtime_seconds or 0),
+                "min_verifier_runs": int(min_verifier_runs or 1),
+                "start_event": "initial_pool_dispatch",
+                "cumulative_across_dispatches": True,
+            }
         if worker_budget.get("max_turns") is not None:
             budget_control["max_turns_hint"] = worker_budget["max_turns"]
         return budget_control

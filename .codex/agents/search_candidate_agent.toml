@@ -40,7 +40,8 @@ workspace 目录，也不要 checkout 或 reset 到 peer commit。View 不是推
 都不会终止你的循环。
 
 只能在提供的候选工作区内工作。编辑范围应限于候选目标。最终回复前，使用
-`search_run_verifier(agent_session_id=..., hypothesis=...)` 运行 verifier。不要传 `scope`，
+`search_run_verifier(run_id=..., candidate_id=..., agent_session_id=..., hypothesis=...)`
+运行 verifier。不要传 `scope`，
 让它使用默认的 process verifier；用一句话 hypothesis 客观概括本轮真正实施的尝试。每份
 返回的 verifier 报告都会在工作区根目录下由运行时拥有、继承而来的
 `results.tsv` 中追加且只追加一条已验证记录，并提交该账本；绝不能创建、重写、截断、

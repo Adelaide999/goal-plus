@@ -137,18 +137,19 @@ def test_run_statistics_split_worker_parent_usage_and_stable_terminal_time(
     }
     assert first_snapshot["activity"]["candidates_submitted"] == 1
     assert first_snapshot["activity"]["candidates_completed_with_result"] == 1
-    assert first_snapshot["activity"]["results_total"] == 2
+    assert first_snapshot["activity"]["results_total"] == 1
     assert first_snapshot["activity"]["agent_resumes"] == 1
     assert first_snapshot["activity"]["same_session_resumes"] == 0
     assert first_snapshot["activity"]["redispatch_resumes"] == 1
-    assert first_snapshot["selection"]["parent_verified"] is True
+    assert first_snapshot["selection"]["worker_verified"] is True
+    assert first_snapshot["selection"]["parent_verified"] is False
     assert first_snapshot["selection"]["survived"] is True
     assert first_snapshot["timing"]["time_to_first_improvement_seconds"] is not None
     assert first_snapshot["timing"]["time_to_threshold_seconds"] is not None
-    assert first_snapshot["verifiers"]["process_runs"] == 2
+    assert first_snapshot["verifiers"]["process_runs"] == 1
     assert first_snapshot["verifiers"]["worker_process_runs"] == 1
-    assert first_snapshot["verifiers"]["parent_process_runs"] == 1
-    assert first_snapshot["verifiers"]["process_verifier_results"] == 2
+    assert first_snapshot["verifiers"]["parent_process_runs"] == 0
+    assert first_snapshot["verifiers"]["process_verifier_results"] == 1
     assert first_snapshot["usage"]["processed_tokens"] == 170
     assert first_snapshot["usage"]["cost_usd"] == 0.25
     assert first_snapshot["run"]["age_seconds"] != later_snapshot["run"]["age_seconds"]

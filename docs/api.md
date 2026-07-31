@@ -84,9 +84,10 @@ feature ledger, and scoped pitfalls. It marks predecessor scores non-reusable.
 | `search_get_agent_observability` | main/monitor | read normalized model, timing, terminal, usage, context, artifact, and handoff evidence for one session |
 
 `search_start_agent_session` does not launch or supervise a worker. The caller
-must use the returned `launch` object. A one-dispatch `worker_budget` can be
-passed to initial launch, continuation, or redispatch without mutating the
-frozen spec.
+must use the returned `launch` object. A `worker_budget` can be passed to initial
+launch, continuation, or redispatch without mutating the frozen spec. Pi pool
+minimum fields are cumulative across the internal native-session resumes of one
+pool job; ordinary overrides remain dispatch-scoped.
 
 Worker process verifier calls require a one-line `hypothesis` describing the
 realized attempt. `view=null` in Global Evidence means annotation has not been
@@ -138,7 +139,7 @@ and `confidence`. Missing scope defaults to candidate-local. A worker's
 
 | Tool | Purpose |
 |---|---|
-| `search_run_verifier` | commit and verify the exact attempt, return candidate-local `keep`/`discard`/`failure`, restore best code after non-improvements, then append exactly one inherited `workspace/results.tsv` row; worker calls pass `agent_session_id` and consume the submitted plan description as their hypothesis, while parent verification omits the session id and does not require a plan |
+| `search_run_verifier` | commit and verify the exact attempt, return candidate-local `keep`/`discard`/`failure`, restore best code after non-improvements, then append exactly one inherited `workspace/results.tsv` row; worker calls pass the exact `run_id`, `candidate_id`, `agent_session_id`, and an objective `hypothesis`, while parent fallback verification omits the session id and does not require a hypothesis |
 | `search_select` | restore ranked commits and select the first final-verifier passing state |
 | `search_report` | generate final `report.md` and self-contained `report.html`; linked Goal Plus records must already be terminal |
 | `search_promote` | export the selected commit as a patch; normal Goal Plus flow has no report to refresh yet |
@@ -180,7 +181,7 @@ server:
 | Tool | Purpose |
 |---|---|
 | `pi_search_pool_open` | create/recover a fixed pool and launch the initial candidates |
-| `pi_search_pool_wait_any` | return new terminal candidate-ready events |
+| `pi_search_pool_wait_any` | return new terminal pool events; `candidate_ready` has satisfied its minimum lease and durable Evidence, while `timed_out` has not satisfied the lease |
 | `pi_search_pool_snapshot` | inspect one pool or rediscover pools by `run_id` |
 | `pi_search_pool_continue` | resume the same candidate and native Pi session in a new process |
 | `pi_search_pool_close` | drain or terminate live pool jobs |
@@ -211,7 +212,7 @@ goal-plus-pi-tool goal_plus_monitor_snapshot \
 | `budget.max_candidates` | whole-run distinct candidate cap |
 | `budget.max_parallel` | live-worker/planned-batch cap |
 | `strategy.worker_host` | maintained execution host: `pi-rpc` or `codex` |
-| `strategy.worker_budget` | host-enforced limit for one dispatch |
+| `strategy.worker_budget` | host-enforced upper bound and optional minimum lease |
 | `workspace.backend` | `git_worktree` (default) or `copy` |
 
 Every ranking command must exit successfully and print a final JSON object with

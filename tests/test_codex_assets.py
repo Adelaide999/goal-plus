@@ -270,6 +270,7 @@ def test_codex_worker_agent_calls_context_and_verifier() -> None:
     assert "search_submit_iteration_plan" not in text
     assert "search_run_verifier" in text
     assert "不要传 `scope`" in text
+    assert "run_id=..., candidate_id=..., agent_session_id=..., hypothesis=..." in text
     assert "工作区根目录" in text
     assert "且只追加一条已验证记录" in text
     assert "view=null" in text
@@ -280,6 +281,16 @@ def test_codex_worker_agent_calls_context_and_verifier() -> None:
     assert "search_select" in text
     assert "search_report" in text
     assert "search_promote" in text
+
+
+def test_codex_search_reuses_exact_worker_evidence_before_parent_verification() -> None:
+    text = (ROOT / ".codex" / "skills" / "search" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "准确 worker Evidence" in text
+    assert "仅在没有匹配 Evidence 时" in text
+    assert 'search_run_verifier(hypothesis="主流程完成验证")' not in text
 
 
 def test_codex_goal_plus_defers_report_until_terminal_state() -> None:
