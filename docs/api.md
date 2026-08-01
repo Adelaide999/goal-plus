@@ -38,11 +38,11 @@ goal can retain multiple search tasks.
 | `search_list_iterations` | inspect every verifier iteration for one candidate |
 | `goal_plus_monitor_snapshot` | read combined goal/run/session/host evidence without controlling workers |
 
-### Plan and materialize
+### Initial candidate allocation
 
 | Tool | Purpose |
 |---|---|
-| `search_plan_next` | persist one planning round |
+| `search_plan_next` | persist the one initial candidate allocation |
 | `search_start_batch` | materialize that plan's isolated candidate workspaces |
 
 New Pi/Codex specs use `strategy.orchestration_mode="parallel_loops"`.
@@ -234,5 +234,4 @@ hash-pinned.
 - Host timeouts and runner failures are different: a timeout proves deadline
   enforcement, while a runner failure requires host recovery evidence.
 
-See [Flow](flow-view.md) for call ordering and [Design](design.md) for the state
-and ownership model.
+See [Shared Plane](shared-plane.md) for call ordering, state, and ownership.

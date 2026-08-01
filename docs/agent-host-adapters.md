@@ -1,8 +1,8 @@
 # Agent Host Adapters
 
 Adapters translate runtime launch/continue requests into host-native worker
-operations. The Search runtime stays unchanged; [Flow](flow-view.md) defines the
-shared loop.
+operations. The Search runtime stays unchanged; [Shared Plane](shared-plane.md)
+defines the shared loop and ownership boundary.
 
 ## Common Contract
 
