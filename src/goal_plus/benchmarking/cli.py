@@ -33,7 +33,6 @@ def main(argv: list[str] | None = None) -> int:
     run_one.add_argument("--out")
     run_one.add_argument("--worker-backend", choices=["fixed", "pi-rpc"], default="fixed")
     run_one.add_argument("--fixed-answer")
-    run_one.add_argument("--max-candidates", type=int, help=argparse.SUPPRESS)
     run_one.add_argument("--max-parallel", type=int)
     run_one.add_argument("--strategy", default="random")
     run_one.add_argument("--max-runtime-seconds", type=int, default=180)
@@ -76,7 +75,6 @@ def _cmd_run_one(args: argparse.Namespace) -> int:
             root_dir=Path(args.root),
             worker_backend=args.worker_backend,
             fixed_answer=args.fixed_answer,
-            max_candidates=args.max_candidates,
             max_parallel=args.max_parallel,
             strategy_name=args.strategy,
             max_runtime_seconds=args.max_runtime_seconds,

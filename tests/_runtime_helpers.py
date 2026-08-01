@@ -36,7 +36,7 @@ def make_project(tmp_path: Path) -> Path:
     return project
 
 
-def spec_for(project: Path, *, max_candidates: int = 4, direction: str = "maximize") -> SearchSpec:
+def spec_for(project: Path, *, max_parallel: int = 4, direction: str = "maximize") -> SearchSpec:
     return SearchSpec.model_validate(
         {
             "objective": "test runtime",
@@ -48,7 +48,7 @@ def spec_for(project: Path, *, max_candidates: int = 4, direction: str = "maximi
                 "deny": ["evaluator.py", "config.yaml"],
             },
             "budget": {
-                "max_parallel": max_candidates,
+                "max_parallel": max_parallel,
             },
             "process_verifiers": [
                 {
@@ -68,9 +68,9 @@ def spec_with_strategy(
     project: Path,
     strategy: dict,
     *,
-    max_candidates: int = 4,
+    max_parallel: int = 4,
 ) -> SearchSpec:
-    data = spec_for(project, max_candidates=max_candidates).model_dump(mode="json")
+    data = spec_for(project, max_parallel=max_parallel).model_dump(mode="json")
     data["strategy"] = strategy
     return SearchSpec.model_validate(data)
 
@@ -80,7 +80,7 @@ def spec_with_host(
     worker_host: str,
     *,
     strategy_name: str = "agent_guided",
-    max_candidates: int = 4,
+    max_parallel: int = 4,
 ) -> SearchSpec:
     return spec_with_strategy(
         project,
@@ -88,7 +88,7 @@ def spec_with_host(
             "name": strategy_name,
             "worker_host": worker_host,
         },
-        max_candidates=max_candidates,
+        max_parallel=max_parallel,
     )
 
 

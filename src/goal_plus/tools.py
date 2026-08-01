@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from goal_plus.goal_plus import FileGoalPlusRuntime
 from goal_plus.models import (
+    AgentHostKind,
     CandidateProposal,
     GoalPlusNextAction,
     GoalPlusSpecDraft,
@@ -46,6 +47,13 @@ class SearchTools:
                 source_run_id=source_run_id,
             )
         }
+
+    def goal_plus_list_models(
+        self,
+        host: AgentHostKind,
+        query: str | None = None,
+    ) -> dict[str, Any]:
+        return self.runtime.list_available_models(host, query)
 
     def search_invalidate_run(
         self,

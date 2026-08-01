@@ -47,19 +47,6 @@ class FeedbackPolicy(str, Enum):
 
 
 class Budget(SearchModel):
-    max_candidates: int | None = Field(
-        default=None,
-        gt=0,
-        exclude=True,
-        deprecated=(
-            "budget.max_candidates 已弃用；候选工作区数量由 budget.max_parallel "
-            "唯一决定。兼容输入只能与 max_parallel 相等。"
-        ),
-        description=(
-            "已弃用的兼容字段。新 SearchSpec 不应设置；若旧输入仍提供该字段，"
-            "search_freeze_spec 只在它等于 max_parallel 时接受。"
-        ),
-    )
     max_parallel: int = Field(
         gt=0,
         description=(
@@ -145,6 +132,39 @@ class WorkerLaunchOptions(SearchModel):
         if value is not None and not value.strip():
             raise ValueError("worker launch option must be non-empty when provided")
         return value
+
+
+class ModelSpec(SearchModel):
+    """User-facing model request, normalized before the spec is frozen."""
+
+    model: str = Field(min_length=1)
+    count: int | None = Field(default=None, gt=0)
+    provider: str | None = None
+    adapter_version: str | None = None
+    reasoning_effort: str | None = None
+    service_tier: str | None = None
+    context_policy: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator(
+        "model", "provider", "adapter_version", "reasoning_effort", "service_tier"
+    )
+    @classmethod
+    def string_values_must_be_nonempty(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("model option must be non-empty when provided")
+        return value
+
+
+class SelectedModel(SearchModel):
+    """Exact host model bound immutably to one candidate slot."""
+
+    slot: int = Field(ge=1)
+    model: str = Field(min_length=1)
+    provider: str | None = None
+    adapter_version: str | None = None
+    reasoning_effort: str | None = None
+    service_tier: str | None = None
+    context_policy: dict[str, Any] = Field(default_factory=dict)
 
 
 class EvidenceAnnotatorSpec(SearchModel):
@@ -249,6 +269,10 @@ class StrategySpec(SearchModel):
     worker_launch: WorkerLaunchOptions | None = None
     evidence_annotator: EvidenceAnnotatorSpec = Field(
         default_factory=EvidenceAnnotatorSpec
+    )
+    models: list[ModelSpec] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
     )
     config: dict[str, Any] = Field(default_factory=dict)
 
@@ -540,6 +564,11 @@ class CandidateTask(SearchModel):
     stop_conditions: dict[str, Any] = Field(default_factory=dict)
     proposal: "CandidateProposal | None" = None
     strategy_metadata: dict[str, Any] = Field(default_factory=dict)
+    selected_model: SelectedModel | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    model_provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class CandidateProposal(SearchModel):
@@ -571,6 +600,10 @@ class SearchPlan(SearchModel):
     work_orders: list[CandidateWorkOrder] = Field(default_factory=list)
     strategy_trace: dict[str, Any] = Field(default_factory=dict)
     started_candidate_ids: list[str] = Field(default_factory=list)
+    selected_models: list[SelectedModel] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
     created_at: str
 
 
@@ -614,6 +647,13 @@ class PromotionEvidence(SearchModel):
 class IterationRecord(SearchModel):
     iteration: int
     agent_session_id: str | None = None
+    selected_model: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    exact_model_ref: str | None = None
+    adapter_version: str | None = None
+    model_provenance: dict[str, Any] = Field(default_factory=dict)
     score: float | None = None
     process_passed: bool | None = None
     git_head: str | None = None
@@ -693,6 +733,10 @@ class RunRecord(SearchModel):
     invalidation_summary: str | None = None
     invalidation_evidence: list[dict[str, Any]] = Field(default_factory=list)
     replacement_run_id: str | None = None
+    selected_models: list[SelectedModel] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
 
 
 class CandidateRecord(SearchModel):
@@ -719,6 +763,11 @@ class AgentSessionRecord(SearchModel):
     created_at: str
     updated_at: str
     directive: dict[str, Any] = Field(default_factory=dict)
+    selected_model: SelectedModel | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    model_provenance: dict[str, Any] = Field(default_factory=dict)
     workspace: Path
     launch: dict[str, Any] = Field(default_factory=dict)
     counters: dict[str, int] = Field(default_factory=dict)

@@ -24,7 +24,7 @@ def _pi_rpc_spec(project: Path):
                 "on_exceed": "interrupt",
             },
         },
-        max_candidates=2,
+        max_parallel=2,
     )
 
 

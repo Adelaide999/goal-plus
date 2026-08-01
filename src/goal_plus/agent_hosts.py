@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from queue import Empty, Queue
+from threading import Thread
+from typing import Any, Callable, Protocol
 
 from goal_plus.agent_pool import HostPoolContract
 from goal_plus.host_observability import (
@@ -30,6 +34,7 @@ class UnsupportedHostCapability(RuntimeError):
 @dataclass(frozen=True)
 class HostCapabilities:
     supports_soft_closeout: bool = False
+    supports_model_discovery: bool = False
     supports_model_override: bool = False
     supports_reasoning_effort: bool = False
     supports_service_tier: bool = False
@@ -40,7 +45,14 @@ class HostCapabilities:
 
 class AgentHostAdapter(Protocol):
     name: AgentHostKind
+    adapter_version: str
     capabilities: HostCapabilities
+
+    def list_available_models(
+        self,
+        query: str | None = None,
+    ) -> list[dict[str, Any]]:
+        ...
 
     def collect_observability(
         self,
@@ -90,6 +102,83 @@ def _normalize_mode(value: str) -> str:
 
 def portable_strategy_mode(value: str) -> bool:
     return _normalize_mode(value) in PORTABLE_STRATEGY_MODES
+
+
+def _send_json_line(process: subprocess.Popen[str], payload: dict[str, Any]) -> None:
+    if process.stdin is None:
+        raise RuntimeError("host model discovery process has no stdin")
+    process.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    process.stdin.flush()
+
+
+def _read_json_line_until(
+    process: subprocess.Popen[str],
+    predicate: Callable[[dict[str, Any]], bool],
+    *,
+    timeout_seconds: float = 15.0,
+) -> dict[str, Any]:
+    if process.stdout is None:
+        raise RuntimeError("host model discovery process has no stdout")
+
+    responses: Queue[dict[str, Any] | Exception | None] = Queue(maxsize=1)
+
+    def read_until_match() -> None:
+        try:
+            while True:
+                line = process.stdout.readline()
+                if not line:
+                    responses.put(None)
+                    return
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict) and predicate(payload):
+                    responses.put(payload)
+                    return
+        except Exception as exc:  # pragma: no cover - defensive subprocess guard
+            responses.put(exc)
+
+    Thread(target=read_until_match, daemon=True).start()
+    try:
+        response = responses.get(timeout=timeout_seconds)
+    except Empty as exc:
+        raise RuntimeError(
+            "host model discovery timed out or exited without a response"
+        ) from exc
+    if response is None:
+        raise RuntimeError("host model discovery exited without a response")
+    if isinstance(response, Exception):
+        raise RuntimeError("host model discovery response reader failed") from response
+    return response
+
+
+def _stop_probe_process(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=2)
+
+
+def _filter_available_models(
+    models: list[dict[str, Any]], query: str | None
+) -> list[dict[str, Any]]:
+    normalized = (query or "").strip().casefold()
+    if not normalized:
+        return models
+    return [
+        model
+        for model in models
+        if normalized
+        in " ".join(
+            str(model.get(key) or "")
+            for key in ("model", "model_id", "provider", "display_name")
+        ).casefold()
+    ]
 
 
 def _codex_task_name(agent_session_id: str) -> str:
@@ -193,8 +282,10 @@ def _codex_budget_control(
 
 class CodexAdapter:
     name: AgentHostKind = "codex"
+    adapter_version = "codex-app-server-v1"
     capabilities = HostCapabilities(
         supports_soft_closeout=True,
+        supports_model_discovery=True,
         supports_model_override=True,
         supports_reasoning_effort=True,
         supports_service_tier=True,
@@ -217,6 +308,87 @@ class CodexAdapter:
 
     def collect_observability(self, session: AgentSessionRecord) -> dict[str, Any]:
         return collect_codex_observability(session)
+
+    def list_available_models(
+        self,
+        query: str | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            process = subprocess.Popen(
+                ["codex", "app-server"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+        except FileNotFoundError as exc:
+            raise UnsupportedHostCapability(
+                "codex model discovery requires the `codex` executable"
+            ) from exc
+        try:
+            _send_json_line(
+                process,
+                {
+                    "method": "initialize",
+                    "id": "goal-plus-initialize",
+                    "params": {
+                        "clientInfo": {
+                            "name": "goal_plus",
+                            "title": "Goal Plus",
+                            "version": self.adapter_version,
+                        }
+                    },
+                },
+            )
+            initialized = _read_json_line_until(
+                process,
+                lambda payload: payload.get("id") == "goal-plus-initialize",
+            )
+            if initialized.get("error") is not None:
+                raise RuntimeError(
+                    f"codex app-server initialize failed: {initialized['error']}"
+                )
+            _send_json_line(process, {"method": "initialized", "params": {}})
+            _send_json_line(
+                process,
+                {
+                    "method": "model/list",
+                    "id": "goal-plus-model-list",
+                    "params": {"limit": 100, "includeHidden": False},
+                },
+            )
+            response = _read_json_line_until(
+                process,
+                lambda payload: payload.get("id") == "goal-plus-model-list",
+            )
+            if response.get("error") is not None:
+                raise RuntimeError(
+                    f"codex model/list failed: {response['error']}"
+                )
+            data = response.get("result", {}).get("data", [])
+            models = [
+                {
+                    "model": str(item.get("model") or item["id"]),
+                    "model_id": str(item["id"]),
+                    "provider": "codex",
+                    "display_name": item.get("displayName") or item.get("id"),
+                    "reasoning": bool(item.get("supportedReasoningEfforts")),
+                    "reasoning_efforts": [
+                        effort.get("reasoningEffort")
+                        for effort in item.get("supportedReasoningEfforts", [])
+                        if effort.get("reasoningEffort")
+                    ],
+                    "input_modalities": item.get("inputModalities")
+                    or ["text", "image"],
+                    "source": "codex_app_server_model_list",
+                }
+                for item in data
+                if isinstance(item, dict) and item.get("id")
+            ]
+            return _filter_available_models(models, query)
+        finally:
+            _stop_probe_process(process)
 
     def build_launch_payload(
         self,
@@ -313,8 +485,10 @@ class CodexAdapter:
 
 class PiRpcAdapter:
     name: AgentHostKind = "pi-rpc"
+    adapter_version = "pi-rpc-v1"
     capabilities = HostCapabilities(
         supports_soft_closeout=True,
+        supports_model_discovery=True,
         supports_model_override=True,
         supports_reasoning_effort=True,
         supports_usage_metadata=True,
@@ -337,6 +511,68 @@ class PiRpcAdapter:
 
     def collect_observability(self, session: AgentSessionRecord) -> dict[str, Any]:
         return collect_pi_observability(session)
+
+    def list_available_models(
+        self,
+        query: str | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            process = subprocess.Popen(
+                [
+                    "pi",
+                    "--mode",
+                    "rpc",
+                    "--no-session",
+                    "--no-extensions",
+                    "--no-skills",
+                    "--no-context-files",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+        except FileNotFoundError as exc:
+            raise UnsupportedHostCapability(
+                "pi-rpc model discovery requires the `pi` executable"
+            ) from exc
+        try:
+            _send_json_line(
+                process,
+                {"id": "goal-plus-model-list", "type": "get_available_models"},
+            )
+            response = _read_json_line_until(
+                process,
+                lambda payload: (
+                    payload.get("id") == "goal-plus-model-list"
+                    and payload.get("type") == "response"
+                ),
+            )
+            if not response.get("success"):
+                raise RuntimeError(
+                    "pi get_available_models failed: "
+                    + str(response.get("error") or response)
+                )
+            data = response.get("data", {}).get("models", [])
+            models = [
+                {
+                    "model": f"{item['provider']}/{item['id']}",
+                    "model_id": str(item["id"]),
+                    "provider": str(item["provider"]),
+                    "display_name": item.get("name") or item.get("id"),
+                    "reasoning": bool(item.get("reasoning")),
+                    "input_modalities": item.get("input") or ["text"],
+                    "context_window": item.get("contextWindow"),
+                    "max_tokens": item.get("maxTokens"),
+                    "source": "pi_rpc_get_available_models",
+                }
+                for item in data
+                if isinstance(item, dict) and item.get("provider") and item.get("id")
+            ]
+            return _filter_available_models(models, query)
+        finally:
+            _stop_probe_process(process)
 
     def _budget_control(
         self,

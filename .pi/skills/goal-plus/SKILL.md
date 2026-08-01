@@ -55,6 +55,14 @@ ranking verifier 必须输出一个最终 JSON 对象，其中包含有限数值
 直接填写，不要根据校验错误猜字段。`search_freeze_spec` 会重复 verifier 预检，
 契约无效时会在候选 worker 启动前拒绝 spec。
 
+如果原始命令包含 `models=...`，先调用 `goal_plus_list_models(host="pi-rpc")`，将用户
+填写的名称解析为唯一可用模型并冻结到 `strategy.models`；不存在或不唯一时，在创建
+run 前直接返回错误。`models=A,B max_parallel=4` 表示 A、B、A、B；
+`models=A,B A1B3 max_parallel=4`（等价写法 `models=A*1,B*3`）表示显式
+A1B3，数量之和必须等于
+`max_parallel`。`models=A,B 每个一个` 表示 `max_parallel=2`。用户没有填写
+`models` 时不要探测目录，保持 Pi 当前默认模型。
+
 冻结预检在一次性源码副本中运行，并要求 verifier 保持该工作区只读。编译器产物和临时
 输出应放入唯一的 `GOAL_PLUS_VERIFIER_TMPDIR`/`TMPDIR` 或 Python
 `tempfile.TemporaryDirectory()`。绝不能使用固定 `/tmp` 路径，因为受管 Pi pool
@@ -102,8 +110,8 @@ Pi 支持的 strategy name 仅限以下可移植内置子集：
 ### Search Run 预算规划
 
 调用 `search_freeze_spec` 前选择整个 run 的候选预算；预算一旦冻结，不能在该 run 内增长。
-普通 `parallel_loops` 执行只设置 `budget.max_parallel`：它唯一决定初始
-candidate/subagent 数。`budget.max_candidates` 已弃用，不得写入新 spec。
+普通 `parallel_loops` 执行使用 `budget.max_parallel`：它唯一决定初始
+candidate/subagent 数。
 每个初始候选工作区都是长期自主循环，不创建后续规划轮次或基于质量的替代项。
 
 用户或外层 harness 提供 wall-clock、attempt 或 token 预算时：

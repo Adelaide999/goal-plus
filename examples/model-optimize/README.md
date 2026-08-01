@@ -32,6 +32,10 @@ the CPU thread count is not a valid optimization.
 - `design.md`: scenario design and Goal Plus boundary rationale
 - `plan.md`: staged implementation plan
 - `torch-cpu-target/`: runnable PyTorch CPU workspace
+- `torch-cpu-target/multi-model-search-spec.json`: two-slot static Terra/Sol
+  model selection under shared Annotated Evidence
+- `torch-cpu-target/multi-model-run.md`: `scaling` Conda and
+  Codex CLI runbook with runtime-evidence acceptance criteria
 - `pi-goal-prompt.md`: minimal user-level `/goal-plus` request
 
 ## Boundary

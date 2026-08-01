@@ -46,6 +46,13 @@ Codex 可能显示带客户端特定前缀的 MCP 工具；按最后的逻辑工
    `workspace.backend="git_worktree"`，以便候选共享 Git object database 并解析彼此的
    Evidence commit；只有用户明确要求兼容隔离时才能设置 `copy`。使用
    `goal_plus_save_spec_draft` 保存完整契约。
+   如果原始命令包含 `models=...`，先调用 `goal_plus_list_models(host="codex")`，
+   将用户填写的名称解析为唯一可用模型并冻结到 `strategy.models`；不存在或不唯一时，
+   在创建 run 前直接返回错误。`models=A,B max_parallel=4` 表示按 A、B、A、B 轮转；
+   `models=A,B A1B3 max_parallel=4`（等价写法 `models=A*1,B*3`）表示显式
+   A1B3，所有显式数量之和必须等于
+   `max_parallel`。`models=A,B 每个一个` 表示 `max_parallel=2`。用户没有填写
+   `models` 时不要探测目录，保持 host 默认模型。
    对于用语义、大致 shape/dtype 和参考提示描述的 AscendC Direct Invoke 算子目标，
    记录 `scenario="ascendc_direct_invoke"`，并完整读取
    `examples/ascendc-direct-search/SPEC_DISCOVERY.md`。遵循其中的 request schema

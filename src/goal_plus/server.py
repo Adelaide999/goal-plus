@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field
 
 from goal_plus.goal_plus import FileGoalPlusRuntime
-from goal_plus.models import GoalPlusSpecDraftInput, SearchSpec
+from goal_plus.models import AgentHostKind, GoalPlusSpecDraftInput, SearchSpec
 from goal_plus.paths import DEFAULT_RUNTIME_ROOT
 from goal_plus.runtime import FileSearchRuntime
 from goal_plus.tools import GoalPlusTools, SearchTools
@@ -39,11 +39,22 @@ def create_mcp(
         `GOAL_PLUS_VERIFIER_TMPDIR`、`TMPDIR`、`TMP` 或 `TEMP`；并发验证候选时固定
         `/tmp` 路径不安全。可选自定义 verifier 必须在 Spec Discovery 期间写入源码拥有
         的路径，绝不能放在 `.gp` 或 `.search`。`expected_outputs` 只包含产物路径/glob，
-        不是 stdout parser 配置。`spec.budget.max_parallel` 唯一决定初始候选 Agent 数；
-        `spec.budget.max_candidates` 已弃用，新 spec 不得设置。旧输入只有在两者相等时
-        才能通过冻结兼容检查。
+        不是 stdout parser 配置。`spec.budget.max_parallel` 唯一决定初始候选 Agent 数。
         """
         return tools.search_freeze_spec(spec, verifier_artifact_paths)
+
+    @mcp.tool()
+    def goal_plus_list_models(
+        host: AgentHostKind,
+        query: str | None = None,
+    ) -> dict[str, Any]:
+        """列出指定 Codex/Pi host 当前可用的模型。
+
+        `/goal-plus models=...` 在冻结 spec 前调用它。返回的 `model` 是可写入
+        `strategy.models[].model` 的精确 host 引用；不存在或有歧义的请求会在冻结时
+        直接失败。省略 `query` 返回完整清单。
+        """
+        return tools.goal_plus_list_models(host, query)
 
     @mcp.tool()
     def search_create(

@@ -76,6 +76,26 @@ reload. Pass other optional metadata, including `strategy.worker_launch`
 overrides, only when it is present in the returned launch payload and exposed
 by the current tool schema; never synthesize it from the schema alone.
 
+### Multi-model selection
+
+Users specify models directly in the `/goal-plus` request; they do not create
+named profiles or a separate allocation object:
+
+```text
+/goal-plus models=gpt-5.6-terra,gpt-5.6-sol max_parallel=4 optimize ...
+/goal-plus models=gpt-5.6-terra,gpt-5.6-sol A1B3 max_parallel=4 optimize ...
+```
+
+The first form round-robins to Terra, Sol, Terra, Sol. The second is explicit
+A1B3; `models=terra*1,sol*3` is equivalent shorthand. Goal Plus calls
+`goal_plus_list_models(host="codex")`, resolves each
+name before freezing, and records the generated ordered `selected_models` in
+the run. A selected model remains fixed for that candidate's continuations.
+When `models` is absent, Codex children inherit the normal parent/default model.
+The catalog is a discovery surface; dispatch still obeys the current
+`spawn_agent` schema and reports a launch error if that schema cannot accept a
+chosen model override.
+
 The parent then:
 
 1. freezes `strategy.orchestration_mode="parallel_loops"`, plans once, and

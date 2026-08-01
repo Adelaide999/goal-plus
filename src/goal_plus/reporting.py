@@ -1198,6 +1198,12 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
                 "parent_candidate_ids": candidate.task.parent_candidate_ids,
                 "base_candidate_id": candidate.task.base_candidate_id,
                 "hypothesis": candidate.task.hypothesis,
+                "selected_model": (
+                    candidate.task.selected_model.model
+                    if candidate.task.selected_model
+                    else None
+                ),
+                "model_provenance": candidate.task.model_provenance,
                 "selected": candidate.candidate_id == run.selected_candidate_id,
                 "score": (
                     best.score
@@ -1233,6 +1239,9 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
                     {
                         "iteration": iteration.iteration,
                         "agent_session_id": iteration.agent_session_id,
+                        "selected_model": iteration.selected_model,
+                        "exact_model_ref": iteration.exact_model_ref,
+                        "adapter_version": iteration.adapter_version,
                         "score": iteration.score,
                         "process_passed": iteration.process_passed,
                         "hypothesis": iteration.hypothesis,
@@ -1276,6 +1285,10 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
         base_payload = {
             "agent_session_id": session.agent_session_id,
             "candidate_id": session.candidate_id,
+            "selected_model": (
+                session.selected_model.model if session.selected_model else None
+            ),
+            "model_provenance": session.model_provenance,
             "host": session.host,
             "created_at": session.created_at,
             "updated_at": session.updated_at,

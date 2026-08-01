@@ -21,6 +21,7 @@ from goal_plus.tools import GoalPlusTools, SearchTools
 
 
 SEARCH_TOOL_NAMES = {
+    "goal_plus_list_models",
     "search_freeze_spec",
     "search_create",
     "search_invalidate_run",

@@ -99,7 +99,6 @@ def test_codex_circle_packing_cycle_is_one_fixed_parallel_batch() -> None:
         "inherits the parent Codex model",
         "only `task_name`, `message`, and `fork_turns`",
         '"max_parallel": 2',
-        "do not set deprecated `max_candidates`",
         "batch_sizes: [2]",
         "rounds: 1",
     ):

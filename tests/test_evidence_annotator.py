@@ -55,7 +55,7 @@ def test_outer_deadline_accepts_unix_epoch() -> None:
 
 def test_drainer_serially_describes_pending_evidence(tmp_path: Path) -> None:
     project = make_project(tmp_path)
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["workspace"] = {"backend": "git_worktree"}
     runtime = FileSearchRuntime(tmp_path / ".gp")
     frozen = runtime.freeze_spec(
@@ -244,7 +244,7 @@ def test_kick_is_single_flight_and_non_blocking(
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".gp")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=1), [project / "evaluator.py"]
+        spec_for(project, max_parallel=1), [project / "evaluator.py"]
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
@@ -280,7 +280,7 @@ def test_permanent_failure_is_not_retried_and_closed_run_does_not_publish(
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".gp")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=1), [project / "evaluator.py"]
+        spec_for(project, max_parallel=1), [project / "evaluator.py"]
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
@@ -375,7 +375,7 @@ def test_expired_outer_deadline_never_starts_verifier_or_annotation(
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".gp")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=1), [project / "evaluator.py"]
+        spec_for(project, max_parallel=1), [project / "evaluator.py"]
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
@@ -406,7 +406,7 @@ def test_unix_outer_deadline_allows_annotation_task(
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".gp")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=1), [project / "evaluator.py"]
+        spec_for(project, max_parallel=1), [project / "evaluator.py"]
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
@@ -434,7 +434,7 @@ def test_transient_annotation_failure_has_bounded_persistent_retries(
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".gp")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=1), [project / "evaluator.py"]
+        spec_for(project, max_parallel=1), [project / "evaluator.py"]
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
@@ -498,7 +498,7 @@ def test_oversized_diff_is_rejected_before_annotator_input(tmp_path: Path) -> No
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".gp")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=1), [project / "evaluator.py"]
+        spec_for(project, max_parallel=1), [project / "evaluator.py"]
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)

@@ -150,6 +150,18 @@ const EvidenceAnnotator = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+const ModelSpec = Type.Object(
+	{
+		model: Type.String({ minLength: 1 }),
+		count: Type.Optional(PositiveInteger),
+		provider: Type.Optional(NullableString),
+		adapter_version: Type.Optional(NullableString),
+		reasoning_effort: Type.Optional(NullableString),
+		service_tier: Type.Optional(NullableString),
+		context_policy: Type.Optional(LooseObject),
+	},
+	{ additionalProperties: false },
+);
 const StrategySpec = Type.Object(
 	{
 		name: Type.Optional(Type.String({ minLength: 1 })),
@@ -159,6 +171,7 @@ const StrategySpec = Type.Object(
 		worker_budget: Type.Optional(Type.Union([WorkerBudget, Type.Null()])),
 		worker_launch: Type.Optional(Type.Union([WorkerLaunch, Type.Null()])),
 		evidence_annotator: Type.Optional(EvidenceAnnotator),
+		models: Type.Optional(Type.Array(ModelSpec)),
 		config: Type.Optional(LooseObject),
 	},
 	{ additionalProperties: false },
@@ -226,6 +239,13 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 			goal_plus_id: Type.Optional(Type.String()),
 			run_id: Type.Optional(Type.String()),
 			stale_after_seconds: Type.Optional(Type.Number()),
+		},
+		{ additionalProperties: false },
+	),
+	goal_plus_list_models: Type.Object(
+		{
+			host: Type.Union([Type.Literal("codex"), Type.Literal("pi-rpc")]),
+			query: Type.Optional(Type.String()),
 		},
 		{ additionalProperties: false },
 	),
@@ -494,7 +514,7 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 };
 const RuntimeToolDescriptions: Record<string, string> = {
 	goal_plus_save_spec_draft:
-		"保存发现的 SearchSpec draft。新的 Pi spec 使用 orchestration_mode=parallel_loops，只设置 max_parallel 作为初始 candidate/subagent 数，不设置已弃用的 max_candidates。",
+		"保存发现的 SearchSpec draft。新的 Pi spec 使用 orchestration_mode=parallel_loops，以 max_parallel 作为初始 candidate/subagent 数。",
 	search_freeze_spec:
 		"冻结不可变的 SearchSpec 和 verifier bundle。预检使用一次性源码副本，并拒绝 verifier 工作区副作用；并发 Search 下 verifier 临时文件必须放入唯一的 GOAL_PLUS_VERIFIER_TMPDIR/TMPDIR，绝不能使用固定 /tmp 路径。parallel_loops 模式由一份初始 plan 创建长期候选。",
 	search_get_global_evidence:
@@ -1227,6 +1247,7 @@ export default function (pi: ExtensionAPI) {
 		"goal_plus_status",
 		"goal_plus_update_goal",
 		"goal_plus_monitor_snapshot",
+		"goal_plus_list_models",
 		"goal_plus_record_triage",
 		"goal_plus_save_spec_draft",
 		"goal_plus_link_search_run",

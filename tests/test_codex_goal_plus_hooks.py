@@ -73,7 +73,7 @@ def _codex_search_worker(
         project,
         "codex",
         strategy_name="random",
-        max_candidates=1,
+        max_parallel=1,
     ).model_dump(mode="json")
     payload["strategy"]["worker_budget"] = worker_budget or {
         "max_runtime_seconds": 600,

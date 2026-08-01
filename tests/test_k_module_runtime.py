@@ -77,7 +77,6 @@ def spec_for(project: Path) -> dict:
             }
         ],
         "budget": {
-            "max_candidates": 5,
             "max_parallel": 5,
         },
         "root_hypotheses": [
@@ -106,7 +105,7 @@ def create_parallel_codex_run(
     project: Path,
 ) -> str:
     spec = spec_for(project)
-    spec["budget"] = {"max_candidates": 2, "max_parallel": 2}
+    spec["budget"] = {"max_parallel": 2}
     spec["strategy"] = {
         "name": "random",
         "worker_host": "codex",

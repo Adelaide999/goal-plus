@@ -18,8 +18,8 @@ Plugin, hook, approval flow, branch workflow, or verifier.
 Direct Invoke operator. Resolve https://gitcode.com/cann/cann-bench.git at an
 exact commit and use tasks/level1/gelu plus the repository's official evaluation
 contract as the semantics, cases, tolerances, Golden, and scoring reference.
-Run on the available Ascend NPU. Use max_parallel=2, omit deprecated
-max_candidates, then complete selection, promotion verification, and reporting.
+Run on the available Ascend NPU. Use max_parallel=2, then complete selection,
+promotion verification, and reporting.
 ```
 
 The request may instead name an AKG implementation, another local repository,
