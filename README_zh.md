@@ -64,17 +64,19 @@ Codex 需要将 `.codex/config.example.toml` 复制为被忽略的本地文件
 - 一条 **Goal Plus 记录**对应完整的用户任务。
 - 一个 **search task** 是在一份 frozen spec 上运行的一个 `run_id`；一个目标可关联
   多个 search task。
-- 一个 **round** 是一次持久化规划决策；新 Pi/Codex run 只有一个初始 round。
+- 初始 **SearchPlan** 只分配固定 candidate lane，不是逐轮提交 plan 的协议。
 - 一个 **candidate** 是带 verifier 历史的长期并行 loop 工作区。
 - 一个 **worker session** 是宿主上下文/来源句柄。worker 生命周期属于宿主，
   不属于 Search 运行时。
+- **共享平面**保存冻结合同、verifier 精确 commit、Global Evidence、异步客观 View
+  和 selection 状态，不暴露其他 candidate 的推理或 workspace。
 - 一个 **verifier concern** 只是 worker 的建议；只有 main agent 能确认。确认后先封锁
   当前 run，再停止全部宿主 worker，并创建新的 spec/run。
 
 Search 使用固定 parallel loops：初始 candidate 只创建一次；任意 worker 完成后，
 main 只校验结果、刷新 verifier-backed best，并在全局停止条件未满足时续跑同一个
 candidate。main 不选择后续技术方向，也不会按分数替换 candidate。完整流程见
-[Flow](docs/flow-view.md)。
+[Shared Plane](docs/shared-plane.md)。
 
 同一份有效评价/编辑合同应保持一个 run。必须新建 successor 时，
 `source_run_id` 只继承有界 frontier、feature 和带作用域 pitfalls 作为研究上下文；
@@ -93,9 +95,7 @@ Selected Git Head 和 Artifact Hash，之后才生成可被 Git 应用的 Patch�
 
 | 需求 | 文档 |
 |---|---|
-| 端到端职责和 parallel-loop 流程 | [Flow](docs/flow-view.md) |
-| 架构、状态与不变量 | [Design](docs/design.md) |
-| Candidate-local 最优代码回滚设计 | [Candidate Rollback](docs/candidate-local-best-rollback.md) |
+| 架构、共享 Evidence、回滚和端到端流程 | [Shared Plane](docs/shared-plane.md) |
 | 当前 MCP 与 Pi 本地工具 | [API](docs/api.md) |
 | 宿主能力对比 | [Agent Host Adapters](docs/agent-host-adapters.md) |
 | 运行时与宿主日志 | [Debugging](docs/debugging-runtime.md) |

@@ -9,8 +9,8 @@ overrides it.
 Read only the page that owns the question:
 
 - [README.md](README.md): install, quick start, and document map.
-- [docs/flow-view.md](docs/flow-view.md): canonical end-to-end flow.
-- [docs/design.md](docs/design.md): architecture, data, and invariants.
+- [docs/shared-plane.md](docs/shared-plane.md): architecture, ownership,
+  shared Evidence, candidate settlement, and end-to-end flow.
 - [docs/api.md](docs/api.md): current MCP and Pi-local tool index.
 - [docs/agent-host-adapters.md](docs/agent-host-adapters.md): capability matrix
   and shared host-pool contract.
@@ -21,11 +21,6 @@ Read only the page that owns the question:
   scenario prompts.
 - [tests/README.md](tests/README.md): unit/integration/system test layout and
   commands.
-
-Recent implementation evidence:
-
-- [docs/worker-budget-smoke.md](docs/worker-budget-smoke.md)
-- [docs/pi-native-session-smoke.md](docs/pi-native-session-smoke.md)
 
 ## Code Discovery
 
@@ -42,9 +37,10 @@ fixtures, and test assets.
 
 ## Core Boundary
 
-This project is a `/goal-plus` runtime with an internal Search Mode engine. The
-Search runtime is not a worker supervisor; host integrations may provide a
-supervisor behind the documented host-pool contract.
+This project is a `/goal-plus` runtime with an internal Search Mode engine. Its
+core is the durable shared plane described in `docs/shared-plane.md`. The Search
+runtime is not a worker supervisor; host integrations may provide a supervisor
+behind the documented host-pool contract.
 
 The runtime owns:
 
@@ -131,7 +127,8 @@ When building or running such benchmarks:
   supervisor.
 - `.codex/`: Codex goal-plus/search skills and worker agent assets.
 - `.pi/`: Pi prompt templates, skills, and extension tools.
-- `docs/`: design, adapter, host, debug, and strategy documentation.
+- `docs/`: shared-plane architecture, API, adapter, host, and debug
+  documentation.
 - `examples/`: example SearchSpec files.
 - `tests/`: unit/integration tests, asset tests, fixtures, and system tests.
 
