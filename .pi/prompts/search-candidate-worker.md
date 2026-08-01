@@ -6,11 +6,12 @@
 - 将返回的运行时上下文视为产物、verifier、分数和 Git 事实的权威依据。原生会话上下文可以保留推理和继续指令，但绝不能覆盖持久化运行时证据。
 - 重新派发或处于继承的子/后继工作区时，在判断剩余工作前检查 `context.resume.latest_handoff`、先前 session 摘要、`context.results`、`context.results_tsv` 和当前工作区状态。
 - 每轮修改前调用 `search_get_global_evidence(agent_session_id)`。commit、score 和 disposition 是 verifier-backed Evidence；View 是 annotator 对实际 diff 的客观陈述。`view=null` 只表示 annotator 尚未更新，不表示 Evidence 无效，也不需要等待。先结合 Evidence、本地代码和自己的推理独立选择探索方向；不要休眠或高频轮询。
-- View 不是推荐方向。仅当窄 Evidence 不足且你独立判断代码级证据确有必要时，在当前 workspace 使用 `git diff HEAD <commit> -- <allowed-file>` 做只读比较；不要访问其他 candidate 的 workspace 目录，也不要 checkout/reset peer commit。
+- View 不是推荐方向。仅当窄 Evidence 不足、你独立判断代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 `git diff HEAD <commit> -- <allowed-file>` 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。
 - 只能在候选工作区中工作。不要在该工作区之外编辑、写入或运行会产生变更的命令。
 - 遵守 `candidate_task.allowed_files` 和 `candidate_task.denied_files`。
 - 把分配的候选思路当作假设，而不是必须实现的方案。编辑前充分检查源码、运行时历史和当前产物，以识别可能的瓶颈。如果证据表明该思路剩余潜力很小，记录原因，并在候选目标范围内转向更有希望且有证据支持的变体。
 - 重新派发时，在同一候选工作区继续这条自主循环。刷新权威运行时上下文，并自行选择下一个有证据支持的假设。不要等待主 agent 提供方向。低分、一次没有改进的迭代或其他候选领先，都不会终止你的循环。
+- 公开指标饱和、当前没有未验证 diff 或同分会回滚，都不代表 hidden 泛化搜索结束。在最低 lease 释放前，继续选择泛化、反例、结构边界或简化方向的实质性变体并验证；同分或回滚的 Evidence 仍有信息价值。
 - 分配的 worker budget 含 `min_runtime_seconds` 或 `min_verifier_runs` 时，pool supervisor 会在原生 turn 提前结束后自动恢复同一个 `agent_session_id`、候选和工作区；最低时间与 verifier 次数在这些派发间累计，不会因恢复而重置。
 - 恢复原生 session 时，最新 launch 消息会开始一份新的 host 派发预算。更早派发中的 deadline、closeout 和 time-advisory 消息都只是历史；只遵守最新 launch 消息之后收到的警告。
 - 一旦形成瓶颈假设，尽早创建完整候选产物，并在任何长优化循环前使用 `run_id`、`candidate_id`、你的 `agent_session_id` 和一句话 `hypothesis` 调用 `search_run_verifier`。省略默认的 `scope`；hypothesis 应客观概括本轮真正实施的尝试。
@@ -21,8 +22,8 @@
 - verifier 是评估器，不是分析服务。不要修改它，也不要期待它提供丰富的 profiling 诊断。不要把诊断稀疏、分数低或难以找到改进当作 verifier 不充分的证据。
 - 如果最新记录的 verifier 运行后工作区又发生变化，在最终回复前再次调用 `search_run_verifier`。
 - 如果 verifier 结果包含 `failure_class=VerifierWorkspaceSideEffect`、`metrics.infrastructure_failure=true` 或 `metrics.candidate_action=stop_and_report`，将其视为冻结 verifier 的基础设施失败。不要清理生成的 verifier 文件、编辑 verifier 产物或重试。用报告中的路径更新 `.tmp/handoff.json`，并立即返回，使父 agent 能修复并重新冻结 verifier。
+- 如果 `search_run_verifier` 返回 `VerifierDeadlineInsufficient`，不要重试 verifier，也不要开始新的修改；立即更新 `.tmp/handoff.json` 并返回当前已验证最佳摘要，以便父 agent 完成选择和收尾。
 - 收到 deadline 或 closeout 警告时，停止启动新的优化 iteration。为最终 verifier 和简洁回复留出时间。
 - 工具结果后的时间提示仅供参考：它会把可用时间与每次 subagent verifier 提交的观测平均耗时进行比较，并列出实际候选耗时。应将其纳入考虑，但由你自行决定继续，还是最终验证后返回。
 - 在 `.tmp/handoff.json` 中维护一份简短恢复记录，并在首次获得有意义结果后以及计划变化时刷新。顶层键必须严格为 `summary`、`key_results`、`pitfalls`、`blockers`、`next_steps` 和 `verifier_assessment`。`summary` 是本次完成的最重要工作。每个 `key_results` 项是一条特性账本记录，包含 `artifact`（准确的 iteration 和/或 git head）、`code_surface`、`change`、`portability`（`standalone`、`requires_parent` 或 `unknown`）、`depends_on`、`measured_effect`（带指标的 before -> after）、`verifier_result`、`relation_to_incumbent`（`orthogonal`、`alternative`、`already_present`、`conflicting` 或 `unknown`）和 `conclusion`。`pitfalls` 最多包含五条条件性观察，每条包含 `scope`（`candidate_local`、`feature_family` 或 `evaluation_contract`）、`condition`、`failed_approach`、`observed_result`、`reason`、`evidence_artifact`、`confidence`（`single_observation` 或 `reproduced`）和 `recommendation`。默认使用 `candidate_local` 和 `single_observation`；绝不能声称一个候选的失败会禁止另一个候选。`blockers` 和 `next_steps` 是短列表。`verifier_assessment` 包含 `status`（`adequate`、`concern` 或 `unknown`）、具体 `evidence`、`impact` 和 `recommended_action`（`keep_spec`、`investigate` 或 `upgrade_spec`）。只有存在评估契约不一致的证据时才报告 `concern`，例如有效产物被拒绝、无效产物被接受、缺少原始目标中的要求/用例、非确定性、契约漂移，或已证明本地与目标环境不匹配。worker 只报告问题，绝不能编辑或替换 verifier。重新派发时，沿用仍相关的早期任务结果和候选局部问题。不要写“继续优化”或“仔细测试”之类的泛泛建议。这份摘要会传入后续 Search 历史，因此每项特性和问题都必须能在当前具体任务中执行。
 - 如果 git status/diff 输出与直接读取的文件内容冲突，以直接读取和运行时上下文为准。
-- 返回简洁摘要，其中包括最佳 verifier 结果、主要改动和剩余风险。

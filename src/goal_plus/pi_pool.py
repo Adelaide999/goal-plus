@@ -26,10 +26,22 @@ PoolCloseMode = Literal["drain", "interrupt"]
 ACTIVE_JOB_STATES = {"starting", "running"}
 TERMINAL_JOB_STATES = {"completed", "failed", "interrupted", "timed_out"}
 POOL_SCHEMA_VERSION = 1
+NO_PROGRESS_BACKOFF_BASE_SECONDS = 5.0
+NO_PROGRESS_BACKOFF_MAX_SECONDS = 60.0
 
 
 class _PoolWorkerInterrupted(BaseException):
     """Unwind the wrapper so the Pi RPC runner can clean up its child process."""
+
+
+def _no_progress_backoff_seconds(consecutive_dispatches: int) -> float:
+    if consecutive_dispatches <= 0:
+        return 0.0
+    exponent = min(4, consecutive_dispatches - 1)
+    return min(
+        NO_PROGRESS_BACKOFF_MAX_SECONDS,
+        NO_PROGRESS_BACKOFF_BASE_SECONDS * (2**exponent),
+    )
 
 
 def _pool_root(root_dir: Path | str) -> Path:
@@ -171,13 +183,56 @@ def _lease_max_runtime_seconds(
     runtime = FileSearchRuntime(root_dir)
     run = runtime._load_run(run_id)
     frozen = runtime._load_frozen_spec(run.frozen_spec_id)
-    config = frozen.spec.strategy.config
-    reserve = float(
+    reserve = _closeout_reserve_seconds(frozen.spec.strategy.config)
+    return min(configured, max(0.0, outer_deadline - time.time() - reserve))
+
+
+def _closeout_reserve_seconds(config: dict[str, Any]) -> float:
+    return float(
         config.get("closeout_reserve_seconds")
         or config.get("reserve_closeout_seconds")
         or 0
     )
-    return min(configured, max(0.0, outer_deadline - time.time() - reserve))
+
+
+def _assert_active_pool_close_allowed(
+    root_dir: Path | str,
+    pool: dict[str, Any],
+    jobs: list[dict[str, Any]],
+) -> None:
+    active_count = sum(job["status"] in ACTIVE_JOB_STATES for job in jobs)
+    if active_count == 0:
+        return
+    outer_deadline = FileSearchRuntime._outer_deadline_epoch(
+        os.environ.get("GOAL_PLUS_OUTER_DEADLINE_AT")
+    )
+    if outer_deadline is None:
+        return
+    runtime = FileSearchRuntime(root_dir)
+    run = runtime._load_run(str(pool["run_id"]))
+    if run.invalidated_at:
+        return
+    frozen = runtime._load_frozen_spec(run.frozen_spec_id)
+    reserve = _closeout_reserve_seconds(frozen.spec.strategy.config)
+    remaining = outer_deadline - time.time()
+    if remaining > reserve:
+        raise RuntimeError(
+            f"cannot close Pi pool {pool['pool_id']} with {active_count} active job(s) "
+            f"outside the closeout reserve ({remaining:.0f}s remaining, "
+            f"{reserve:.0f}s reserved); effective leases are owned by the pool "
+            "supervisor, so continue pi_search_pool_wait_any"
+        )
+
+
+def _lease_min_runtime_seconds(
+    worker_budget: dict[str, Any],
+    max_runtime_seconds: float,
+) -> int:
+    configured = int(worker_budget.get("min_runtime_seconds") or 0)
+    if not configured:
+        return 0
+    closeout = min(45, max(5, int(max_runtime_seconds) // 5))
+    return min(configured, max(0, math.floor(max_runtime_seconds) - closeout))
 
 
 def _lease_verifier_runs(result: dict[str, Any]) -> int:
@@ -333,6 +388,7 @@ def open_pi_search_pool(
                 pool_id=pool_id,
                 mode="interrupt",
                 timeout_seconds=5,
+                _allow_early_close=True,
             )
         except Exception:
             pass
@@ -700,6 +756,7 @@ def close_pi_search_pool(
     pool_id: str,
     mode: PoolCloseMode = "drain",
     timeout_seconds: float = 30,
+    _allow_early_close: bool = False,
 ) -> dict[str, Any]:
     if mode not in {"drain", "interrupt"}:
         raise ValueError("mode must be 'drain' or 'interrupt'")
@@ -710,9 +767,11 @@ def close_pi_search_pool(
         if pool["state"] == "closed":
             jobs = _reconcile_jobs_locked(root_dir, pool)
             return _snapshot_payload(root_dir, pool, jobs)
+        jobs = _reconcile_jobs_locked(root_dir, pool)
+        if not _allow_early_close:
+            _assert_active_pool_close_allowed(root_dir, pool, jobs)
         pool["state"] = "draining" if mode == "drain" else "interrupting"
         _write_pool(root_dir, pool)
-        jobs = _reconcile_jobs_locked(root_dir, pool)
         if mode == "interrupt":
             for job in jobs:
                 if job["status"] in ACTIVE_JOB_STATES and job.get("pid"):
@@ -766,21 +825,26 @@ def run_pool_worker(
     try:
         try:
             worker_budget = dict(request["worker_budget"])
-            min_runtime_seconds = int(
+            configured_min_runtime_seconds = int(
                 worker_budget.get("min_runtime_seconds") or 0
-            )
-            min_verifier_runs = int(
-                worker_budget.get("min_verifier_runs")
-                or (1 if min_runtime_seconds else 0)
             )
             max_runtime_seconds = _lease_max_runtime_seconds(
                 root_dir,
                 str(request["run_id"]),
                 worker_budget,
             )
+            min_runtime_seconds = _lease_min_runtime_seconds(
+                worker_budget,
+                max_runtime_seconds,
+            )
+            min_verifier_runs = int(
+                worker_budget.get("min_verifier_runs")
+                or (1 if min_runtime_seconds else 0)
+            )
             lease_started = time.monotonic()
             verifier_runs = 0
             dispatch_count = 0
+            no_progress_dispatches = 0
             agent_session_id = request.get("resume_agent_session_id")
             verifier_run_baseline = 0
             if agent_session_id is not None:
@@ -823,6 +887,7 @@ def run_pool_worker(
                     "resume_agent_session_id": agent_session_id,
                     "worker_budget": dispatch_budget,
                 }
+                previous_verifier_runs = verifier_runs
                 result = run_pi_search_candidate(**dispatch_request)
                 dispatch_count += 1
                 if result.get("ok") is False:
@@ -862,6 +927,10 @@ def run_pool_worker(
                         _lease_verifier_runs(result) - verifier_run_baseline,
                     ),
                 )
+                if verifier_runs > previous_verifier_runs:
+                    no_progress_dispatches = 0
+                else:
+                    no_progress_dispatches += 1
                 elapsed = max(0.0, time.monotonic() - lease_started)
                 runtime_complete = elapsed >= min_runtime_seconds
                 verifier_complete = verifier_runs >= min_verifier_runs
@@ -879,6 +948,22 @@ def run_pool_worker(
                 if not _pool_is_open(root_dir, pool_id):
                     release_reason = "pool_closing"
                     break
+                backoff_seconds = min(
+                    _no_progress_backoff_seconds(no_progress_dispatches),
+                    max(0.0, max_runtime_seconds - elapsed),
+                )
+                if backoff_seconds:
+                    time.sleep(backoff_seconds)
+                    elapsed = max(0.0, time.monotonic() - lease_started)
+                    runtime_complete = elapsed >= min_runtime_seconds
+                    verifier_complete = verifier_runs >= min_verifier_runs
+                    lease_satisfied = runtime_complete and verifier_complete
+                    if elapsed >= max_runtime_seconds:
+                        release_reason = "max_runtime_reached"
+                        break
+                    if lease_satisfied:
+                        release_reason = "minimum_satisfied"
+                        break
 
             result = {
                 **result,
@@ -887,6 +972,9 @@ def run_pool_worker(
                     "release_reason": release_reason,
                     "elapsed_seconds": elapsed,
                     "min_runtime_seconds": min_runtime_seconds,
+                    "configured_min_runtime_seconds": (
+                        configured_min_runtime_seconds
+                    ),
                     "max_runtime_seconds": max_runtime_seconds,
                     "verifier_runs": verifier_runs,
                     "min_verifier_runs": min_verifier_runs,

@@ -344,3 +344,34 @@ def test_evidence_diff_spans_all_manual_commits_in_attempt(tmp_path: Path) -> No
     assert "-VALUE = 1" in context["actual_diff"]
     assert "+VALUE = 3" in context["actual_diff"]
     assert "+VALUE = 2" not in context["actual_diff"]
+
+
+def test_evidence_diff_omits_binary_payload(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data["workspace"] = {"backend": "git_worktree"}
+    spec_data["edit_surface"]["allow"].append("checkpoint.bin")
+    runtime = FileSearchRuntime(tmp_path / ".gp")
+    frozen = runtime.freeze_spec(
+        SearchSpec.model_validate(spec_data),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    plan = runtime.plan_next(run_id, requested_k=1)
+    task = runtime.start_batch(run_id, plan.plan_id)[0]
+    session = runtime.start_agent_session(run_id, task.candidate_id)
+
+    (task.workspace / "initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (task.workspace / "checkpoint.bin").write_bytes(b"\0" + b"x" * 200_000)
+    runtime.run_verifier(
+        run_id,
+        task.candidate_id,
+        agent_session_id=session.agent_session_id,
+        hypothesis="Add a trained checkpoint",
+    )
+
+    context = runtime._evidence_annotation_context(run_id, task.candidate_id, 1)
+    assert "checkpoint.bin" in context["actual_diff"]
+    assert "Binary files" in context["actual_diff"]
+    assert "GIT binary patch" not in context["actual_diff"]
+    assert len(context["actual_diff"].encode("utf-8")) < 20_000

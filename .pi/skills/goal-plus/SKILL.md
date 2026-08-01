@@ -16,8 +16,9 @@ description: 当 Pi 收到可能需要 Goal Mode、Spec Discovery Mode、有界 
 目标记录存在之前，不要 triage、Search 或编辑。除了加载 goal-plus skill 之外，
 在 `goal_plus_record_triage` 前不要读取或审计目标文件。
 
-`/goal-plus mode=autonomous <目标>` 选择充足的初始探索时间（支持耗时 lease 时约为
-15 分钟）和可续期的同候选 continuation，最长可能约一小时。
+`/goal-plus mode=autonomous <目标>` 使用冻结 SearchSpec 的 worker budget、host 强制执行的
+lease、外层剩余时间和收尾预留来确定探索时间，并使用可续期的同候选 continuation；
+不另行规定固定的分钟或小时上限。
 `/goal-plus mode=probe <目标>` 选择短期可行性、潜力和阻塞因素探查。省略 mode 时默认
 使用 `autonomous`；未指定 mode 的编辑保留当前选择。运行时只把它存为 `raw_goal`
 的规范末行，不把它作为 phase、Search strategy 或运行时字段。
@@ -86,6 +87,10 @@ ranking verifier 必须输出一个最终 JSON 对象，其中包含有限数值
 必须通过 Pi RPC driver 运行一组固定的初始自主候选循环。不能省略这些字段；旧运行时默认值
 不能表达该 policy。
 
+新 SearchSpec 还必须显式设置 `workspace.backend="git_worktree"`，使候选共享 Git object
+database，并能解析 Global Evidence 中的 peer commit。只有用户明确要求兼容隔离时才能设置
+`workspace.backend="copy"`。
+
 Pi 支持的 strategy name 仅限以下可移植内置子集：
 
 - `agent_guided`、`agent` 或 `default`
@@ -106,10 +111,11 @@ candidate/subagent 数。`budget.max_candidates` 已弃用，不得写入新 spe
 1. 为主 agent 最终验证、选择、报告和提升预留时间。
 2. 选择 host 能支持的 `max_parallel`。没有更好的资源信号时，建议使用 4。
 3. 为每条初始循环提供足够的不间断时间，以创建真实产物和 verifier 证据。
-4. 根据外层剩余时间和最终收尾预留推导每份 continuation 预算，绝不能根据主 agent
+4. 冻结 spec 时根据外层预算和最终收尾预留设置 worker 预算，绝不能根据主 agent
    是否喜欢该候选来决定。
-5. 没有全局停止事实时继续恢复。全局停止事实包括：显式成功标准、用户停止、run 失效，
-   或剩余时间不足以容纳另一个 worker 轮次和收尾。
+5. 没有全局停止事实时继续恢复。Pi pool 的有效最低 lease 和 closeout 边界只由
+   supervisor 判定；主 agent 不得使用 spec 中配置的 `min_runtime_seconds` 再次推算
+   提前关闭时间。
 
 subagent 负责其候选工作区内的瓶颈分析、假设选择、特性迁移、结构重启和 rebase 决策。
 主 agent 绝不发送偏好的技术方向。低分、一次没有改进的迭代或其他候选领先，
@@ -132,11 +138,14 @@ subagent 负责其候选工作区内的瓶颈分析、假设选择、特性迁�
    `{"c001": {"min_runtime_seconds": 500, "min_verifier_runs": 1, "max_runtime_seconds": 600, "on_exceed": "interrupt"}}`，不能直接传一份
    WorkerBudget。它启动 detached 受管 worker，并立即返回持久化 `pool_id`。
 6. 调用 `pi_search_pool_wait_any(pool_id, timeout_seconds=...)`。处理每个返回事件。
+   如果顶层结果是 `timed_out=true`、`events=[]` 且 `active_count>0`，这只是本次轮询超时；
+   继续调用 `pi_search_pool_wait_any`，不能调用 `pi_search_pool_close`、选择或提升。
    `candidate_ready` 表示 driver 已启动并绑定 agent session，最低累计 lease 已释放，且当前产物
    有 durable process Evidence；仅有一次原始进程退出不代表成功。原生 turn 在最低时间或最低
    verifier 次数前结束时，supervisor 会占用同一个 slot，自动恢复同一个 session 和 worktree。
    最低 lease 到硬上限仍未满足时返回 `timed_out`；pool 关闭返回 `interrupted`，执行失败返回
-   `failed`。这些事件都不是 candidate ready，必须按未完成处理。
+   `failed`。这些事件都不是 candidate ready，必须按未完成处理。只要返回的
+   `active_count>0`，就继续等待 supervisor 的准确状态，不自行推算 lease 剩余时间。
 7. 对每个 `candidate_ready`，从 `search_list_history` 或
    `goal_plus_monitor_snapshot` 读取之前和当前的最佳结果。pool 的 `final_verify=true`
    路径会复用匹配当前产物的 durable Evidence；仅在没有匹配 Evidence 时补一次父级 process
@@ -171,8 +180,10 @@ subagent 负责其候选工作区内的瓶颈分析、假设选择、特性迁�
    改变 continuation。
    主 Pi 轮次中断后，使用 `pi_search_pool_snapshot(run_id=...)` 重新发现 pool；
    后续准确 snapshot 使用 `pool_id`。
-9. 选择前调用 `pi_search_pool_close(mode="drain")`；需要停止剩余工作时使用
-   `mode="interrupt"`。然后按提升要求调用 `search_select` 和 `search_promote`。
+9. 正常选择前等待准确 snapshot 的 `active_count=0`，再调用
+   `pi_search_pool_close(mode="drain")`。只有 run 已按第 7 步失效时，主 agent 才对仍有
+   active job 的 pool 使用 `mode="interrupt"`。运行时会拒绝在真实 closeout reserve 之外
+   提前关闭 active pool。pool 关闭后再按提升要求调用 `search_select` 和 `search_promote`。
    `search_select` 对 verifier 记录的 iteration 排名并 checkout 最佳已提交候选的
    `git_head`。准确 worker Evidence 已经覆盖该产物时直接用于选择；没有这种证据的旧记录才
    使用父级 process verifier。配置的 promotion verifier 仍是选中 revision 的最终 gate。

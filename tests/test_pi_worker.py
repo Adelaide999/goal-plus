@@ -167,6 +167,129 @@ def test_rpc_client_surfaces_terminal_agent_error_after_retries_end(
     assert client.terminal_error() == "Request timed out."
 
 
+def test_rpc_client_clears_terminal_error_after_successful_recovery(
+    tmp_path: Path,
+) -> None:
+    client = pi_worker._RpcClient(  # type: ignore[arg-type]
+        proc=object(),
+        event_log=tmp_path / "events.jsonl",
+        text_log=None,
+    )
+    client._track_terminal_error(
+        {
+            "type": "agent_end",
+            "willRetry": False,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "Context window exceeded.",
+                }
+            ],
+        }
+    )
+    client._track_terminal_error(
+        {
+            "type": "agent_end",
+            "willRetry": False,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "stopReason": "stop",
+                    "content": [{"type": "text", "text": "recovered"}],
+                }
+            ],
+        }
+    )
+
+    assert client.terminal_error() is None
+
+
+def test_run_pi_rpc_worker_retries_flagged_prompt_once(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    extension = tmp_path / "goal-plus.ts"
+    extension.write_text("// fake extension\n", encoding="utf-8")
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    prompts: list[str] = []
+
+    class FakeProc:
+        returncode = None
+
+    class FakeRpcClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            self.error: str | None = (
+                "Invalid prompt: your prompt was flagged as potentially violating "
+                "our usage policy."
+            )
+
+        def start(self) -> None:
+            return None
+
+        def auto_retry_pending(self) -> bool:
+            return False
+
+        def terminal_error(self) -> str | None:
+            return self.error
+
+        def command(self, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+            command_type = str(payload["type"])
+            if command_type == "get_entries":
+                return {"data": {"entries": [], "leafId": None}}
+            if command_type == "prompt":
+                prompts.append(str(payload["message"]))
+                if len(prompts) == 2:
+                    self.error = None
+                return {"data": {}}
+            if command_type == "get_state":
+                return {
+                    "data": {
+                        "isStreaming": False,
+                        "isCompacting": False,
+                        "pendingMessageCount": 0,
+                    }
+                }
+            if command_type == "get_last_assistant_text":
+                return {"data": {"text": "continued after policy retry"}}
+            if command_type == "get_session_stats":
+                return {"data": {}}
+            raise AssertionError(f"unexpected command {command_type}")
+
+    def fake_popen(*_args: Any, **_kwargs: Any) -> FakeProc:
+        return FakeProc()
+
+    def fake_kill_process_group(proc: FakeProc) -> None:
+        proc.returncode = 0
+
+    def fail_sleep(seconds: float) -> None:
+        raise AssertionError(f"unexpected RPC poll sleep {seconds}; prompts={prompts!r}")
+
+    monkeypatch.setattr(pi_worker.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(pi_worker, "_RpcClient", FakeRpcClient)
+    monkeypatch.setattr(pi_worker, "_kill_process_group", fake_kill_process_group)
+    monkeypatch.setattr(pi_worker.time, "sleep", fail_sleep)
+
+    handle = pi_worker.run_pi_rpc_worker(
+        {
+            "agent_session_id": "agent_policy_retry",
+            "session_id": "agent_policy_retry",
+            "root": str(tmp_path / ".search"),
+            "cwd": str(cwd),
+            "prompt": "do work",
+            "budget_control": {"max_runtime_seconds": 120},
+        },
+        extension_path=extension,
+    )
+
+    assert prompts == [
+        "do work",
+        "继续当前任务：先刷新 Goal Plus 运行时上下文，再选择并验证一个实质性新方向。",
+    ]
+    assert handle["metadata"]["assistant_text"] == "continued after policy retry"
+
+
 def test_run_pi_rpc_worker_returns_run_delta_metrics(
     monkeypatch,
     tmp_path: Path,
