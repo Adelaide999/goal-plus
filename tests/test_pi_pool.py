@@ -34,6 +34,31 @@ def _planned_candidates(
     return [task.candidate_id for task in runtime.start_batch(run_id, plan.plan_id)]
 
 
+def _open_active_pool_with_closeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[FileSearchRuntime, str, str]:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    spec_data = _pi_rpc_spec_with_budget(
+        project, max_candidates=1, max_parallel=1
+    ).model_dump(mode="json")
+    spec_data["strategy"]["config"] = {"closeout_reserve_seconds": 30}
+    frozen = runtime.freeze_spec(
+        SearchSpec.model_validate(spec_data),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    candidate_id = _planned_candidates(runtime, run_id, 1)[0]
+    monkeypatch.setattr(pi_pool, "_launch_pool_job", lambda **_kwargs: os.getpid())
+    opened = open_pi_search_pool(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_ids=[candidate_id],
+    )
+    return runtime, run_id, opened["pool_id"]
+
+
 def test_pi_pool_wait_any_reports_free_slot_without_refilling(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -137,6 +162,62 @@ def test_pi_pool_wait_any_reports_free_slot_without_refilling(
     assert closed["active_count"] == 0
     for thread in threads:
         thread.join(timeout=1)
+
+
+def test_pi_pool_rejects_early_close_while_outer_lease_is_active(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, _run_id, pool_id = _open_active_pool_with_closeout(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setenv("GOAL_PLUS_OUTER_DEADLINE_AT", "1100")
+    monkeypatch.setattr(pi_pool.time, "time", lambda: 1000.0)
+
+    with pytest.raises(RuntimeError, match="outside the closeout reserve"):
+        close_pi_search_pool(
+            root_dir=runtime.root_dir,
+            pool_id=pool_id,
+            mode="drain",
+            timeout_seconds=0,
+        )
+
+    snapshot = snapshot_pi_search_pool(root_dir=runtime.root_dir, pool_id=pool_id)
+    assert snapshot["state"] == "open"
+    assert snapshot["active_count"] == 1
+
+
+@pytest.mark.parametrize("invalidate_run", [False, True])
+def test_pi_pool_allows_active_close_in_reserve_or_after_invalidation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalidate_run: bool,
+) -> None:
+    runtime, run_id, pool_id = _open_active_pool_with_closeout(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setenv(
+        "GOAL_PLUS_OUTER_DEADLINE_AT", "1100" if invalidate_run else "1020"
+    )
+    monkeypatch.setattr(pi_pool.time, "time", lambda: 1000.0)
+    if invalidate_run:
+        runtime.invalidate_run(
+            run_id,
+            reason="verifier_infrastructure_failure",
+            summary="confirmed infrastructure failure",
+            evidence=[{"failure_class": "VerifierInfrastructureFailure"}],
+        )
+
+    closed = close_pi_search_pool(
+        root_dir=runtime.root_dir,
+        pool_id=pool_id,
+        mode="drain",
+        timeout_seconds=0,
+    )
+
+    assert closed["state"] == "draining"
+    assert closed["active_count"] == 1
+    assert closed["close_timed_out"] is True
 
 
 def test_pi_pool_enforces_frozen_parallel_limit(tmp_path: Path) -> None:
@@ -351,6 +432,83 @@ def test_pi_pool_worker_continues_same_session_until_cumulative_lease(
     assert result["lease"]["satisfied"] is True
     assert result["lease"]["dispatch_count"] == 3
     assert result["lease"]["elapsed_seconds"] == 12
+
+
+def test_pi_pool_worker_backs_off_after_dispatch_without_new_verifier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    frozen = runtime.freeze_spec(
+        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    candidate_id = _planned_candidates(runtime, run_id, 1)[0]
+    monkeypatch.setattr(pi_pool, "_launch_pool_job", lambda **_kwargs: os.getpid())
+    opened = open_pi_search_pool(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_ids=[candidate_id],
+        worker_budgets={
+            candidate_id: {
+                "min_runtime_seconds": 12,
+                "min_verifier_runs": 1,
+                "max_runtime_seconds": 30,
+                "on_exceed": "interrupt",
+            }
+        },
+    )
+    now = [0.0]
+    calls = 0
+    sleeps: list[float] = []
+
+    def fake_driver(**_request: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        now[0] += 1
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "agent_session_id": "agent_same",
+            "bound_session": {
+                "counters": {"verifier_runs": 1 if calls >= 3 else 0}
+            },
+            "steps": [],
+            "final_score_report": {
+                "aggregate_score": 1.0,
+                "process_passed": True,
+            },
+        }
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(pi_pool.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(pi_pool.time, "sleep", fake_sleep)
+    monkeypatch.setattr(pi_pool, "run_pi_search_candidate", fake_driver)
+
+    assert run_pool_worker(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        job_id=opened["submitted"][0]["job_id"],
+    ) == 0
+
+    assert calls == 3
+    assert sleeps == [5.0, 10.0]
+    result = load_json(
+        pi_pool._job_dir(
+            runtime.root_dir,
+            opened["pool_id"],
+            opened["submitted"][0]["job_id"],
+        )
+        / "result.json"
+    )
+    assert result["lease"]["dispatch_count"] == 3
+    assert result["lease"]["satisfied"] is True
 
 
 def test_pi_pool_continuation_counts_only_new_job_verifier_runs(
@@ -674,3 +832,12 @@ def test_pi_pool_lease_reserves_outer_closeout(
     )
 
     assert effective == 100
+
+
+def test_pi_pool_minimum_lease_fits_effective_outer_budget() -> None:
+    effective = pi_pool._lease_min_runtime_seconds(
+        {"min_runtime_seconds": 6900},
+        5003,
+    )
+
+    assert effective == 4958

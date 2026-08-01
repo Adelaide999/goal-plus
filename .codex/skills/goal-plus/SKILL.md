@@ -42,7 +42,9 @@ Codex 可能显示带客户端特定前缀的 MCP 工具；按最后的逻辑工
    `expected_outputs` 只列出产物路径或 glob，不解析 stdout。要求 verifier 保持候选
    工作区只读，并使用唯一的 `GOAL_PLUS_VERIFIER_TMPDIR`/`TMPDIR`（或 Python
    `tempfile`）存放编译器和临时输出；并行 Search 下固定 `/tmp` 路径不安全。
-   冻结操作会在消耗候选预算前拒绝工作区副作用。使用
+   冻结操作会在消耗候选预算前拒绝工作区副作用。新 SearchSpec 必须显式设置
+   `workspace.backend="git_worktree"`，以便候选共享 Git object database 并解析彼此的
+   Evidence commit；只有用户明确要求兼容隔离时才能设置 `copy`。使用
    `goal_plus_save_spec_draft` 保存完整契约。
    对于用语义、大致 shape/dtype 和参考提示描述的 AscendC Direct Invoke 算子目标，
    记录 `scenario="ascendc_direct_invoke"`，并完整读取

@@ -867,6 +867,8 @@ def test_worker_policy_documents_host_launch_contract(tmp_path: Path) -> None:
     combined_instructions = "\n".join(tasks[0].instructions)
     assert "尽早完成并验证候选" in combined_instructions
     assert "留出足够时间返回简洁摘要" in combined_instructions
+    assert "当前 Git 能解析该 commit" in combined_instructions
+    assert "不要访问或 fetch peer workspace" in combined_instructions
     assert "When steps run out the host will ask you" not in combined_instructions
 
 
@@ -2609,6 +2611,38 @@ def test_run_verifier_records_failure_class_on_timeout(
     it = record.iterations[-1]
     assert it.failure_class == "Timeout"
     assert it.score == 0.0
+
+
+def test_process_verifier_requires_time_for_suite_and_closeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    spec = spec_with_strategy(
+        project,
+        {
+            "name": "random",
+            "config": {"reserve_closeout_seconds": 20},
+        },
+        max_candidates=1,
+    )
+    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    plan = runtime.plan_next(run_id, requested_k=1)
+    candidate = runtime.start_batch(run_id, plan.plan_id)[0]
+    session = runtime.start_agent_session(run_id, candidate.candidate_id)
+    monkeypatch.setenv("GOAL_PLUS_OUTER_DEADLINE_AT", str(time.time() + 40))
+
+    with pytest.raises(RuntimeError, match="VerifierDeadlineInsufficient"):
+        runtime.run_verifier(
+            run_id,
+            candidate.candidate_id,
+            agent_session_id=session.agent_session_id,
+            hypothesis="Do not start a verifier that can consume closeout",
+        )
+
+    assert runtime.list_iterations(run_id, candidate.candidate_id) == []
+    assert runtime._load_run(run_id).state == RunState.WAITING_FOR_WORKERS
 
 
 def test_list_iterations_empty_for_fresh_candidate(tmp_path: Path) -> None:

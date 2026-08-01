@@ -80,7 +80,8 @@ strategy:
 1. 为 Goal Plus spec draft 调用 `search_freeze_spec`；如果已有合适的冻结 spec，
    则调用 `search_create`。新 spec 必须设置
    `strategy.orchestration_mode="parallel_loops"`、`worker_host="codex"` 和唯一的
-   `budget.max_parallel`，不得设置 `budget.max_candidates`。
+   `budget.max_parallel`，不得设置 `budget.max_candidates`；同时必须显式设置
+   `workspace.backend="git_worktree"`。只有用户明确要求兼容隔离时才能设置 `copy`。
 2. 调用且只调用一次 `search_plan_next(requested_k=budget.max_parallel)`，然后调用且只调用
    一次 `search_start_batch`，创建初始候选。
 3. 对每个候选调用且只调用一次 `search_start_agent_session`，直接解析同一次响应中的

@@ -8,8 +8,10 @@
 $ARGUMENTS
 
 当此 Pi prompt 开启 Search Mode 时，SearchSpec strategy 必须设置
-`worker_host: "pi-rpc"` 和 `orchestration_mode: "parallel_loops"`，使 worker
+`worker_host: "pi-rpc"` 和 `orchestration_mode: "parallel_loops"`，SearchSpec 必须显式
+设置 `workspace.backend="git_worktree"`，使 worker
 通过持久化 Pi pool 以一组固定的初始自主候选循环运行。
+只有用户明确要求兼容隔离时才能设置 `workspace.backend="copy"`。
 
 冻结前，要求每个 `ranking_signal` 输出一个最终 JSON 对象，其中包含有限数值类型的
 `spec.metric_name`。命令可以内联，也可以调用现有工具。只在必要时创建自定义 verifier 文件，

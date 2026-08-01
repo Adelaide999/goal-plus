@@ -60,6 +60,9 @@ def test_create_goal_plus_record_writes_state_and_event(tmp_path) -> None:
     )
     assert "在现有工作区恢复每个已完成候选" in record.raw_goal
     assert "分数或排名不能导致替换" in record.raw_goal
+    assert "冻结的 worker budget" in record.raw_goal
+    assert "15 分钟" not in record.raw_goal
+    assert "1 小时" not in record.raw_goal
     assert record.status == "active"
     assert record.phase == "intake"
     assert not hasattr(record, "mode_hint")

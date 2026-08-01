@@ -392,6 +392,10 @@ class PiRpcAdapter:
                 "\n\n这条 launch 消息开始一次新的 host 派发。原生会话中更早的 deadline、"
                 "closeout 或 time-advisory 消息属于上一次派发，已不再生效。"
                 "只遵守本次 launch 之后收到的警告。"
+                "在收到本次 closeout 或 deadline 警告前，不要仅因公开指标达到上限、"
+                "当前没有未验证改动或同分会被回滚而结束本次派发。刷新运行时证据后，"
+                "至少完成一个实质性的泛化、反例、结构边界或简化 probe 并用 verifier "
+                "验证；同分或回滚的 Evidence 仍有信息价值。"
             )
         return f"{header}\n\nLaunch 标签：{labels}"
 
