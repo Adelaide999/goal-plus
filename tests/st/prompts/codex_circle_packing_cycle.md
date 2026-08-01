@@ -9,7 +9,7 @@ exact changes before freezing it:
 
 - Set `source_path` to the absolute path
   `{{PROJECT_ROOT}}/tests/st/fixtures/circle_packing`.
-- Set `budget` to `{"max_parallel": 2}`; do not set deprecated `max_candidates`.
+- Set `budget` to `{"max_parallel": 2}`.
 - Set `strategy.name="random"`.
 - Set `strategy.worker_host="codex"`.
 - Set `strategy.worker_agent_type="search_candidate_agent"`.

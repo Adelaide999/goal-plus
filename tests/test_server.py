@@ -43,6 +43,7 @@ def test_create_mcp_registers_search_runtime_tools(tmp_path: Path) -> None:
         "goal_plus_status",
         "goal_plus_update_goal",
         "goal_plus_monitor_snapshot",
+        "goal_plus_list_models",
         "goal_plus_record_triage",
         "goal_plus_save_spec_draft",
         "goal_plus_link_search_run",
@@ -62,6 +63,8 @@ def test_invalidate_run_and_successor_expose_contract_fields(tmp_path: Path) -> 
     invalidation = tools["search_invalidate_run"].parameters
 
     assert "source_run_id" in create_properties
+    assert set(create_properties) == {"frozen_spec_id", "source_run_id"}
+    assert "goal_plus_list_models" in tools
     assert set(invalidation["required"]) == {
         "run_id",
         "reason",
@@ -153,13 +156,10 @@ def test_freeze_spec_exposes_complete_nested_search_spec_schema(tmp_path: Path) 
     assert "evidence_annotator" in strategy["properties"]
 
     budget = spec_schema["properties"]["budget"]["properties"]
-    assert budget["max_candidates"]["deprecated"] is True
-    assert "已弃用的兼容字段" in budget["max_candidates"]["description"]
     assert "初始创建并实际并行工作" in budget["max_parallel"]["description"]
 
     freeze_description = " ".join(tools["search_freeze_spec"].description.split())
     assert "唯一决定初始候选 Agent 数" in freeze_description
-    assert "已弃用" in freeze_description
     assert "一次性源码副本" in freeze_description
     assert "GOAL_PLUS_VERIFIER_TMPDIR" in freeze_description
     assert "固定 `/tmp` 路径不安全" in freeze_description
@@ -207,8 +207,6 @@ def test_spec_draft_exposes_partial_nested_search_spec_schema(tmp_path: Path) ->
         for option in draft_budget_schema["anyOf"]
         if option.get("type") == "object"
     )["properties"]
-    assert draft_budget["max_candidates"]["deprecated"] is True
-    assert "已弃用的兼容字段" in draft_budget["max_candidates"]["description"]
     assert "初始创建并实际并行工作" in draft_budget["max_parallel"]["description"]
 
 

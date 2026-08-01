@@ -52,6 +52,7 @@ Search runtime 不是 worker supervisor。`AgentSessionRecord` 只记录上下�
 - `source_path` 与允许修改的文件范围；
 - process verifier 与 promotion verifier；
 - 初始并发宽度、工作区后端和 worker 执行策略；
+- 可选的用户模型选择 `strategy.models`；
 - verifier 所依赖的源码内 artifact。
 
 当前逻辑由 main agent 在 Spec Discovery 中读取任务说明、公开数据和评分工具，然后
@@ -81,10 +82,12 @@ worker，再冻结修正后的 spec，创建 successor run。旧分数不能跨�
 5. 只要全局停止条件未满足，宿主续跑同一个 candidate、原生 session 和工作区。
 6. 收尾时先让所有 live worker 静止，再选择精确 commit，执行 promotion gate 并生成报告。
 
-`budget.max_parallel` 是新 spec 的初始 candidate 和 live-worker 数量。
-`budget.max_candidates` 仅为旧输入兼容字段，新 spec 应省略。普通
+`budget.max_parallel` 是 spec 的初始 candidate 和 live-worker 数量。普通
 `parallel_loops` run 只做一次初始分配，不按分数创建替代 candidate，也没有后续
-规划轮次。
+规划轮次。用户提供 `strategy.models` 时，runtime 在冻结前通过 host adapter 验证
+名称，并在初始 plan 中生成与 lane 一一对应的 `selected_models`：未写数量时轮转，
+全部写数量时按数量展开。每个 selected model 随 candidate 和原生 session 的续跑保持
+不变，但所有 lane 仍共享同一份 Global Evidence。
 
 ## Candidate 循环
 

@@ -891,7 +891,7 @@ def test_pi_native_session_resume_renders_distinct_process_dispatches(
     project = make_project(tmp_path)
     root = tmp_path / ".search"
     search = FileSearchRuntime(root)
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["strategy"] = {
         "name": "random",
         "worker_host": "pi-rpc",
@@ -1136,7 +1136,7 @@ def test_report_candidate_final_score_uses_settled_best_after_failure(
     project = make_project(tmp_path)
     root = tmp_path / ".search"
     search = FileSearchRuntime(root)
-    frozen = search.freeze_spec(spec_for(project, max_candidates=1), [project / "evaluator.py"])
+    frozen = search.freeze_spec(spec_for(project, max_parallel=1), [project / "evaluator.py"])
     run_id = search.create_run(frozen.frozen_spec_id)
     plan = search.plan_next(run_id, requested_k=1)
     candidate = search.start_batch(run_id, plan.plan_id)[0]

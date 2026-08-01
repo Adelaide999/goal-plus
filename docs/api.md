@@ -13,6 +13,7 @@ index and ownership guide.
 | `goal_plus_update_goal` | replace the complete effective objective and start a revision |
 | `goal_plus_record_triage` | choose ordinary goal work or verifier/spec discovery |
 | `goal_plus_save_spec_draft` | persist the typed candidate Search spec |
+| `goal_plus_list_models` | list the selected Codex or Pi host's currently available models |
 | `goal_plus_link_search_run` | append a frozen Search run to the goal |
 | `goal_plus_record_search_result` | attach selected/promotion evidence and reserve canonical final report paths |
 | `goal_plus_prepare_final_check` | create a required independent-review request |
@@ -31,7 +32,7 @@ goal can retain multiple search tasks.
 | Tool | Purpose |
 |---|---|
 | `search_freeze_spec` | preflight and hash-pin a `SearchSpec` plus verifier artifacts |
-| `search_create` | create a `run_id`; optional `source_run_id` snapshots bounded predecessor research with non-reusable scores |
+| `search_create` | create a `run_id`; optional `source_run_id` snapshots bounded predecessor research |
 | `search_status` | read budget use, candidates, and current best |
 | `search_invalidate_run` | atomically fence a run after main-confirmed verifier inadequacy |
 | `search_list_history` | rank candidates and return current-run feature/verifier research rollups |
@@ -55,8 +56,6 @@ min(requested_k, remaining max_parallel)
 
 The standard flow passes `requested_k=budget.max_parallel` for that one planning
 call. `budget.max_parallel` is the single initial candidate/live-worker count.
-`budget.max_candidates` is deprecated; new specs omit it, while matching legacy
-input remains readable.
 
 `search_invalidate_run` requires a typed verifier reason, non-empty summary,
 and concrete evidence. It changes the run to `aborted` and blocks new planning,
@@ -69,6 +68,24 @@ When a successor is unavoidable, use:
 ```text
 search_create(new_frozen_spec_id, source_run_id=invalidated_or_exhausted_run)
 ```
+
+For a multi-model run, call `goal_plus_list_models(host=...)`, then define the
+user's choices once in frozen `strategy.models`. Entries without `count` are
+round-robin expanded to `budget.max_parallel`: `A,B` with four lanes becomes
+`A,B,A,B`. When every entry has an explicit count, the counts must sum to
+`max_parallel`: a user-level `A1B3` allocation (or `A*1,B*3` shorthand)
+becomes `A,B,B,B`. Mixed counted and uncounted
+entries are invalid. The runtime resolves every requested name against the
+host catalog before freezing and rejects missing or ambiguous names.
+
+The resulting ordered `selected_models` are runtime state, not a second user
+input. Each candidate and its agent session retain its selected model through
+continuation. All models read the same run-scoped
+`search_get_global_evidence` surface.
+Each verifier-backed iteration is projected there with its commit, score,
+disposition, and an asynchronously generated objective View when available.
+Model identity is provenance only and does not alter plan admission or
+iteration selection.
 
 The new run exposes `inherited_research` containing a predecessor frontier,
 feature ledger, and scoped pitfalls. It marks predecessor scores non-reusable.
@@ -212,7 +229,6 @@ goal-plus-pi-tool goal_plus_monitor_snapshot \
 | `ranking_signals` | metric-producing commands |
 | `promotion_verifiers` | checks required before promotion |
 | `budget.max_parallel` | single initial candidate/live-worker count |
-| `budget.max_candidates` | deprecated compatibility field; omit in new specs |
 | `strategy.worker_host` | maintained execution host: `pi-rpc` or `codex` |
 | `strategy.worker_budget` | host-enforced upper bound and optional minimum lease |
 | `workspace.backend` | `git_worktree` (default) or `copy` |

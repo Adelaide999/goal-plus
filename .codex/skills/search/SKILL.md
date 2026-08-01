@@ -65,9 +65,7 @@ strategy:
 
 1. 为最终 drain、选择、父级验证、报告和提升预留时间。
 2. 使用 `max_parallel` 选择初始自主循环数量。如果没有更好的资源信号，建议使用 4。
-3. 不要设置已经弃用的 `max_candidates`；初始 candidate/subagent 数唯一由
-   `max_parallel` 决定。
-4. 为每个初始 worker 提供足够的不间断运行时间，以创建真实产物和 verifier 证据。
+3. 为每个初始 worker 提供足够的不间断运行时间，以创建真实产物和 verifier 证据。
 5. 只能依据全局停止事实决定是否恢复：达到显式目标、用户停止、run 失效，或外层剩余时间
    不足以容纳另一个 worker 轮次和最终收尾。
 
@@ -80,8 +78,16 @@ strategy:
 1. 为 Goal Plus spec draft 调用 `search_freeze_spec`；如果已有合适的冻结 spec，
    则调用 `search_create`。新 spec 必须设置
    `strategy.orchestration_mode="parallel_loops"`、`worker_host="codex"` 和唯一的
-   `budget.max_parallel`，不得设置 `budget.max_candidates`；同时必须显式设置
-   `workspace.backend="git_worktree"`。只有用户明确要求兼容隔离时才能设置 `copy`。
+   `budget.max_parallel`；同时必须显式设置 `workspace.backend="git_worktree"`。
+   只有用户明确要求兼容隔离时才能设置 `copy`。
+   用户指定多模型时，先调用 `goal_plus_list_models(host="codex")` 并将唯一匹配冻结到
+   `strategy.models`。`models=A,B` 按 `max_parallel` 轮转；用户写
+   `models=A,B A1B3`（或 `models=A*1,B*3`）时使用显式数量，数量之和必须等于
+   `max_parallel`；`models=A,B 每个一个` 表示 `max_parallel=2`。运行时据此生成有序
+   `selected_models`，每个候选的 selected model 在原生 session 继续期间不可变；
+   所有模型仍读取同一个 run 的 `search_get_global_evidence`，模型身份只作为
+   candidate/session provenance，不改变候选准入或选择逻辑。`search_create` 不接收
+   第二套模型分配参数。用户没有指定 `models` 时保持 host 默认模型。
 2. 调用且只调用一次 `search_plan_next(requested_k=budget.max_parallel)`，然后调用且只调用
    一次 `search_start_batch`，创建初始候选。
 3. 对每个候选调用且只调用一次 `search_start_agent_session`，直接解析同一次响应中的

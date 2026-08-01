@@ -398,7 +398,6 @@ def test_pi_goal_plus_ascendc_cannbench_gelu_end_to_end(
     assert run.candidates_evaluated == 2
     assert run.selected_candidate_id == linked["selected_candidate_id"]
     assert frozen.spec.budget.max_parallel == 2
-    assert "max_candidates" not in frozen.spec.budget.model_dump(mode="json")
     assert frozen.spec.strategy.worker_host == "pi-rpc"
     assert frozen.spec.strategy.orchestration_mode == "parallel_loops"
     assert frozen.spec.promotion_verifiers

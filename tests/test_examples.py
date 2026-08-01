@@ -78,7 +78,6 @@ def test_parallel_loop_example_specs_are_valid(
 
     assert parsed.metric_name == metric_name
     assert parsed.budget.max_parallel == expected["max_parallel"]
-    assert "max_candidates" not in parsed.budget.model_dump(mode="json")
     assert parsed.root_hypotheses == []
     assert parsed.constraints["suggested_batch_size"] == 4
     assert parsed.strategy.orchestration_mode == "parallel_loops"

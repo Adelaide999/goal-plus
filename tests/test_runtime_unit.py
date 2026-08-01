@@ -338,7 +338,7 @@ def test_null_verifier_error_is_accepted_by_preflight_and_runtime(tmp_path: Path
     runtime = FileSearchRuntime(tmp_path / ".search")
 
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=1),
+        spec_for(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -380,7 +380,7 @@ def test_runtime_rejects_non_null_verifier_error_after_clean_preflight(
     )
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=1),
+        spec_for(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -416,7 +416,7 @@ def test_visible_verifier_failure_returns_diagnostics_and_preserves_logs(
     )
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=1),
+        spec_for(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -477,7 +477,7 @@ def test_non_visible_feedback_policy_keeps_diagnostics_in_runtime_log(
         "    raise SystemExit(1)\n",
         encoding="utf-8",
     )
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["process_verifiers"][0]["feedback_policy"] = feedback_policy
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
@@ -554,7 +554,7 @@ def test_source_owned_verifier_is_present_in_git_worktree_candidate(
         "#!/usr/bin/env bash\nprintf '{\"combined_score\": 1}\\n'\n",
         encoding="utf-8",
     )
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["workspace"] = {"backend": "git_worktree"}
     spec_data["process_verifiers"][0]["command"] = [
         "bash",
@@ -581,7 +581,7 @@ def test_create_run_reuses_frozen_verifier_with_current_source_baseline(
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=1),
+        spec_for(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     first_run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -615,7 +615,7 @@ def test_runtime_marks_missing_ranking_metric_as_failure(tmp_path: Path) -> None
         encoding="utf-8",
     )
     runtime = FileSearchRuntime(tmp_path / ".search")
-    frozen = runtime.freeze_spec(spec_for(project, max_candidates=1), [project / "evaluator.py"])
+    frozen = runtime.freeze_spec(spec_for(project, max_parallel=1), [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
     task = runtime.start_batch(run_id, plan.plan_id)[0]
@@ -643,7 +643,7 @@ def test_select_chooses_highest_json_ranking_metric(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     runtime = FileSearchRuntime(tmp_path / ".search")
-    frozen = runtime.freeze_spec(spec_for(project, max_candidates=3), [project / "evaluator.py"])
+    frozen = runtime.freeze_spec(spec_for(project, max_parallel=3), [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=3)
     tasks = runtime.start_batch(run_id, plan.plan_id)
@@ -666,7 +666,7 @@ def test_select_records_recoverable_selection_blocked_state(tmp_path: Path) -> N
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=2),
+        spec_for(project, max_parallel=2),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -704,7 +704,7 @@ def test_load_legacy_frozen_spec_without_workspace_uses_copy_backend(
 def test_runtime_defaults_to_git_worktree_workspace(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data.pop("workspace")
     spec = SearchSpec.model_validate(spec_data)
 
@@ -739,7 +739,7 @@ def test_freeze_spec_normalizes_verifier_cwd_equal_to_source_path(
     )
     monkeypatch.chdir(repo)
 
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["source_path"] = "examples/model-optimize/torch-cpu-target"
     spec_data["process_verifiers"][0]["cwd"] = "examples/model-optimize/torch-cpu-target"
     spec_data["promotion_verifiers"] = [
@@ -764,7 +764,7 @@ def test_freeze_spec_normalizes_verifier_cwd_equal_to_source_path(
 def test_plan_next_and_start_batch_record_plan_metadata(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    frozen = runtime.freeze_spec(spec_for(project, max_candidates=2), [project / "evaluator.py"])
+    frozen = runtime.freeze_spec(spec_for(project, max_parallel=2), [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
 
     plan = runtime.plan_next(run_id, requested_k=2)
@@ -794,7 +794,7 @@ def test_candidate_workspace_has_isolated_git_baseline_under_ignored_parent(
 
     project = make_project(parent)
     runtime = FileSearchRuntime(parent / ".tmp" / ".search")
-    frozen = runtime.freeze_spec(spec_for(project, max_candidates=1), [project / "evaluator.py"])
+    frozen = runtime.freeze_spec(spec_for(project, max_parallel=1), [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
     task = runtime.start_batch(run_id, plan.plan_id)[0]
@@ -839,7 +839,7 @@ def test_worker_policy_documents_host_launch_contract(tmp_path: Path) -> None:
             "name": "random",
             "worker_agent_type": "search_candidate_agent",
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -890,7 +890,7 @@ def test_promote_requires_search_runtime_selection(tmp_path: Path) -> None:
 
 def test_promotion_verifier_is_selected_parent_only(tmp_path: Path) -> None:
     project = make_project(tmp_path)
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["promotion_verifiers"] = [
         {
             "name": "promotion",
@@ -978,7 +978,7 @@ def test_promote_runs_promotion_verifiers_and_keeps_failed_run_ready(
         "raise SystemExit(3)\n",
         encoding="utf-8",
     )
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["promotion_verifiers"] = [
         {
             "name": "full_acceptance",
@@ -1038,7 +1038,7 @@ def test_promote_reruns_and_binds_fresh_promotion_evidence(
         "print(json.dumps({'accepted': True}))\n",
         encoding="utf-8",
     )
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["promotion_verifiers"] = [
         {
             "name": "full_acceptance",
@@ -1119,7 +1119,7 @@ def test_promote_rejects_changed_selected_artifact_before_acceptance(
         "print(json.dumps({'accepted': True}))\n",
         encoding="utf-8",
     )
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["promotion_verifiers"] = [
         {
             "name": "full_acceptance",
@@ -1173,7 +1173,7 @@ def test_promote_rejects_concurrent_allowed_file_change_during_acceptance(
         "print(json.dumps({'accepted': True}))\n",
         encoding="utf-8",
     )
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["promotion_verifiers"] = [
         {
             "name": "full_acceptance",
@@ -1228,7 +1228,7 @@ def test_promote_patch_uses_selected_commit_after_evidence_check(
         "print(json.dumps({'accepted': True}))\n",
         encoding="utf-8",
     )
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["workspace"] = {"backend": workspace_backend}
     spec_data["promotion_verifiers"] = [
         {
@@ -1284,7 +1284,7 @@ def test_promote_patch_uses_selected_commit_after_evidence_check(
 def test_worker_policy_includes_host_capabilities_for_codex(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_host(project, "codex", strategy_name="random", max_candidates=1)
+    spec = spec_with_host(project, "codex", strategy_name="random", max_parallel=1)
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
 
@@ -1313,7 +1313,7 @@ def test_worker_policy_uses_pi_rpc_native_session_resume(tmp_path: Path) -> None
                 "on_exceed": "interrupt",
             },
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -1337,7 +1337,7 @@ def test_start_agent_session_creates_context_handle_and_launch_payload(tmp_path:
             "name": "random",
             "worker_agent_type": "search_candidate_agent",
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     spec_data = spec.model_dump(mode="json")
     spec_data["budget"]["max_parallel"] = 1
@@ -1379,7 +1379,7 @@ def test_redispatch_candidate_creates_new_session_with_tier_override(tmp_path: P
             "name": "random",
             "worker_agent_type": "search_candidate_agent",
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -1409,7 +1409,7 @@ def test_redispatch_context_includes_previous_progress_handoff(tmp_path: Path) -
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     spec_data = spec_with_host(
-        project, "pi-rpc", strategy_name="random", max_candidates=1
+        project, "pi-rpc", strategy_name="random", max_parallel=1
     ).model_dump(mode="json")
     spec_data["strategy"]["worker_budget"] = {
         "max_runtime_seconds": 60,
@@ -1473,7 +1473,7 @@ def test_redispatch_context_includes_previous_progress_handoff(tmp_path: Path) -
 def test_start_agent_session_returns_codex_launch_payload(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_host(project, "codex", strategy_name="random", max_candidates=1)
+    spec = spec_with_host(project, "codex", strategy_name="random", max_parallel=1)
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
@@ -1508,7 +1508,7 @@ def test_start_agent_session_returns_pi_rpc_launch_payload(tmp_path: Path) -> No
                 "on_exceed": "interrupt",
             },
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -1547,7 +1547,7 @@ def test_start_agent_session_accepts_one_dispatch_worker_budget(tmp_path: Path) 
                 "on_exceed": "interrupt",
             },
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -1585,7 +1585,7 @@ def test_launch_keeps_candidate_proposal_when_main_directive_is_shared(
         project,
         "codex",
         strategy_name="agent_guided",
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -1619,7 +1619,7 @@ def test_launch_keeps_candidate_proposal_when_main_directive_is_shared(
 def test_redispatch_candidate_overrides_codex_worker_budget(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_host(project, "codex", strategy_name="random", max_candidates=1)
+    spec = spec_with_host(project, "codex", strategy_name="random", max_parallel=1)
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
@@ -1669,7 +1669,7 @@ def test_codex_worker_budget_flows_to_watchdog_launch_payload(tmp_path: Path) ->
                 "on_exceed": "interrupt",
             },
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -1720,7 +1720,7 @@ def test_pi_worker_budget_accepts_autoresearch_lease_fields(tmp_path: Path) -> N
                 "on_exceed": "interrupt",
             },
         },
-        max_candidates=1,
+        max_parallel=1,
     )
 
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
@@ -1757,7 +1757,7 @@ def test_freeze_rejects_worker_lease_fields_in_strategy_config(
                 "min_verifier_runs": 1,
             },
         },
-        max_candidates=1,
+        max_parallel=1,
     )
 
     with pytest.raises(ValueError, match="strategy.worker_budget"):
@@ -1779,7 +1779,7 @@ def test_codex_worker_launch_options_flow_to_spawn_payload(tmp_path: Path) -> No
                 "service_tier": "priority",
             },
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -1810,7 +1810,46 @@ def test_pi_rpc_rejects_unsupported_worker_service_tier(tmp_path: Path) -> None:
             "worker_budget": {"max_runtime_seconds": 60},
             "worker_launch": {"service_tier": "priority"},
         },
-        max_candidates=1,
+        max_parallel=1,
+    )
+    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+
+    with pytest.raises(ValueError, match="service_tier"):
+        runtime.plan_next(run_id, requested_k=1)
+
+
+@pytest.mark.pi
+def test_pi_rpc_rejects_unsupported_selected_model_service_tier(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    runtime.list_available_models = lambda host, query=None: {  # type: ignore[method-assign]
+        "host": host,
+        "adapter_version": "pi-rpc-v1",
+        "models": [
+            {
+                "model": "test/pi-model-v1",
+                "model_id": "pi-model-v1",
+                "provider": "test",
+                "display_name": "Pi Model V1",
+            }
+        ],
+    }
+    spec = spec_with_strategy(
+        project,
+        {
+            "name": "random",
+            "worker_host": "pi-rpc",
+            "worker_budget": {"max_runtime_seconds": 60},
+            "models": [
+                {
+                    "model": "pi-model-v1",
+                    "count": 1,
+                    "service_tier": "priority",
+                }
+            ],
+        },
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -1830,7 +1869,7 @@ def test_host_worker_budget_rejects_unenforceable_limits(tmp_path: Path) -> None
             "worker_host": "codex",
             "worker_budget": {"max_turns": 8},
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(codex_spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -1845,7 +1884,7 @@ def test_host_worker_budget_rejects_unenforceable_limits(tmp_path: Path) -> None
             "worker_host": "pi-rpc",
             "worker_budget": {"max_turns": 8},
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = pi_runtime.freeze_spec(pi_spec, [project / "evaluator.py"])
     run_id = pi_runtime.create_run(frozen.frozen_spec_id)
@@ -1856,7 +1895,7 @@ def test_host_worker_budget_rejects_unenforceable_limits(tmp_path: Path) -> None
 def test_bind_agent_handle_records_codex_task_name(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_host(project, "codex", strategy_name="random", max_candidates=1)
+    spec = spec_with_host(project, "codex", strategy_name="random", max_parallel=1)
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
@@ -1875,7 +1914,7 @@ def test_bind_agent_handle_records_codex_task_name(tmp_path: Path) -> None:
 def test_bind_agent_handle_harvests_workspace_handoff_into_history(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_host(project, "codex", strategy_name="random", max_candidates=1)
+    spec = spec_with_host(project, "codex", strategy_name="random", max_parallel=1)
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
@@ -1929,7 +1968,7 @@ def test_bind_agent_handle_harvests_workspace_handoff_into_history(tmp_path: Pat
 def test_codex_continue_agent_session_uses_bound_worker_and_budget(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_host(project, "codex", strategy_name="random", max_candidates=1)
+    spec = spec_with_host(project, "codex", strategy_name="random", max_parallel=1)
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
@@ -1967,7 +2006,7 @@ def test_pi_rpc_continue_agent_session_reuses_native_session(tmp_path: Path) -> 
                 "on_exceed": "interrupt",
             },
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2014,7 +2053,7 @@ def test_pi_rpc_continue_agent_session_reuses_native_session(tmp_path: Path) -> 
 def test_plan_next_caps_batch_size_to_max_parallel(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec_data = spec_for(project, max_candidates=4).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=4).model_dump(mode="json")
     spec_data["budget"]["max_parallel"] = 2
     frozen = runtime.freeze_spec(SearchSpec.model_validate(spec_data), [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2029,45 +2068,12 @@ def test_plan_next_caps_batch_size_to_max_parallel(tmp_path: Path) -> None:
         runtime.plan_next(run_id, requested_k=4)
 
 
-def test_freeze_rejects_conflicting_deprecated_max_candidates(tmp_path: Path) -> None:
-    project = make_project(tmp_path)
-    runtime = FileSearchRuntime(tmp_path / ".search")
-    spec_data = spec_for(project, max_candidates=2).model_dump(mode="json")
-    spec_data["budget"]["max_candidates"] = 3
-
-    with pytest.raises(
-        ValueError,
-        match="max_candidates is deprecated and conflicts with budget.max_parallel",
-    ):
-        runtime.freeze_spec(
-            SearchSpec.model_validate(spec_data),
-            [project / "evaluator.py"],
-        )
-
-
-def test_freeze_accepts_matching_legacy_max_candidates_but_omits_it(
-    tmp_path: Path,
-) -> None:
-    project = make_project(tmp_path)
-    runtime = FileSearchRuntime(tmp_path / ".search")
-    spec_data = spec_for(project, max_candidates=2).model_dump(mode="json")
-    spec_data["budget"]["max_candidates"] = 2
-
-    frozen = runtime.freeze_spec(
-        SearchSpec.model_validate(spec_data),
-        [project / "evaluator.py"],
-    )
-
-    assert frozen.spec.budget.max_parallel == 2
-    assert "max_candidates" not in frozen.spec.model_dump(mode="json")["budget"]
-
-
 def test_parallel_loops_rejects_second_plan_and_reuses_initial_candidates(
     tmp_path: Path,
 ) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec_data = spec_for(project, max_candidates=4).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=4).model_dump(mode="json")
     spec_data["budget"]["max_parallel"] = 2
     spec_data["strategy"].update(
         {
@@ -2102,7 +2108,7 @@ def test_start_agent_session_allocates_unique_ids_under_parallel_calls(
 ) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec_data = spec_for(project, max_candidates=2).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=2).model_dump(mode="json")
     spec_data["budget"]["max_parallel"] = 2
     frozen = runtime.freeze_spec(SearchSpec.model_validate(spec_data), [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2157,7 +2163,7 @@ def test_get_agent_context_has_only_authoritative_worker_fields(tmp_path: Path) 
         {
             "name": "random",
         },
-        max_candidates=2,
+        max_parallel=2,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2183,7 +2189,7 @@ def test_get_agent_context_has_only_authoritative_worker_fields(tmp_path: Path) 
 def test_agent_session_ids_are_unique_across_runs(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    frozen = runtime.freeze_spec(spec_for(project, max_candidates=1), [project / "evaluator.py"])
+    frozen = runtime.freeze_spec(spec_for(project, max_parallel=1), [project / "evaluator.py"])
 
     first_run_id = runtime.create_run(frozen.frozen_spec_id)
     second_run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2205,7 +2211,7 @@ def test_agent_session_ids_are_unique_across_runs(tmp_path: Path) -> None:
 def test_legacy_agent_session_id_collision_is_not_silent(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    frozen = runtime.freeze_spec(spec_for(project, max_candidates=1), [project / "evaluator.py"])
+    frozen = runtime.freeze_spec(spec_for(project, max_parallel=1), [project / "evaluator.py"])
 
     first_run_id = runtime.create_run(frozen.frozen_spec_id)
     second_run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2231,7 +2237,7 @@ def test_agent_guided_strategy_requires_and_validates_proposals(tmp_path: Path) 
     spec = spec_with_strategy(
         project,
         {"name": "agent_guided"},
-        max_candidates=3,
+        max_parallel=3,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2262,7 +2268,7 @@ def test_git_worktree_start_batch_recovers_after_materialization_before_record(
     spec_data = spec_with_strategy(
         project,
         {"name": "random"},
-        max_candidates=1,
+        max_parallel=1,
     ).model_dump(mode="json")
     spec_data["workspace"] = {"backend": "git_worktree"}
     spec = SearchSpec.model_validate(spec_data)
@@ -2305,7 +2311,7 @@ def test_start_batch_is_serialized_and_idempotent_for_same_plan(
     spec_data = spec_with_strategy(
         project,
         {"name": "random"},
-        max_candidates=2,
+        max_parallel=2,
     ).model_dump(mode="json")
     spec_data["workspace"] = {"backend": "git_worktree"}
     spec = SearchSpec.model_validate(spec_data)
@@ -2334,7 +2340,7 @@ def test_start_batch_is_serialized_and_idempotent_for_same_plan(
 def test_random_strategy_gen1_independent_bootstrap(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_strategy(project, {"name": "random"}, max_candidates=4)
+    spec = spec_with_strategy(project, {"name": "random"}, max_parallel=4)
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
 
@@ -2359,7 +2365,7 @@ def test_random_strategy_name_normalizes_case_and_dash(
     runtime = FileSearchRuntime(tmp_path / ".search")
 
     for name in ("Random", "random-mode", "RANDOM_MODE"):
-        spec = spec_with_strategy(project, {"name": name}, max_candidates=4)
+        spec = spec_with_strategy(project, {"name": name}, max_parallel=4)
         frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
         run_id = runtime.create_run(frozen.frozen_spec_id)
 
@@ -2396,7 +2402,7 @@ def test_codex_creates_sessions_for_portable_strategy_modes(
 ) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_host(project, host, strategy_name=strategy_name, max_candidates=1)
+    spec = spec_with_host(project, host, strategy_name=strategy_name, max_parallel=1)
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
 
@@ -2439,7 +2445,7 @@ def test_codex_rejects_non_portable_strategies(
         project,
         "codex",
         strategy_name=strategy_name,
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2450,7 +2456,7 @@ def test_codex_rejects_non_portable_strategies(
 
 def test_removed_strategy_driver_fields_are_rejected(tmp_path: Path) -> None:
     project = make_project(tmp_path)
-    data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    data = spec_for(project, max_parallel=1).model_dump(mode="json")
     data["strategy"].update(
         {
             "driver": "python",
@@ -2475,7 +2481,7 @@ def test_run_verifier_records_edit_surface_violation_in_iteration(
         {
             "name": "random",
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2586,7 +2592,7 @@ def test_run_verifier_records_failure_class_on_timeout(
         {
             "name": "random",
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2624,7 +2630,7 @@ def test_process_verifier_requires_time_for_suite_and_closeout(
             "name": "random",
             "config": {"reserve_closeout_seconds": 20},
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2653,7 +2659,7 @@ def test_list_iterations_empty_for_fresh_candidate(tmp_path: Path) -> None:
         {
             "name": "random",
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2675,7 +2681,7 @@ def test_run_verifier_records_iteration_with_agent_session_id(
             "name": "random",
             "worker_agent_type": "search_candidate_agent",
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2719,7 +2725,7 @@ def test_run_verifier_without_agent_session_id_is_main_final_verify(
             "name": "random",
             "worker_agent_type": "search_candidate_agent",
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -2853,7 +2859,7 @@ def test_verifier_resource_lock_serializes_candidates_and_persists_diagnostics(
         "    marker.unlink(missing_ok=True)\n",
         encoding="utf-8",
     )
-    spec_data = spec_for(project, max_candidates=2).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=2).model_dump(mode="json")
     spec_data["process_verifiers"][0]["resource_lock"] = resource
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
@@ -2982,7 +2988,7 @@ def test_verifier_timeout_terminates_entire_process_group(
         "time.sleep(60)\n",
         encoding="utf-8",
     )
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["process_verifiers"][0]["timeout_seconds"] = 1
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
@@ -3036,7 +3042,7 @@ def test_select_uses_metric_direction_for_minimize(
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=2, direction="minimize"),
+        spec_for(project, max_parallel=2, direction="minimize"),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3071,7 +3077,7 @@ def test_select_does_not_reverify_duplicate_latest_artifact_option(
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=2),
+        spec_for(project, max_parallel=2),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3112,7 +3118,7 @@ def test_select_reuses_exact_worker_evidence_without_parent_verifier(
 ) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    frozen = runtime.freeze_spec(spec_for(project, max_candidates=1), [project / "evaluator.py"])
+    frozen = runtime.freeze_spec(spec_for(project, max_parallel=1), [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
     task = runtime.start_batch(run_id, plan.plan_id)[0]
@@ -3152,7 +3158,7 @@ def test_select_uses_best_iteration_when_artifact_is_current(
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=2),
+        spec_for(project, max_parallel=2),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3201,7 +3207,7 @@ def test_select_can_recover_best_iteration_after_artifact_changed(
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=2),
+        spec_for(project, max_parallel=2),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3399,7 +3405,7 @@ def test_results_tsv_inherits_across_successor_run(
 ) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    spec = spec_with_strategy(project, {"name": "random"}, max_candidates=1)
+    spec = spec_with_strategy(project, {"name": "random"}, max_parallel=1)
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     first_run_id = runtime.create_run(frozen.frozen_spec_id)
 
@@ -3484,7 +3490,7 @@ def test_select_restores_best_git_commit_before_final_verify(
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        spec_for(project, max_candidates=2),
+        spec_for(project, max_parallel=2),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3555,7 +3561,7 @@ def test_run_verifier_rejects_mismatched_agent_session(tmp_path: Path) -> None:
         {
             "name": "random",
         },
-        max_candidates=2,
+        max_parallel=2,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3586,7 +3592,7 @@ def test_concurrent_run_verifiers_preserve_best_score(
         {
             "name": "random",
         },
-        max_candidates=2,
+        max_parallel=2,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3650,7 +3656,7 @@ def test_run_verifier_works_without_session_and_records_iterations(
             "name": "random",
             "worker_agent_type": "search_candidate_agent",
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3698,7 +3704,7 @@ def test_list_iterations_returns_all_records(
         {
             "name": "random",
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3746,7 +3752,7 @@ def test_get_agent_context_returns_iterations(
         {
             "name": "random",
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3788,7 +3794,7 @@ def test_history_and_report_include_agent_sessions(tmp_path: Path) -> None:
             "name": "random",
             "worker_agent_type": "search_candidate_agent",
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3817,7 +3823,7 @@ def test_history_projects_latest_structured_research_handoff(tmp_path: Path) -> 
             "worker_host": "pi-rpc",
             "worker_budget": {"max_runtime_seconds": 600},
         },
-        max_candidates=1,
+        max_parallel=1,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3909,7 +3915,7 @@ def test_history_feature_ledger_retains_non_frontier_candidate(tmp_path: Path) -
             "worker_host": "pi-rpc",
             "worker_budget": {"max_runtime_seconds": 600},
         },
-        max_candidates=2,
+        max_parallel=2,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -3976,7 +3982,7 @@ def test_invalidate_run_fences_work_and_successor_inherits_research(
     spec = spec_with_strategy(
         project,
         {"name": "agent_guided"},
-        max_candidates=2,
+        max_parallel=2,
     )
     frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -4083,7 +4089,7 @@ def test_invalidation_rejects_in_flight_verifier_result(
 ) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    frozen = runtime.freeze_spec(spec_for(project, max_candidates=1), [project / "evaluator.py"])
+    frozen = runtime.freeze_spec(spec_for(project, max_parallel=1), [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
     task = runtime.start_batch(run_id, plan.plan_id)[0]

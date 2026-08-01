@@ -33,12 +33,21 @@ current `spawn_agent` schema rather than assumed optional metadata.
 | Recovery | native agent registry + `.gp` | persisted `.gp/host-pools/pi/` + `.gp` |
 | Goal gate | `UserPromptSubmit`, `SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStop` | extension input/tool/turn events |
 | Strategy coverage | initial parallel loops | initial parallel loops |
+| Model discovery | Codex app-server `model/list` | Pi RPC `get_available_models` |
 | Normalized observability | native session JSONL + bound metadata | `pi_metrics` + bound metadata |
 
 All adapters implement the read-only `collect_observability` contract exposed
 as `search_get_agent_observability`. This is provenance and diagnostics only;
 it does not add worker lifecycle state to Search records or turn the runtime
 into a supervisor.
+
+Adapters also expose read-only model discovery through
+`goal_plus_list_models`. Discovery reports what the host currently advertises;
+it does not claim that every catalog entry can be forwarded through every
+version of a host launch tool. The user still chooses `strategy.models`, and
+the authoritative launch payload is projected onto the actual host tool schema
+at dispatch time. If no models are requested, Goal Plus skips discovery and
+preserves native default-model inheritance.
 
 Codex rollout JSONL exposes per-response input, cached-input, cache-write,
 output, and reasoning-token usage but does not expose a billed USD amount.
@@ -83,8 +92,8 @@ completion barrier. Low score or no improvement never causes replacement.
 | Pi RPC | `worker_budget.max_runtime_seconds` | closeout steer plus hard process watchdog |
 
 `max_turns` is only a prompt hint for Codex and Pi. `max_parallel` uniquely
-sets the initial candidate/live-worker count. `max_candidates` is deprecated;
-new specs omit it because later work continues the same candidates.
+sets the initial candidate/live-worker count because later work continues the
+same candidates.
 
 Codex supports a lower-bound single-worker AutoResearch lease through
 `worker_budget.min_runtime_seconds` and `min_verifier_runs`. Its
@@ -157,6 +166,7 @@ prove native launch, waiting, continuation, hooks, and provider behavior.
 An adapter may:
 
 - build launch and continuation payloads;
+- list the host's currently advertised models without starting a Search run;
 - validate host-specific budget fields;
 - declare pool capabilities;
 - preserve native handles and bounded host metadata.

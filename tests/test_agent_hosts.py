@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from io import StringIO
+
 import pytest
 
+import goal_plus.agent_hosts as agent_hosts
 from goal_plus.agent_hosts import (
     UnsupportedHostCapability,
     get_agent_host_adapter,
@@ -9,9 +12,121 @@ from goal_plus.agent_hosts import (
 )
 
 
+def test_json_line_reader_skips_noise_until_matching_response() -> None:
+    class FakeProcess:
+        stdout = StringIO(
+            'not-json\n{"id": "skip"}\n{"id": "target", "result": {}}\n'
+        )
+
+    response = agent_hosts._read_json_line_until(
+        FakeProcess(),  # type: ignore[arg-type]
+        lambda payload: payload.get("id") == "target",
+        timeout_seconds=1,
+    )
+
+    assert response == {"id": "target", "result": {}}
+
+
 def test_get_agent_host_adapter_returns_all_supported_hosts() -> None:
     assert get_agent_host_adapter("codex").name == "codex"
     assert get_agent_host_adapter("pi-rpc").name == "pi-rpc"
+    assert get_agent_host_adapter("codex").capabilities.supports_model_discovery
+    assert get_agent_host_adapter("pi-rpc").capabilities.supports_model_discovery
+
+
+@pytest.mark.codex
+def test_codex_adapter_lists_models_from_app_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    process = object()
+    responses = iter(
+        [
+            {"id": "goal-plus-initialize", "result": {}},
+            {
+                "id": "goal-plus-model-list",
+                "result": {
+                    "data": [
+                        {
+                            "id": "gpt-5.6-sol",
+                            "model": "gpt-5.6-sol",
+                            "displayName": "GPT-5.6 Sol",
+                            "supportedReasoningEfforts": [
+                                {"reasoningEffort": "high"}
+                            ],
+                            "inputModalities": ["text", "image"],
+                        }
+                    ]
+                },
+            },
+        ]
+    )
+    monkeypatch.setattr(agent_hosts.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(agent_hosts, "_send_json_line", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        agent_hosts,
+        "_read_json_line_until",
+        lambda *args, **kwargs: next(responses),
+    )
+    monkeypatch.setattr(agent_hosts, "_stop_probe_process", lambda process: None)
+
+    models = get_agent_host_adapter("codex").list_available_models("sol")
+
+    assert models == [
+        {
+            "model": "gpt-5.6-sol",
+            "model_id": "gpt-5.6-sol",
+            "provider": "codex",
+            "display_name": "GPT-5.6 Sol",
+            "reasoning": True,
+            "reasoning_efforts": ["high"],
+            "input_modalities": ["text", "image"],
+            "source": "codex_app_server_model_list",
+        }
+    ]
+
+
+@pytest.mark.pi
+def test_pi_adapter_lists_models_from_native_rpc(monkeypatch: pytest.MonkeyPatch) -> None:
+    process = object()
+    monkeypatch.setattr(agent_hosts.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(agent_hosts, "_send_json_line", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        agent_hosts,
+        "_read_json_line_until",
+        lambda *args, **kwargs: {
+            "id": "goal-plus-model-list",
+            "type": "response",
+            "success": True,
+            "data": {
+                "models": [
+                    {
+                        "provider": "openai-codex",
+                        "id": "gpt-5.6-terra",
+                        "name": "GPT-5.6 Terra",
+                        "reasoning": True,
+                        "input": ["text", "image"],
+                        "contextWindow": 272000,
+                        "maxTokens": 128000,
+                    }
+                ]
+            },
+        },
+    )
+    monkeypatch.setattr(agent_hosts, "_stop_probe_process", lambda process: None)
+
+    models = get_agent_host_adapter("pi-rpc").list_available_models("terra")
+
+    assert models == [
+        {
+            "model": "openai-codex/gpt-5.6-terra",
+            "model_id": "gpt-5.6-terra",
+            "provider": "openai-codex",
+            "display_name": "GPT-5.6 Terra",
+            "reasoning": True,
+            "input_modalities": ["text", "image"],
+            "context_window": 272000,
+            "max_tokens": 128000,
+            "source": "pi_rpc_get_available_models",
+        }
+    ]
 
 
 def test_portable_strategy_mode_classifies_all_builtin_aliases() -> None:

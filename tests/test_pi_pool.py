@@ -41,7 +41,7 @@ def _open_active_pool_with_closeout(
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     spec_data = _pi_rpc_spec_with_budget(
-        project, max_candidates=1, max_parallel=1
+        project, max_parallel=1
     ).model_dump(mode="json")
     spec_data["strategy"]["config"] = {"closeout_reserve_seconds": 30}
     frozen = runtime.freeze_spec(
@@ -66,7 +66,7 @@ def test_pi_pool_wait_any_reports_free_slot_without_refilling(
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=2, max_parallel=2),
+        _pi_rpc_spec_with_budget(project, max_parallel=2),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -224,7 +224,7 @@ def test_pi_pool_enforces_frozen_parallel_limit(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -244,7 +244,7 @@ def test_pi_pool_continue_pins_existing_native_session(
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -276,7 +276,7 @@ def test_pi_pool_rejects_work_after_run_invalidation(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -298,7 +298,7 @@ def test_pi_pool_worker_publishes_candidate_ready_after_driver_completion(
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -354,7 +354,7 @@ def test_pi_pool_worker_continues_same_session_until_cumulative_lease(
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -441,7 +441,7 @@ def test_pi_pool_worker_backs_off_after_dispatch_without_new_verifier(
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -518,7 +518,7 @@ def test_pi_pool_continuation_counts_only_new_job_verifier_runs(
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -582,7 +582,7 @@ def test_pi_pool_wait_any_rejects_completed_job_with_unsatisfied_lease(
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -630,7 +630,7 @@ def test_pi_pool_worker_does_not_continue_driver_failure(
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -689,7 +689,7 @@ def test_pi_pool_lease_reports_hard_limit_when_minimum_is_also_satisfied(
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -752,7 +752,7 @@ def test_pi_pool_lease_without_required_verifier_times_out_instead_of_ready(
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     frozen = runtime.freeze_spec(
-        _pi_rpc_spec_with_budget(project, max_candidates=1, max_parallel=1),
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
         [project / "evaluator.py"],
     )
     run_id = runtime.create_run(frozen.frozen_spec_id)
@@ -812,7 +812,7 @@ def test_pi_pool_lease_reserves_outer_closeout(
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
     spec_data = _pi_rpc_spec_with_budget(
-        project, max_candidates=1, max_parallel=1
+        project, max_parallel=1
     ).model_dump(mode="json")
     spec_data["strategy"]["config"] = {"closeout_reserve_seconds": 30}
     frozen = runtime.freeze_spec(

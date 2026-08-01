@@ -25,7 +25,7 @@ def _search_with_candidates(
         "print(json.dumps({'combined_score': float(value)}))\n",
         encoding="utf-8",
     )
-    spec_data = spec_for(project, max_candidates=count).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=count).model_dump(mode="json")
     spec_data["workspace"] = {"backend": "git_worktree"}
     spec_data["strategy"].update(strategy_updates or {})
     runtime = FileSearchRuntime(tmp_path / ".gp")
@@ -348,7 +348,7 @@ def test_evidence_diff_spans_all_manual_commits_in_attempt(tmp_path: Path) -> No
 
 def test_evidence_diff_omits_binary_payload(tmp_path: Path) -> None:
     project = make_project(tmp_path)
-    spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
+    spec_data = spec_for(project, max_parallel=1).model_dump(mode="json")
     spec_data["workspace"] = {"backend": "git_worktree"}
     spec_data["edit_surface"]["allow"].append("checkpoint.bin")
     runtime = FileSearchRuntime(tmp_path / ".gp")

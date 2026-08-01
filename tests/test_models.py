@@ -20,6 +20,7 @@ from goal_plus.models import (
     StrategySpec,
     VerifierCommand,
     WorkerBudget,
+    ModelSpec,
 )
 
 
@@ -56,6 +57,7 @@ def test_search_spec_parses_nested_models_and_serializes_enums() -> None:
     assert dumped["strategy"]["name"] == "agent_guided"
     assert dumped["strategy"]["orchestration_mode"] == "parallel_loops"
     assert dumped["strategy"]["worker_host"] == "codex"
+    assert "models" not in dumped["strategy"]
 
 
 def test_goal_plus_spec_draft_exposes_typed_partial_search_spec() -> None:
@@ -126,6 +128,22 @@ def test_expected_outputs_schema_describes_artifact_paths_not_stdout_parser() ->
 
     assert "产物路径或 glob" in description
     assert "不解析 verifier stdout metric" in description
+
+
+def test_model_spec_requires_a_concrete_model_reference() -> None:
+    with pytest.raises(ValidationError):
+        ModelSpec(model="")
+
+    model = ModelSpec(model="gpt", count=1)
+    assert model.model_dump(mode="json") == {
+        "model": "gpt",
+        "count": 1,
+        "provider": None,
+        "adapter_version": None,
+        "reasoning_effort": None,
+        "service_tier": None,
+        "context_policy": {},
+    }
 
 
 def test_verifier_resource_lock_rejects_blank_names() -> None:
@@ -367,7 +385,7 @@ def test_agent_session_record_is_context_handle_with_required_candidate() -> Non
 
 def test_search_spec_rejects_invalid_budget_and_blank_source_path() -> None:
     data = valid_spec_dict()
-    data["budget"]["max_candidates"] = 0
+    data["budget"]["max_parallel"] = 0
     with pytest.raises(ValidationError):
         SearchSpec.model_validate(data)
 

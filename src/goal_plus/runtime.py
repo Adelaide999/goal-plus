@@ -50,6 +50,8 @@ from goal_plus.models import (
     RunState,
     RunSummary,
     IterationRecord,
+    ModelSpec,
+    SelectedModel,
     ResultLedgerEntry,
     ResolvedCodexProvider,
     ResolvedEvidenceAnnotatorProfile,
@@ -62,6 +64,7 @@ from goal_plus.models import (
     VerifierResult,
     VerifierRole,
     WorkerBudget,
+    WorkerLaunchOptions,
 )
 from goal_plus.paths import DEFAULT_RUNTIME_ROOT, LEGACY_RUNTIME_ROOT
 from goal_plus.workspaces import (
@@ -315,6 +318,98 @@ class FileSearchRuntime:
         self.specs_dir.mkdir(parents=True, exist_ok=True)
         self.runs_dir.mkdir(parents=True, exist_ok=True)
 
+    def list_available_models(
+        self,
+        host: Literal["codex", "pi-rpc"],
+        query: str | None = None,
+    ) -> dict[str, Any]:
+        adapter = get_agent_host_adapter(host)
+        return {
+            "host": host,
+            "adapter_version": adapter.adapter_version,
+            "models": adapter.list_available_models(query),
+        }
+
+    @staticmethod
+    def _match_available_model(
+        requested: str,
+        available: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        needle = requested.strip().casefold()
+        exact_refs = [
+            model
+            for model in available
+            if str(model.get("model") or "").casefold() == needle
+        ]
+        if len(exact_refs) == 1:
+            return exact_refs[0]
+        exact_ids = [
+            model
+            for model in available
+            if str(model.get("model_id") or "").casefold() == needle
+        ]
+        if len(exact_ids) == 1:
+            return exact_ids[0]
+        candidates = [
+            model
+            for model in available
+            if needle
+            in " ".join(
+                str(model.get(key) or "")
+                for key in ("model", "model_id", "display_name")
+            ).casefold()
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates and not exact_refs and not exact_ids:
+            raise ValueError(f"requested model is not available: {requested}")
+        matches = exact_refs or exact_ids or candidates
+        raise ValueError(
+            f"requested model is ambiguous: {requested}; matches: "
+            + ", ".join(str(model.get("model")) for model in matches)
+        )
+
+    def _normalize_strategy_models(self, spec: SearchSpec) -> SearchSpec:
+        requested = list(spec.strategy.models)
+        if not requested:
+            return spec
+        explicit_counts = [model.count is not None for model in requested]
+        if any(explicit_counts) and not all(explicit_counts):
+            raise ValueError(
+                "strategy.models must either specify count for every model or for none"
+            )
+        max_parallel = spec.budget.max_parallel
+        if len(requested) > max_parallel:
+            raise ValueError(
+                "strategy.models cannot contain more entries than budget.max_parallel"
+            )
+        if all(explicit_counts):
+            counts: list[int | None] = [int(model.count or 0) for model in requested]
+            if sum(int(count or 0) for count in counts) != max_parallel:
+                raise ValueError(
+                    "explicit strategy.models counts must sum to budget.max_parallel"
+                )
+        else:
+            counts = [None] * len(requested)
+
+        discovery = self.list_available_models(spec.strategy.worker_host)
+        available = discovery["models"]
+        normalized_models: list[ModelSpec] = []
+        for requested_model, count in zip(requested, counts, strict=True):
+            match = self._match_available_model(requested_model.model, available)
+            normalized_models.append(
+                requested_model.model_copy(
+                    update={
+                        "model": match["model"],
+                        "count": count,
+                        "provider": match.get("provider"),
+                        "adapter_version": discovery["adapter_version"],
+                    }
+                )
+            )
+        strategy = spec.strategy.model_copy(update={"models": normalized_models})
+        return spec.model_copy(update={"strategy": strategy})
+
     def _execute_verifier_process(
         self,
         command: list[str],
@@ -456,17 +551,8 @@ class FileSearchRuntime:
 
     def freeze_spec(self, spec: SearchSpec, verifier_artifacts: list[Path]) -> FrozenSpec:
         spec = _normalize_verifier_cwds_for_candidate_workspace(spec)
+        spec = self._normalize_strategy_models(spec)
         self._validate_strategy_config(spec.strategy)
-        legacy_max_candidates = spec.budget.__dict__.get("max_candidates")
-        if (
-            legacy_max_candidates is not None
-            and int(legacy_max_candidates) != int(spec.budget.max_parallel)
-        ):
-            raise ValueError(
-                "budget.max_candidates is deprecated and conflicts with "
-                "budget.max_parallel; omit max_candidates or set it equal to "
-                "max_parallel for legacy compatibility"
-            )
         source_root = Path(spec.source_path).resolve()
         verifier_hashes: dict[str, str] = {}
         artifact_entries: list[tuple[Path, str]] = []
@@ -698,12 +784,77 @@ class FileSearchRuntime:
             hashes[rel_path.as_posix()] = sha256_file(path)
         return hashes
 
+    @staticmethod
+    def _expand_selected_models(
+        models: list[ModelSpec], max_parallel: int
+    ) -> list[SelectedModel]:
+        if not models:
+            return []
+        explicit_counts = [model.count is not None for model in models]
+        if any(explicit_counts) and not all(explicit_counts):
+            raise ValueError(
+                "frozen strategy.models must either specify count for every model or for none"
+            )
+        expanded = (
+            [model for model in models for _ in range(int(model.count or 0))]
+            if all(explicit_counts)
+            else [models[index % len(models)] for index in range(max_parallel)]
+        )
+        selected: list[SelectedModel] = []
+        for model in expanded:
+            selected.append(
+                SelectedModel(
+                    slot=len(selected) + 1,
+                    model=model.model,
+                    provider=model.provider,
+                    adapter_version=model.adapter_version,
+                    reasoning_effort=model.reasoning_effort,
+                    service_tier=model.service_tier,
+                    context_policy=model.context_policy,
+                )
+            )
+        return selected
+
+    @staticmethod
+    def _selected_model_provenance(model: SelectedModel) -> dict[str, Any]:
+        launch = {
+            "model": model.model,
+            "reasoning_effort": model.reasoning_effort,
+            "service_tier": model.service_tier,
+        }
+        return {
+            "selected_model": model.model,
+            "provider": model.provider,
+            "exact_model_ref": model.model,
+            "adapter_version": model.adapter_version,
+            "context_policy": model.context_policy,
+            "worker_launch": {
+                key: value for key, value in launch.items() if value is not None
+            },
+        }
+
+    @staticmethod
+    def _selected_model_for_slot(
+        plan: SearchPlan, slot: int
+    ) -> SelectedModel | None:
+        if not plan.selected_models:
+            return None
+        return plan.selected_models[slot - 1]
+
     def create_run(
         self,
         frozen_spec_id: str,
         source_run_id: str | None = None,
     ) -> str:
         frozen = self._load_frozen_spec(frozen_spec_id)
+        selected_models = self._expand_selected_models(
+            frozen.spec.strategy.models,
+            frozen.spec.budget.max_parallel,
+        )
+        if selected_models and len(selected_models) != frozen.spec.budget.max_parallel:
+            raise ValueError(
+                "frozen strategy.models must resolve to budget.max_parallel selected models"
+            )
         inherited_research = (
             self._build_inherited_research(
                 source_run_id,
@@ -720,6 +871,7 @@ class FileSearchRuntime:
             created_at=utc_timestamp(),
             source_run_id=source_run_id,
             inherited_research=inherited_research,
+            selected_models=selected_models,
         )
         self._write_run(run)
         (self._run_dir(run_id) / "candidates").mkdir(parents=True, exist_ok=True)
@@ -915,6 +1067,17 @@ class FileSearchRuntime:
             )
         remaining = max(0, spec.budget.max_parallel - run.candidates_total)
         planned_k = min(requested_k, remaining)
+        selected_models = list(run.selected_models)
+        if selected_models:
+            if requested_k != len(selected_models):
+                raise ValueError(
+                    "requested_k must equal the fixed selected_models size "
+                    f"({len(selected_models)})"
+                )
+            if planned_k != len(selected_models):
+                raise ValueError(
+                    "selected_models size exceeds the remaining parallel budget"
+                )
         strategy = spec.strategy
         self._validate_host_strategy(strategy)
         mode = self._strategy_mode(strategy)
@@ -930,6 +1093,7 @@ class FileSearchRuntime:
             )
 
         plan.worker_policy = self._normalize_worker_policy(plan.strategy, plan.worker_policy)
+        plan.selected_models = selected_models
         plan.strategy_trace.setdefault("worker_policy", plan.worker_policy)
         self._write_plan(plan)
         run.budget_used["last_plan_id"] = plan.plan_id
@@ -1234,6 +1398,8 @@ class FileSearchRuntime:
                 agent_session_id=agent_session_id,
                 run_id=run_id,
                 candidate_id=candidate_id,
+                selected_model=candidate_record.task.selected_model,
+                model_provenance=candidate_record.task.model_provenance,
                 host=host,
                 host_handle=host_handle,
                 created_at=now,
@@ -1481,6 +1647,10 @@ class FileSearchRuntime:
             "agent_session_id": session.agent_session_id,
             "run_id": session.run_id,
             "candidate_id": session.candidate_id,
+            "selected_model": (
+                session.selected_model.model if session.selected_model else None
+            ),
+            "model_provenance": session.model_provenance,
             "host": session.host,
             "host_handle": session.host_handle.model_dump(mode="json"),
             "directive": session.directive,
@@ -1779,6 +1949,18 @@ class FileSearchRuntime:
             iteration = IterationRecord(
                 iteration=iteration_number,
                 agent_session_id=agent_session_id,
+                selected_model=(
+                    session.selected_model.model
+                    if session and session.selected_model
+                    else None
+                ),
+                exact_model_ref=(
+                    session.model_provenance.get("exact_model_ref") if session else None
+                ),
+                adapter_version=(
+                    session.model_provenance.get("adapter_version") if session else None
+                ),
+                model_provenance=(session.model_provenance if session else {}),
                 score=report.aggregate_score,
                 process_passed=report.process_passed,
                 git_head=attempt.git_head,
@@ -2457,10 +2639,33 @@ class FileSearchRuntime:
             )
 
     def _validate_worker_launch_for_host(self, strategy: StrategySpec) -> None:
-        if strategy.worker_launch is None:
+        self._validate_worker_launch_options_for_host(
+            strategy.worker_host,
+            strategy.worker_launch,
+            "worker_launch",
+        )
+        for model in strategy.models:
+            launch = WorkerLaunchOptions(
+                model=model.model,
+                reasoning_effort=model.reasoning_effort,
+                service_tier=model.service_tier,
+            )
+            self._validate_worker_launch_options_for_host(
+                strategy.worker_host,
+                launch,
+                f"model {model.model!r}",
+            )
+
+    @staticmethod
+    def _validate_worker_launch_options_for_host(
+        worker_host: str,
+        worker_launch: WorkerLaunchOptions | None,
+        label: str,
+    ) -> None:
+        if worker_launch is None:
             return
-        adapter = get_agent_host_adapter(strategy.worker_host)
-        requested = strategy.worker_launch.model_dump(mode="json", exclude_none=True)
+        adapter = get_agent_host_adapter(worker_host)
+        requested = worker_launch.model_dump(mode="json", exclude_none=True)
         capability_by_field = {
             "model": adapter.capabilities.supports_model_override,
             "reasoning_effort": adapter.capabilities.supports_reasoning_effort,
@@ -2471,8 +2676,8 @@ class FileSearchRuntime:
         )
         if unsupported:
             raise ValueError(
-                f"{strategy.worker_host} worker_host does not support worker_launch "
-                f"fields: {', '.join(unsupported)}"
+                f"{worker_host} worker_host does not support {label} fields: "
+                f"{', '.join(unsupported)}"
             )
 
     def _validate_worker_budget_for_host(
@@ -2574,9 +2779,19 @@ class FileSearchRuntime:
     ) -> dict[str, Any] | None:
         worker_policy = candidate_record.task.strategy_metadata.get("worker_policy", {})
         launch = worker_policy.get("worker_launch")
-        if launch is not None:
-            return dict(launch)
-        return self._worker_launch_dict(frozen.spec.strategy)
+        base = dict(launch) if launch is not None else (
+            self._worker_launch_dict(frozen.spec.strategy) or {}
+        )
+        selected_launch = candidate_record.task.model_provenance.get("worker_launch")
+        if isinstance(selected_launch, dict):
+            base.update(
+                {
+                    key: value
+                    for key, value in selected_launch.items()
+                    if value is not None
+                }
+            )
+        return base or None
 
     def _normalize_worker_budget_override(
         self,
@@ -2873,6 +3088,7 @@ class FileSearchRuntime:
         instructions.extend(proposal.instructions)
 
         hypothesis = proposal.hypothesis or proposal.intent or f"候选 {candidate_id}"
+        selected_model = self._selected_model_for_slot(plan, slot)
         return CandidateTask(
             run_id=run.run_id,
             candidate_id=candidate_id,
@@ -2888,11 +3104,18 @@ class FileSearchRuntime:
             expected_artifacts=["patch", "notes", "logs"],
             stop_conditions={},
             proposal=proposal,
+            selected_model=selected_model,
+            model_provenance=(
+                self._selected_model_provenance(selected_model)
+                if selected_model
+                else {}
+            ),
             strategy_metadata={
                 "strategy": plan.strategy.name,
                 "worker_policy": plan.worker_policy,
                 "plan_id": plan.plan_id,
                 "slot": slot,
+                "selected_model": selected_model.model if selected_model else None,
                 "workspace_backend": materialization.backend,
                 "workspace_branch": materialization.branch,
                 "workspace_base_revision": materialization.base_revision,

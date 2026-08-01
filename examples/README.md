@@ -51,9 +51,25 @@ Maintained hosts are Codex and Pi RPC. Use one of these strategy shapes:
 the main agent to provide the initial lane intents to `search_start_batch`.
 Neither strategy permits a second `search_plan_next` call.
 
-Set only `budget.max_parallel` for normal runs. It is the initial number of
-long-lived candidate lanes; deprecated `budget.max_candidates` is omitted.
+Set `budget.max_parallel` for normal runs. It is the initial number of
+long-lived candidate lanes.
 Each candidate workspace is a long-lived lane, not a disposable attempt.
+
+Optional multi-model selection belongs in the same frozen strategy:
+
+```json
+{
+  "models": [
+    {"model": "gpt-5.6-terra", "count": 1},
+    {"model": "gpt-5.6-sol", "count": 3}
+  ]
+}
+```
+
+The main agent first calls `goal_plus_list_models` for the selected host.
+Counts must sum to `max_parallel`; omit all counts to round-robin the listed
+models. The runtime generates `selected_models`, so there is no separate
+creation-time allocation argument.
 
 ## Host Flow
 

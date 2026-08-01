@@ -371,7 +371,6 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     assert "inherited_pitfall_limit" not in text
     assert "const RuntimeToolDescriptions" in text
     assert "RuntimeToolDescriptions[name]" in text
-    assert "max_candidates: Type.Integer" not in text
     assert "初始创建并实际并行工作的候选 Agent 数量" in text
     assert "标准流程令 requested_k 等于 max_parallel" in text
     freeze_schema = text.split("search_freeze_spec: Type.Object", 1)[1].split(

@@ -83,6 +83,24 @@ remaining upper budget. Infrastructure failure, pool close, or outer closeout
 stops this automatic continuation. Before each remaining hard limit, the runner
 sends one closeout steer. `max_turns` is only a prompt hint.
 
+### Multi-model selection
+
+Use `models` directly in the natural-language command. Because Pi can expose
+the same model id from multiple providers, canonical `provider/model` values
+are the clearest form:
+
+```text
+/goal-plus models=openai-codex/gpt-5.6-terra,openai-codex/gpt-5.6-sol max_parallel=4 optimize ...
+/goal-plus models=openai-codex/gpt-5.6-terra,openai-codex/gpt-5.6-sol A1B3 max_parallel=4 optimize ...
+```
+
+Goal Plus obtains the catalog from Pi RPC `get_available_models` through
+`goal_plus_list_models(host="pi-rpc")`. A short id is accepted only when it
+matches one entry uniquely. Uncounted entries round-robin; `A1B3` (or
+`A*1,B*3`) becomes explicit counts that must sum to `max_parallel`. The
+runtime-generated `selected_models` are immutable
+per candidate/native session. Omitting `models` keeps Pi's current default.
+
 ## Parallel Loops
 
 Normal Pi Search follows the [Shared Plane](shared-plane.md) flow:

@@ -330,6 +330,33 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
     runtime.get_global_evidence.assert_called_once_with("agent_001")
 
 
+def test_search_create_uses_models_frozen_in_the_spec() -> None:
+    runtime = Mock()
+    runtime.create_run.return_value = "run_1"
+    tools = SearchTools(runtime)
+
+    assert tools.search_create("spec_123") == {"run_id": "run_1"}
+    runtime.create_run.assert_called_once_with(
+        "spec_123",
+        source_run_id=None,
+    )
+
+
+def test_goal_plus_list_models_delegates_to_host_adapter() -> None:
+    runtime = Mock()
+    runtime.list_available_models.return_value = {
+        "host": "pi-rpc",
+        "adapter_version": "pi-rpc-v1",
+        "models": [{"model": "openai-codex/gpt-5.6-sol"}],
+    }
+    tools = SearchTools(runtime)
+
+    assert tools.goal_plus_list_models("pi-rpc", "sol") == (
+        runtime.list_available_models.return_value
+    )
+    runtime.list_available_models.assert_called_once_with("pi-rpc", "sol")
+
+
 def test_search_tools_expose_no_lifecycle_methods() -> None:
     runtime = Mock()
     tools = SearchTools(runtime)

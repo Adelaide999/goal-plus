@@ -18,6 +18,14 @@ python benchmark.py
 python profile.py
 ```
 
+## Multi-model validation
+
+`multi-model-search-spec.json` is a two-slot Goal Plus Search spec for
+validating static model binding: one `gpt-5.6-terra` lane and one
+`gpt-5.6-sol` lane, sharing the run Annotated Evidence. The reproducible
+`scaling`-environment launch command and acceptance evidence are in
+[`multi-model-run.md`](multi-model-run.md).
+
 The target includes two intentionally obvious opportunities:
 
 - `fuse_vector_tail`: the last vector path in `model.py` is a sequence of

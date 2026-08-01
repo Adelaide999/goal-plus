@@ -23,7 +23,6 @@ def run_search_case(
     root_dir: Path,
     worker_backend: WorkerBackend = "fixed",
     fixed_answer: str | None = None,
-    max_candidates: int | None = None,
     max_parallel: int | None = None,
     worker_host: str = "pi-rpc",
     strategy_name: str = "random",
@@ -34,22 +33,7 @@ def run_search_case(
     pi_model_id: str | None = None,
     pi_thinking: str | None = None,
 ) -> dict[str, Any]:
-    if (
-        max_candidates is not None
-        and max_parallel is not None
-        and max_candidates != max_parallel
-    ):
-        raise ValueError(
-            "max_candidates is deprecated and must equal max_parallel when both "
-            "are provided"
-        )
-    parallel_num = (
-        max_parallel
-        if max_parallel is not None
-        else max_candidates
-        if max_candidates is not None
-        else 1
-    )
+    parallel_num = max_parallel if max_parallel is not None else 1
     root_dir.mkdir(parents=True, exist_ok=True)
     workspace = prepare_case_workspace(case, root_dir / "workspaces")
     spec_dict = build_search_spec(

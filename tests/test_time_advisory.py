@@ -20,7 +20,7 @@ def _codex_candidate(tmp_path: Path) -> tuple[FileSearchRuntime, str, str, str]:
         project,
         "codex",
         strategy_name="random",
-        max_candidates=1,
+        max_parallel=1,
     ).model_dump(mode="json")
     payload["strategy"]["worker_budget"] = {
         "max_runtime_seconds": 600,

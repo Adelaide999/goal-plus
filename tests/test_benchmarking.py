@@ -245,7 +245,7 @@ def test_runners_emit_paper_compatible_and_search_diagnostic_rows(tmp_path: Path
         root_dir=tmp_path / "bench-run",
         worker_backend="fixed",
         fixed_answer="B",
-        max_candidates=1,
+        max_parallel=1,
     )
     assert search["paper_result"]["mode"] == "mcp_search"
     assert search["paper_result"]["correct"] is True

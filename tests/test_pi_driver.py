@@ -73,11 +73,8 @@ def _pi_rpc_spec(project: Path) -> SearchSpec:
 def _pi_rpc_spec_with_budget(
     project: Path,
     *,
-    max_candidates: int,
     max_parallel: int,
 ) -> SearchSpec:
-    if max_candidates != max_parallel:
-        raise ValueError("legacy max_candidates must equal max_parallel")
     data = _pi_rpc_spec(project).model_dump(mode="json")
     data["budget"]["max_parallel"] = max_parallel
     return SearchSpec.model_validate(data)
@@ -357,7 +354,7 @@ def test_run_pi_search_candidate_accepts_explicit_long_worker_budget(
 def test_run_pi_search_candidate_rejects_non_pi_rpc_search_spec(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
-    frozen = runtime.freeze_spec(spec_for(project, max_candidates=1), [project / "evaluator.py"])
+    frozen = runtime.freeze_spec(spec_for(project, max_parallel=1), [project / "evaluator.py"])
     run_id = runtime.create_run(frozen.frozen_spec_id)
     plan = runtime.plan_next(run_id, requested_k=1)
     candidate = runtime.start_batch(run_id, plan.plan_id)[0]
