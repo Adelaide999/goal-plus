@@ -36,6 +36,7 @@ def test_codex_goal_plus_skill_records_modes_and_mcp_tools() -> None:
         "mode=probe",
         ".goal-plus-verifiers/",
         "`expected_outputs`",
+        '`workspace.backend="git_worktree"`',
         "/goal-plus-with-final-check",
         "/goal-plus edit",
         "/goal-plus mode=autonomous",
@@ -137,6 +138,7 @@ def test_codex_search_skill_uses_spawn_agent_and_generic_bind() -> None:
     assert "GOAL_PLUS_VERIFIER_TMPDIR" in text
     assert "VerifierWorkspaceSideEffect" in text
     assert "固定 `/tmp`" in text
+    assert '`workspace.backend="git_worktree"`' in text
 
 
 def test_codex_search_skill_projects_launch_metadata_to_current_tool_schema() -> None:

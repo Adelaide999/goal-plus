@@ -49,6 +49,10 @@ class RecordingAnnotator:
         )
 
 
+def test_outer_deadline_accepts_unix_epoch() -> None:
+    assert FileSearchRuntime._outer_deadline_epoch("1785491629") == 1785491629.0
+
+
 def test_drainer_serially_describes_pending_evidence(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     spec_data = spec_for(project, max_candidates=1).model_dump(mode="json")
@@ -363,7 +367,7 @@ def test_permanent_failure_is_not_retried_and_closed_run_does_not_publish(
     assert kick_evidence_annotator(runtime.root_dir, run_id) is False
 
 
-def test_expired_outer_deadline_never_starts_annotation(
+def test_expired_outer_deadline_never_starts_verifier_or_annotation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -377,19 +381,19 @@ def test_expired_outer_deadline_never_starts_annotation(
     plan = runtime.plan_next(run_id, requested_k=1)
     task = runtime.start_batch(run_id, plan.plan_id)[0]
     session = runtime.start_agent_session(run_id, task.candidate_id)
-    runtime.run_verifier(
-        run_id,
-        task.candidate_id,
-        agent_session_id=session.agent_session_id,
-        hypothesis="Verify at the expired outer deadline",
-    )
+    with pytest.raises(RuntimeError, match="VerifierDeadlineInsufficient"):
+        runtime.run_verifier(
+            run_id,
+            task.candidate_id,
+            agent_session_id=session.agent_session_id,
+            hypothesis="Verify at the expired outer deadline",
+        )
 
     annotation_task = runtime._load_evidence_annotation_task(
         run_id, task.candidate_id, 1
     )
-    assert annotation_task is not None
-    assert annotation_task.state == "terminal_error"
-    assert annotation_task.attempts == 0
+    assert annotation_task is None
+    assert runtime.list_iterations(run_id, task.candidate_id) == []
     assert kick_evidence_annotator(runtime.root_dir, run_id) is False
 
 

@@ -40,6 +40,7 @@ def test_pi_goal_plus_prompt_starts_with_create_call() -> None:
     assert 'worker_host: "pi-rpc"' in text
     assert 'worker_mode: "agent-session-pool"' not in text
     assert 'orchestration_mode: "parallel_loops"' in text
+    assert '`workspace.backend="git_worktree"`' in text
     assert '有限数值类型的' in text
     assert '`spec.metric_name`' in text
     assert ".goal-plus-verifiers/" in text
@@ -77,6 +78,7 @@ def test_pi_goal_plus_skill_records_modes_and_gate() -> None:
     assert 'worker_host: "pi-rpc"' in text
     assert 'worker_mode: "agent-session-pool"' not in text
     assert 'orchestration_mode: "parallel_loops"' in text
+    assert '`workspace.backend="git_worktree"`' in text
     assert "Pi 支持的 strategy name" in text
     assert "`agent_guided`、`agent` 或 `default`" in text
     assert "`random` 或 `random_mode`" in text
@@ -148,6 +150,10 @@ def test_pi_goal_plus_skill_documents_parallel_loop_policy() -> None:
     assert "运行时会拒绝" in normalized
     assert "第二份 plan" in normalized
     assert "pi_search_pool_wait_any" in text
+    assert "只是本次轮询超时" in normalized
+    assert "不能调用 `pi_search_pool_close`" in normalized
+    assert "有效最低 lease 和 closeout 边界只由 supervisor 判定" in normalized
+    assert "等待准确 snapshot 的 `active_count=0`" in normalized
     assert "pi_search_pool_continue" in text
     assert "pi_search_pool_submit" not in text
     assert "pi_search_pool_close" in text
@@ -187,6 +193,8 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     assert "view=null" in text
     assert "hypothesis" in text
     assert "git diff HEAD <commit> -- <allowed-file>" in text
+    assert "当前 Git 能解析该 commit" in text
+    assert "不要访问或 fetch peer workspace" in text
     assert "尽早创建完整候选产物" in text
     assert "任何长优化循环前" in text
     assert "一条自主 Pi Search 循环" in text
@@ -203,6 +211,8 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     assert "disposition" in text
     assert "固定产物数量" in text
     assert "理论或结构限制" in text
+    assert "公开指标饱和" in text
+    assert "同分或回滚的 Evidence 仍有信息价值" in text
     assert "10-15 distinct verifier-recorded artifacts" not in text
     assert "verifier 是评估器，不是分析服务" in text
     assert (
@@ -232,6 +242,7 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     assert "原生会话上下文可以保留推理" in text
     assert "绝不能覆盖持久化运行时证据" in text
     assert "VerifierWorkspaceSideEffect" in text
+    assert "VerifierDeadlineInsufficient" in text
     assert "candidate_action=stop_and_report" in text
     assert "立即返回" in text
     assert "candidate-local analysis scripts" not in text

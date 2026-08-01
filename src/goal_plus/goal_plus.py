@@ -34,11 +34,11 @@ EXPLORATION_MODE_LINE_PREFIX = "Goal Plus 探索模式："
 LEGACY_EXPLORATION_MODE_LINE_PREFIX = "Goal Plus exploration mode:"
 EXPLORATION_MODE_LINES = {
     "autonomous": (
-        "Goal Plus 探索模式：autonomous。为每个初始候选 worker 提供有意义的探索窗口"
-        "（host 支持按耗时 lease 时约为 15 分钟）；只要全局停止 policy 为 false，就在"
-        "现有工作区恢复每个已完成候选，让该候选自行选择下一个有证据支持的方向；外层时间"
-        "允许时最长约 1 小时。分数或排名不能导致替换，worker lease 结束也绝不会完成或"
-        "停止 Goal Plus 任务。"
+        "Goal Plus 探索模式：autonomous。以冻结的 worker budget、host 强制执行的 lease、"
+        "外层剩余时间和收尾预留作为唯一时间边界；只要全局停止 policy 为 false，就在现有"
+        "工作区恢复每个已完成候选，让该候选自行选择下一个有证据支持的方向。分数或排名"
+        "不能导致替换，轮询超时、原生 turn 或 worker lease 结束也绝不会完成或停止 "
+        "Goal Plus 任务。"
     ),
     "probe": (
         "Goal Plus 探索模式：probe。使用较短的 worker lease 或轮次预算来确定可行性、"

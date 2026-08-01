@@ -14,7 +14,10 @@ import subprocess
 import tempfile
 import threading
 import time
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
 import uuid
 from fnmatch import fnmatch
 from pathlib import Path
@@ -1596,6 +1599,35 @@ class FileSearchRuntime:
                         "worker process verifier requires a non-empty hypothesis"
                     )
 
+        if scope == "process":
+            outer_deadline = self._outer_deadline_epoch(
+                os.environ.get(OUTER_DEADLINE_ENV)
+            )
+            if outer_deadline is not None:
+                verifier_seconds = sum(
+                    float(command.timeout_seconds)
+                    + 2 * VERIFIER_TERM_GRACE_SECONDS
+                    for command in frozen.spec.process_verifiers
+                )
+                closeout_seconds = max(
+                    0.0,
+                    float(
+                        frozen.spec.strategy.config.get(
+                            "reserve_closeout_seconds", 0
+                        )
+                        or 0
+                    ),
+                )
+                remaining_seconds = outer_deadline - time.time()
+                required_seconds = verifier_seconds + closeout_seconds
+                if remaining_seconds < required_seconds:
+                    raise RuntimeError(
+                        "VerifierDeadlineInsufficient: process verifier not started; "
+                        f"{remaining_seconds:.1f}s remain, but the verifier suite may "
+                        f"use {verifier_seconds:.1f}s and closeout reserves "
+                        f"{closeout_seconds:.1f}s"
+                    )
+
         results_were_initialized = record.results_ledger_git_head is not None
         self._ensure_results_tsv(record, frozen.spec.metric_name)
         if not results_were_initialized:
@@ -2831,7 +2863,7 @@ class FileSearchRuntime:
             "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
             "process verifier 返回 keep/discard/failure disposition；非严格改善或验证失败时，runtime 会保留被测 commit 并把候选代码恢复到 candidate-local best。下一轮直接从返回后的已结算工作区继续。",
             "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
-            "Global Evidence 展示 peer 的 verifier commit、分数、disposition 和可能延迟的客观 View。view=null 只表示 annotator 尚未更新；可先按自己的方向探索，只有代码级证据确有必要时才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较。不要访问其他 candidate 的 workspace，也不要 checkout/reset peer commit。",
+            "Global Evidence 展示 peer 的 verifier commit、分数、disposition 和可能延迟的客观 View。view=null 只表示 annotator 尚未更新；可先按自己的方向探索。只有代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
         ]
         if plan.worker_policy.get("worker_agent_type"):
             instructions.append(
@@ -5372,7 +5404,6 @@ class FileSearchRuntime:
                 [
                     "git",
                     "diff",
-                    "--binary",
                     "--full-index",
                     "--no-ext-diff",
                     task.attempt_base_commit,

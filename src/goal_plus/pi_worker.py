@@ -21,6 +21,17 @@ class PiRpcError(RuntimeError):
     pass
 
 
+def _flagged_prompt_retry(error: str | None) -> str | None:
+    if not error:
+        return None
+    normalized = error.lower()
+    if "invalid prompt" not in normalized or not (
+        "usage policy" in normalized or "flagged" in normalized
+    ):
+        return None
+    return "继续当前任务：先刷新 Goal Plus 运行时上下文，再选择并验证一个实质性新方向。"
+
+
 def _bounded_error(value: Any, *, limit: int = 500) -> str | None:
     if value is None:
         return None
@@ -439,6 +450,8 @@ class _RpcClient:
         error = last_message.get("errorMessage") or last_message.get("error")
         if last_message.get("stopReason") == "error" or error:
             self._terminal_error = _bounded_error(error) or "Pi agent ended with error"
+        else:
+            self._terminal_error = None
 
     def terminal_error(self) -> str | None:
         return self._terminal_error
@@ -762,6 +775,7 @@ def run_pi_rpc_worker(
     assistant_text: str | None = None
     timed_out = False
     soft_closeout_sent = False
+    flagged_prompt_retried = False
     time_advisory_sent = False
     time_advisory: dict[str, Any] | None = None
     last_time_advisory_check = 0.0
@@ -877,6 +891,20 @@ def run_pi_rpc_worker(
                 auto_retry_pending = getattr(rpc, "auto_retry_pending", lambda: False)
                 if auto_retry_pending():
                     time.sleep(min(1.0, max(0.1, remaining)))
+                    continue
+                terminal_error = getattr(rpc, "terminal_error", lambda: None)()
+                retry_prompt = _flagged_prompt_retry(terminal_error)
+                if (
+                    retry_prompt is not None
+                    and not flagged_prompt_retried
+                    and str(launch.get("role") or "worker") == "worker"
+                    and remaining_after_state > soft_closeout_seconds
+                ):
+                    rpc.command(
+                        {"type": "prompt", "message": retry_prompt},
+                        timeout=min(60, remaining_after_state),
+                    )
+                    flagged_prompt_retried = True
                     continue
                 break
             time.sleep(min(1.0, max(0.1, remaining)))

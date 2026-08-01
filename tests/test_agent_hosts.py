@@ -358,6 +358,9 @@ def test_pi_rpc_adapter_builds_cross_process_native_session_continuation() -> No
     assert "continue_existing_agent_session=true" in payload["prompt"]
     assert "这条 launch 消息开始一次新的 host 派发" in payload["prompt"]
     assert "属于上一次派发，已不再生效" in payload["prompt"]
+    assert "公开指标达到上限" in payload["prompt"]
+    assert "至少完成一个实质性" in payload["prompt"]
+    assert "同分或回滚的 Evidence 仍有信息价值" in payload["prompt"]
 
 
 @pytest.mark.codex
