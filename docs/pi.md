@@ -51,8 +51,9 @@ This does not keep one OS process resident across completions.
 The resume launch explicitly resets dispatch-scoped deadline semantics: a
 closeout or time advisory persisted by an earlier process is historical, and
 only warnings delivered after the latest launch apply to the new budget.
-The real-host comparison and the decision not to add a persistent supervisor
-yet are recorded in [Pi Native Session Resume Smoke](pi-native-session-smoke.md).
+Each resume intentionally uses a new process; native session state and the
+candidate workspace provide continuity without requiring a persistent worker
+PID.
 
 ## Worker Spec
 
@@ -84,7 +85,7 @@ sends one closeout steer. `max_turns` is only a prompt hint.
 
 ## Parallel Loops
 
-Normal Pi Search follows the shared [Flow](flow-view.md):
+Normal Pi Search follows the [Shared Plane](shared-plane.md) flow:
 
 1. set `orchestration_mode="parallel_loops"`, then plan and materialize the
    initial candidates exactly once;

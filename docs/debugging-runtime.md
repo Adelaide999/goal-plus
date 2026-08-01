@@ -9,9 +9,10 @@ logs.
 
 ## Two Layers of State
 
-The runtime owns goal-plus records, specs, plans, candidate workspaces,
-iteration history, verifier scoring, reports, and promotion patches. Codex or
-the Pi supervisor owns worker launch, lifecycle, deadlines, and interruption.
+The runtime owns goal-plus records, specs, the initial candidate allocation,
+candidate workspaces, iteration history, verifier scoring, reports, and
+promotion patches. Codex or the Pi supervisor owns worker launch, lifecycle,
+deadlines, and interruption.
 The MCP runtime does not maintain worker lifecycle status, host-sync state, or
 worker process cancellation. Its internal Evidence annotator is the exception:
 annotation tasks and bounded retry state live under each candidate, while the
@@ -280,11 +281,11 @@ guard events, stop continuation messages, and `.gp/goal-plus/...`.
 │   └── verifier_artifacts/<path>                 # frozen verifier files (hash-pinned)
 └── runs/<run_id>/
     ├── run.json                                  # RunRecord: state, candidates_total/evaluated, best
-    ├── plans/<plan_id>.json                      # SearchPlan snapshots
+    ├── plans/<plan_id>.json                      # one initial SearchPlan allocation
     ├── candidates/<candidate_id>/
     │   ├── candidate.json                        # CandidateRecord: status, score_report, iterations[], results_ledger[]
     │   ├── task.json                             # CandidateTask snapshot
-    │   ├── plans/iteration-<n>.json              # immutable worker plan, outside candidate Git rollback
+    │   ├── evidence-annotations/iteration-<n>.json # async View task, retry, usage, optional immutable View
     │   └── logs/iteration-<n>-<verifier>-<id>.log # durable stdout/stderr per call
     ├── workspace/<candidate_id>/                 # the agent's editable workspace
     │   ├── .git/                                 # agent and runtime ledger Git history
@@ -372,9 +373,9 @@ is unchanged and Git-clean; deletion, rewriting, truncation, or a worker append
 raises `ResultsLedgerMutation`. The ledger survives same-candidate redispatch,
 is inherited by derived child workspaces, and is seeded from the selected/best
 source candidate for a successor run. It is runtime metadata, so it is excluded
-from edit-surface checks and promotion patches. Worker verifier calls consume
-the corresponding immutable plan description as `hypothesis`; workers must not
-edit this file directly.
+from edit-surface checks and promotion patches. Each worker verifier call stores
+the worker's one-line description of the realized attempt as `hypothesis`;
+workers must not edit this file directly.
 On first resume of an older candidate, a legacy `.tmp/results.tsv` is migrated
 to the workspace root; verifier-backed `iterations[]` missing from that legacy
 file are appended as recovered rows so old evidence is not silently dropped.

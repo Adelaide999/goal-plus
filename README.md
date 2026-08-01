@@ -67,12 +67,15 @@ For Codex, copy `.codex/config.example.toml` to the ignored local
 - A **Goal Plus record** is the complete user task.
 - A **search task** is one `run_id` over one frozen spec. A goal may link more
   than one search task.
-- A **round** is a persisted planning decision. New Pi/Codex
-  `parallel_loops` runs have exactly one initial round.
+- An initial **SearchPlan** allocates the fixed candidate lanes. It is not a
+  per-iteration plan protocol.
 - A **candidate** is a long-lived autonomous loop in one isolated workspace
   with verifier history.
 - A **worker session** is a host context/provenance handle. Worker lifecycle
   belongs to the host, not the Search runtime.
+- The **shared plane** contains the frozen contract, exact verifier commits,
+  Global Evidence, asynchronous objective Views, and selection state. It does
+  not expose peer reasoning or peer workspaces.
 - A **verifier concern** is worker advice. Only the main agent can confirm it;
   confirmation fences the run before all host workers are stopped and a
   successor spec/run is created.
@@ -82,7 +85,7 @@ once, validate every completion, update the verifier-backed global best, and
 resume that same candidate while no global stop condition is true. Main does
 not choose later technical directions or replace low-scoring candidates.
 Slower workers do not block completed work from being evaluated. See
-[Flow](docs/flow-view.md).
+[Shared Plane](docs/shared-plane.md).
 
 Keep one run for one valid evaluation/edit contract. If a successor is
 unavoidable, `source_run_id` preserves bounded frontier/features/scoped
@@ -102,9 +105,7 @@ promotion stays retryable in `ready_to_promote` and emits no patch.
 
 | Need | Read |
 |---|---|
-| End-to-end ownership and parallel-loop flow | [Flow](docs/flow-view.md) |
-| Architecture, state, and invariants | [Design](docs/design.md) |
-| Candidate-local best rollback design | [Candidate Rollback](docs/candidate-local-best-rollback.md) |
+| Architecture, shared Evidence, rollback, and end-to-end flow | [Shared Plane](docs/shared-plane.md) |
 | Current MCP and Pi-local tools | [API](docs/api.md) |
 | Host capability comparison | [Agent Host Adapters](docs/agent-host-adapters.md) |
 | Runtime and host logs | [Debugging](docs/debugging-runtime.md) |
