@@ -111,10 +111,15 @@ pool job; ordinary overrides remain dispatch-scoped.
 Worker process verifier calls require a one-line `hypothesis` describing the
 realized attempt. `view=null` in Global Evidence means annotation has not been
 published yet; workers continue independently and do not wait or poll.
-Each worker settlement snapshots the exact attempt base/head and the resolved
-annotator model/provider into an internal task. Explicit
-`strategy.evidence_annotator.provider` configuration stores only the API-key
-environment variable name, never the key value.
+Each worker settlement snapshots the exact attempt base/head, worker host, and
+resolved annotator model/provider into an internal task. Codex runs annotations
+through ephemeral `codex exec`; Pi runs them through ephemeral, tool-free
+`pi --mode json`. Explicit `strategy.evidence_annotator.provider` applies to
+Codex and stores only the API-key environment variable name, never the key
+value. Pi inherits `PI_MODEL` and `PI_PROVIDER` by default; an annotator model
+qualified as `provider/model` or an explicit
+`strategy.evidence_annotator.pi_provider` selects an independent Pi provider.
+Pi resolves that provider's model and credentials from `PI_CODING_AGENT_DIR`.
 
 `search_get_agent_observability` has one versioned cross-host schema. Schema
 version 2 adds `execution.provider` and `usage.processed_tokens`; Pi processed
