@@ -263,6 +263,7 @@ def kick_evidence_annotator(root_dir: Path | str, run_id: str) -> bool:
                     stderr=subprocess.STDOUT,
                     close_fds=True,
                     env=env,
+                    start_new_session=True,
                 )
             write_json(
                 _worker_path(root_dir, run_id),

@@ -363,9 +363,11 @@ def test_kick_is_single_flight_and_non_blocking(
     )
 
     launches: list[list[str]] = []
+    launch_options: list[dict] = []
 
-    def fake_popen(command: list[str], **_kwargs):
+    def fake_popen(command: list[str], **kwargs):
         launches.append(command)
+        launch_options.append(kwargs)
         return SimpleNamespace(pid=43210)
 
     monkeypatch.delenv("GOAL_PLUS_EVIDENCE_ANNOTATOR_DISABLED")
@@ -375,6 +377,7 @@ def test_kick_is_single_flight_and_non_blocking(
     assert kick_evidence_annotator(runtime.root_dir, run_id) is True
     assert kick_evidence_annotator(runtime.root_dir, run_id) is False
     assert len(launches) == 1
+    assert launch_options[0]["start_new_session"] is True
 
 
 def test_permanent_failure_is_not_retried_and_closed_run_does_not_publish(
