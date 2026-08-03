@@ -98,66 +98,50 @@ class RecordingAnnotator:
         )
 
 
-def test_annotator_instructions_require_tool_views_and_adoption_analysis() -> None:
-    assert "published_tools 非空" in ANNOTATOR_INSTRUCTIONS
-    assert "恰好一个 tool_views" in ANNOTATOR_INSTRUCTIONS
-    assert "tool_adoptions 非空" in ANNOTATOR_INSTRUCTIONS
-    assert "不要汇总工具收益" in ANNOTATOR_INSTRUCTIONS
-
-
-def test_supplemental_output_must_match_dynamic_comparison_basis() -> None:
-    comparison_basis = [
-        {"candidate_id": "candidate-a", "iteration": 1, "commit": "abc123"},
-        {"candidate_id": "candidate-b", "iteration": 2, "commit": "def456"},
-    ]
+def test_acceptance_output_must_match_frozen_criterion_order() -> None:
+    contract = {
+        "criteria": [
+            {"id": "issue_coverage"},
+            {"id": "regression_risk"},
+        ]
+    }
     output = EvidenceAnnotationOutput.model_validate(
         {
             "description": "Changed the requested behavior.",
-            "supplemental_evaluation": {
-                "summary": "The change makes a different tradeoff.",
-                "dimensions": [
+            "acceptance_view": {
+                "summary": "Public evidence is incomplete.",
+                "criteria": [
                     {
-                        "name": "Data access strategy",
-                        "finding": "The implementation replaces a scan with an index.",
+                        "criterion_id": "issue_coverage",
+                        "status": "covered",
                         "confidence": "high",
                         "evidence": ["implementation diff"],
-                    }
-                ],
-                "comparisons": [
+                        "rationale": "The requested branch is implemented.",
+                    },
                     {
-                        **reference,
-                        "relation": "different",
-                        "rationale": "The candidates use distinct access strategies.",
-                        "evidence": ["candidate diff"],
-                    }
-                    for reference in comparison_basis
+                        "criterion_id": "regression_risk",
+                        "status": "unknown",
+                        "confidence": "low",
+                        "evidence": [],
+                        "rationale": "No regression test evidence is available.",
+                    },
                 ],
-                "limitations": ["Runtime behavior was not independently measured."],
             },
         }
     )
 
-    CodexEvidenceAnnotator._validate_supplemental_output(
-        output,
-        enabled=True,
-        comparison_basis=comparison_basis,
-    )
+    CodexEvidenceAnnotator._validate_acceptance_output(output, contract)
     reversed_output = output.model_copy(
         update={
-            "supplemental_evaluation": output.supplemental_evaluation.model_copy(
-                update={
-                    "comparisons": list(
-                        reversed(output.supplemental_evaluation.comparisons)
-                    )
-                }
+            "acceptance_view": output.acceptance_view.model_copy(
+                update={"criteria": list(reversed(output.acceptance_view.criteria))}
             )
         }
     )
     with pytest.raises(AnnotationOutputError, match="do not match"):
-        CodexEvidenceAnnotator._validate_supplemental_output(
+        CodexEvidenceAnnotator._validate_acceptance_output(
             reversed_output,
-            enabled=True,
-            comparison_basis=comparison_basis,
+            contract,
         )
 
 

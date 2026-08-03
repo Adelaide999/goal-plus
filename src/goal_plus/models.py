@@ -59,30 +59,6 @@ class Budget(SearchModel):
 
 WorkspaceBackend = Literal["copy", "git_worktree"]
 IterationDisposition = Literal["keep", "retain", "discard", "failure"]
-SharedToolPublishStatus = Literal[
-    "legacy_unknown", "not_staged",
-    "skipped_unattributed_verifier", "skipped_failed_verifier", "published",
-    "partially_published", "consumed_unchanged", "snapshot_rejected",
-    "snapshot_error",
-]
-ToolizationSignal = Literal[
-    "repeated_sequence",
-    "domain_probe",
-    "parser_or_trace",
-    "peer_setup_reduction",
-]
-ToolizationExclusion = Literal[
-    "single_common_command",
-    "logic_free_wrapper",
-    "restricted_artifact",
-    "candidate_private_state",
-    "duplicate_snapshot",
-]
-ToolizationAdvisory = Literal[
-    "toolization_review_missing",
-    "toolization_stage_missing",
-    "toolization_decision_mismatch",
-]
 VerifierInvalidationReason = Literal[
     "verifier_contract_invalid",
     "verifier_coverage_inadequate",
@@ -254,44 +230,61 @@ class ResolvedEvidenceAnnotatorProfile(SearchModel):
     provider: ResolvedCodexProvider | None = None
 
 
-EvaluationConfidence = Literal["high", "medium", "low"]
-
-
-ComparisonRelation = Literal[
-    "similar",
-    "different",
-    "tradeoff",
-    "complementary",
+AcceptanceCriterionStatus = Literal[
+    "covered",
+    "partial",
+    "missing",
     "unknown",
+    "not_applicable",
 ]
+AcceptanceConfidence = Literal["high", "medium", "low"]
 
 
-class SupplementalDimension(SearchModel):
-    name: str = Field(min_length=1, max_length=120)
-    finding: str = Field(min_length=1, max_length=1000)
-    confidence: EvaluationConfidence
-    evidence: list[str] = Field(default_factory=list, max_length=8)
+class AcceptanceCriterion(SearchModel):
+    id: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    category: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    importance: Literal["high", "medium", "low"] = "medium"
+    evidence_hints: list[str] = Field(default_factory=list)
 
-    @field_validator("name", "finding", mode="before")
+    @field_validator("category", "description")
     @classmethod
-    def text_must_be_one_line(cls, value: Any) -> Any:
-        if not isinstance(value, str):
-            return value
-        if "\n" in value or "\r" in value:
-            raise ValueError("supplemental evaluation text must be one line")
-        return " ".join(value.strip().split())
+    def text_must_be_nonempty(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            raise ValueError("acceptance criterion text must be non-empty")
+        return normalized
 
 
-class EvidenceComparisonReference(SearchModel):
-    candidate_id: str = Field(min_length=1)
-    iteration: int = Field(ge=1)
-    commit: str = Field(min_length=1)
+class AcceptanceViewSpec(SearchModel):
+    rubric_name: str = Field(min_length=1)
+    benchmark_context: str = Field(min_length=1)
+    criteria: list[AcceptanceCriterion] = Field(min_length=1, max_length=12)
+    tie_policy: Literal["retain_latest"] = "retain_latest"
+    affects_final_result: Literal[False] = False
+
+    @field_validator("rubric_name", "benchmark_context")
+    @classmethod
+    def text_must_be_nonempty(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            raise ValueError("acceptance view text must be non-empty")
+        return normalized
+
+    @model_validator(mode="after")
+    def criterion_ids_must_be_unique(self) -> "AcceptanceViewSpec":
+        criterion_ids = [criterion.id for criterion in self.criteria]
+        if len(criterion_ids) != len(set(criterion_ids)):
+            raise ValueError("acceptance criterion ids must be unique")
+        return self
 
 
-class PeerComparison(EvidenceComparisonReference):
-    relation: ComparisonRelation
+class AcceptanceCriterionAssessment(SearchModel):
+    criterion_id: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    status: AcceptanceCriterionStatus
+    confidence: AcceptanceConfidence
+    evidence: list[str] = Field(default_factory=list)
     rationale: str = Field(min_length=1, max_length=1000)
-    evidence: list[str] = Field(default_factory=list, max_length=8)
 
     @field_validator("rationale", mode="before")
     @classmethod
@@ -299,15 +292,13 @@ class PeerComparison(EvidenceComparisonReference):
         if not isinstance(value, str):
             return value
         if "\n" in value or "\r" in value:
-            raise ValueError("peer comparison rationale must be one line")
+            raise ValueError("acceptance rationale must be one line")
         return " ".join(value.strip().split())
 
 
-class SupplementalEvaluation(SearchModel):
+class AcceptanceViewAssessment(SearchModel):
     summary: str = Field(min_length=1, max_length=1000)
-    dimensions: list[SupplementalDimension] = Field(min_length=1, max_length=8)
-    comparisons: list[PeerComparison] = Field(default_factory=list, max_length=8)
-    limitations: list[str] = Field(default_factory=list, max_length=8)
+    criteria: list[AcceptanceCriterionAssessment] = Field(min_length=1)
 
     @field_validator("summary", mode="before")
     @classmethod
@@ -315,87 +306,8 @@ class SupplementalEvaluation(SearchModel):
         if not isinstance(value, str):
             return value
         if "\n" in value or "\r" in value:
-            raise ValueError("supplemental evaluation summary must be one line")
+            raise ValueError("acceptance summary must be one line")
         return " ".join(value.strip().split())
-
-    @field_validator("limitations", mode="before")
-    @classmethod
-    def limitations_must_be_one_line(cls, value: Any) -> Any:
-        if not isinstance(value, list):
-            return value
-        normalized = []
-        for item in value:
-            if not isinstance(item, str):
-                normalized.append(item)
-                continue
-            if "\n" in item or "\r" in item:
-                raise ValueError("supplemental evaluation limitation must be one line")
-            normalized.append(" ".join(item.strip().split()))
-        return normalized
-
-
-class ToolViewRef(SearchModel):
-    tool_id: str = Field(min_length=1)
-    summary: str = Field(min_length=1, max_length=1000)
-    capabilities: list[str] = Field(max_length=16)
-    when_to_use: str = Field(min_length=1, max_length=1000)
-    entrypoint: str | None = Field(max_length=500)
-    inputs: list[str] = Field(max_length=16)
-    outputs: list[str] = Field(max_length=16)
-    dependencies: list[str] = Field(max_length=16)
-    adoption_steps: list[str] = Field(max_length=16)
-    limitations: list[str] = Field(max_length=16)
-
-    @field_validator(
-        "capabilities", "inputs", "outputs", "dependencies",
-        "adoption_steps", "limitations", mode="before"
-    )
-    @classmethod
-    def normalize_items(cls, value: Any) -> Any:
-        if not isinstance(value, list):
-            return value
-        normalized = []
-        for item in value:
-            if not isinstance(item, str):
-                normalized.append(item)
-                continue
-            text = " ".join(item.strip().split())
-            if not text or len(text) > 500:
-                raise ValueError("tool view list items must be non-empty and at most 500 characters")
-            normalized.append(text)
-        return normalized
-
-
-class ToolViewRecord(ToolViewRef):
-    snapshot_hash: str = Field(min_length=1)
-    source_commit: str = Field(min_length=1)
-    evidence_scope: str = Field(min_length=1, max_length=1000)
-
-
-class ToolAdoptionRecord(SearchModel):
-    tool_id: str = Field(min_length=1)
-    snapshot_hash: str = Field(min_length=1)
-    receipt_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
-
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_legacy_declaration(cls, value: Any) -> Any:
-        if not isinstance(value, dict) or "mode" not in value:
-            return value
-        payload = dict(value)
-        payload.pop("mode", None)
-        return payload
-
-
-class ToolCopyReceipt(SearchModel):
-    receipt_id: str = Field(min_length=1)
-    tool_id: str = Field(min_length=1)
-    snapshot_hash: str = Field(min_length=1)
-    source_commit: str | None = None
-    agent_session_id: str = Field(min_length=1)
-    candidate_base_git_head: str = Field(min_length=1)
-    inbox_path: Path
-    copied_at: str
 
 
 class EvidenceViewRecord(SearchModel):
@@ -404,12 +316,7 @@ class EvidenceViewRecord(SearchModel):
     iteration: int = Field(ge=1)
     attempt_commit: str = Field(min_length=1)
     description: str = Field(min_length=1, max_length=1000)
-    supplemental_evaluation: SupplementalEvaluation | None = None
-    comparison_basis: list[EvidenceComparisonReference] = Field(
-        default_factory=list,
-        max_length=8,
-    )
-    tool_views: list[ToolViewRecord] = Field(default_factory=list)
+    acceptance_view: AcceptanceViewAssessment | None = None
     created_at: str
 
     @field_validator("description", mode="before")
@@ -578,6 +485,10 @@ class SearchSpec(SearchModel):
     promotion_verifiers: list[VerifierCommand] = Field(default_factory=list)
     constraints: dict[str, Any] = Field(default_factory=dict)
     root_hypotheses: list[str] = Field(default_factory=list)
+    acceptance_view: AcceptanceViewSpec | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     strategy: StrategySpec = Field(default_factory=StrategySpec)
     workspace: WorkspaceSpec = Field(default_factory=WorkspaceSpec)
     shared_dir: SharedDirSpec = Field(default_factory=SharedDirSpec)
@@ -603,6 +514,10 @@ class SearchSpecDraft(SearchModel):
     promotion_verifiers: list[VerifierCommand] | None = None
     constraints: dict[str, Any] | None = None
     root_hypotheses: list[str] | None = None
+    acceptance_view: AcceptanceViewSpec | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     strategy: StrategySpec | None = None
     workspace: WorkspaceSpec | None = None
     shared_dir: SharedDirSpec | None = None

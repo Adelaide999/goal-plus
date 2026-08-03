@@ -8,16 +8,11 @@ import subprocess
 import pytest
 
 from goal_plus.models import (
+    AcceptanceViewAssessment,
     EvidenceViewRecord,
     SearchSpec,
-    SupplementalEvaluation,
 )
-from goal_plus.runtime import (
-    EXTERNAL_EVIDENCE_DIR_ENV,
-    FileSearchRuntime,
-    SUPPLEMENTAL_EVALUATION_ENABLED_ENV,
-)
-from goal_plus.tools import SearchTools
+from goal_plus.runtime import FileSearchRuntime
 from tests._runtime_helpers import git_commit_all, make_project, spec_for
 
 
@@ -26,6 +21,7 @@ def _search_with_candidates(
     count: int,
     *,
     strategy_updates: dict | None = None,
+    acceptance_view: dict | None = None,
 ) -> tuple[FileSearchRuntime, str, list[tuple[str, str, Path]]]:
     project = make_project(tmp_path)
     (project / "evaluator.py").write_text(
@@ -38,6 +34,8 @@ def _search_with_candidates(
     spec_data = spec_for(project, max_parallel=count).model_dump(mode="json")
     spec_data["workspace"] = {"backend": "git_worktree"}
     spec_data["strategy"].update(strategy_updates or {})
+    if acceptance_view is not None:
+        spec_data["acceptance_view"] = acceptance_view
     runtime = FileSearchRuntime(tmp_path / ".gp")
     frozen = runtime.freeze_spec(
         SearchSpec.model_validate(spec_data),
@@ -108,7 +106,7 @@ def test_global_evidence_is_immediate_and_view_is_late_bound(tmp_path: Path) -> 
         "discard",
     ]
     assert all(entry["commit"] and entry["view"] is None for entry in view)
-    assert all("supplemental_available" not in entry for entry in view)
+    assert all(entry["acceptance_view"] is None for entry in view)
 
     discarded_commit = view[-1]["commit"]
     annotation_task = runtime._load_evidence_annotation_task(run_id, second[0], 2)
@@ -157,313 +155,79 @@ def test_global_evidence_is_immediate_and_view_is_late_bound(tmp_path: Path) -> 
     assert _git(first[2], "show", f"{peer_commit}:initial_program.py") == "VALUE = 2"
 
 
-def test_external_evaluation_attaches_only_to_its_exact_evidence(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime, run_id, [candidate] = _search_with_candidates(tmp_path, 1)
+def test_global_evidence_presents_structured_acceptance_view(tmp_path: Path) -> None:
+    contract = {
+        "rubric_name": "EdgeBench hidden generalization",
+        "benchmark_context": "Local and hidden workloads differ.",
+        "criteria": [
+            {
+                "id": "input_generalization",
+                "category": "hidden_generalization",
+                "description": "Handle valid inputs beyond public examples.",
+                "importance": "high",
+            }
+        ],
+    }
+    runtime, run_id, [candidate] = _search_with_candidates(
+        tmp_path,
+        1,
+        acceptance_view=contract,
+    )
     candidate_id, session_id, workspace = candidate
-    (workspace / "initial_program.py").write_text("VALUE = 3\n", encoding="utf-8")
+    (workspace / "initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
     report = runtime.run_verifier(
         run_id,
         candidate_id,
         agent_session_id=session_id,
-        hypothesis="Raise the candidate value",
+        hypothesis="Generalize the implementation",
     )
-    feedback_path = tmp_path / "evaluations" / "auto-1.json"
-    feedback_path.parent.mkdir()
-    monkeypatch.setenv(EXTERNAL_EVIDENCE_DIR_ENV, str(feedback_path.parent))
-    payload = {
-        "source": "edgebench",
-        "artifact": {
-            "source": "goal_plus_best",
-            "run_id": run_id,
-            "candidate_id": candidate_id,
-            "iteration": report.best_iteration,
-            "commit": report.best_git_head,
-            "local_score": 3.0,
-        },
-        "evaluation": {
-            "round_id": "auto-1",
-            "status": "completed",
-            "valid": True,
-            "score": 42,
-            "score_0_100": 73.5,
-            "summary": "Official evaluation completed",
-        },
-    }
-    feedback_path.write_text(json.dumps(payload), encoding="utf-8")
+    assert report.disposition == "keep"
 
-    [entry] = runtime.get_global_evidence(session_id)
-    assert entry["external_evaluations"] == [
-        {**payload["evaluation"], "source": "edgebench"}
-    ]
+    context = runtime._evidence_annotation_context(run_id, candidate_id, 1)
+    assert context["acceptance_contract"]["rubric_name"] == contract["rubric_name"]
+    assert context["acceptance_contract"]["affects_final_result"] is False
 
-    payload["artifact"]["commit"] = "stale-commit"
-    feedback_path.write_text(json.dumps(payload), encoding="utf-8")
-    [entry] = runtime.get_global_evidence(session_id)
-    assert "external_evaluations" not in entry
-
-
-def test_independent_mode_does_not_leak_external_evaluation_to_peers(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime, run_id, candidates = _search_with_candidates(
-        tmp_path,
-        2,
-        strategy_updates={"config": {"global_evidence_mode": "independent"}},
-    )
-    reports = []
-    for candidate_id, session_id, workspace in candidates:
-        (workspace / "initial_program.py").write_text(
-            "VALUE = 1\n", encoding="utf-8"
-        )
-        reports.append(
-            runtime.run_verifier(
-                run_id,
-                candidate_id,
-                agent_session_id=session_id,
-                hypothesis="Set the candidate value",
-            )
-        )
-
-    feedback_path = tmp_path / "evaluations" / "auto-1.json"
-    feedback_path.parent.mkdir()
-    monkeypatch.setenv(EXTERNAL_EVIDENCE_DIR_ENV, str(feedback_path.parent))
-    feedback_path.write_text(
-        json.dumps(
-            {
-                "source": "edgebench",
-                "artifact": {
-                    "source": "goal_plus_best",
-                    "run_id": run_id,
-                    "candidate_id": candidates[1][0],
-                    "iteration": reports[1].best_iteration,
-                    "commit": reports[1].best_git_head,
-                },
-                "evaluation": {"round_id": "auto-1", "score": 42},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    first_view = runtime.get_global_evidence(candidates[0][1])
-    second_view = runtime.get_global_evidence(candidates[1][1])
-    assert all("external_evaluations" not in entry for entry in first_view)
-    assert second_view[0]["external_evaluations"][0]["score"] == 42
-
-
-@pytest.mark.parametrize("mode", ["auto", "independent"])
-def test_post_verifier_injection_respects_global_evidence_mode(
-    tmp_path: Path,
-    mode: str,
-) -> None:
-    runtime, run_id, candidates = _search_with_candidates(
-        tmp_path,
-        2,
-        strategy_updates={"config": {"global_evidence_mode": mode}},
-    )
-    reports = []
-    for candidate_id, session_id, workspace in candidates:
-        (workspace / "initial_program.py").write_text(
-            "VALUE = 1\n", encoding="utf-8"
-        )
-        reports.append(
-            SearchTools(runtime).search_run_verifier(
-                run_id,
-                candidate_id,
-                agent_session_id=session_id,
-                hypothesis="Set the candidate value",
-            )
-        )
-
-    explicit_candidates = [
-        [entry["candidate_id"] for entry in runtime.get_global_evidence(session_id)]
-        for _, session_id, _ in candidates
-    ]
-    expected_explicit = (
-        [[candidates[0][0], candidates[1][0]]] * 2
-        if mode == "auto"
-        else [[candidates[0][0]], [candidates[1][0]]]
-    )
-    assert explicit_candidates == expected_explicit
-    if mode == "independent":
-        assert all("global_evidence_injected" not in report for report in reports)
-        return
-
-    visible_candidates = [
-        [entry["candidate_id"] for entry in report["global_evidence_snapshot"]]
-        for report in reports
-    ]
-    expected_injected = [
-        [candidates[0][0]],
-        [candidates[0][0], candidates[1][0]],
-    ]
-    assert visible_candidates == expected_injected
-    assert [report["global_evidence_entry_count"] for report in reports] == [1, 2]
-
-
-def test_global_evidence_presents_open_evaluation_with_dynamic_peer_basis(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv(SUPPLEMENTAL_EVALUATION_ENABLED_ENV, "1")
-    runtime, run_id, candidates = _search_with_candidates(tmp_path, 2)
-    first, second = candidates
-    goal_path = runtime.root_dir / "goal-plus" / "gp_test" / "goal.json"
-    goal_path.parent.mkdir(parents=True)
-    goal_path.write_text(
-        json.dumps(
-            {
-                "raw_goal": "Fix the public cache invalidation issue.",
-                "goal_revision": 1,
-                "goal_revisions": [
-                    {
-                        "revision": 1,
-                        "raw_goal": "Fix the public cache invalidation issue.",
-                    }
-                ],
-                "search_tasks": [{"goal_revision": 1, "run_id": run_id}],
-            }
-        ),
-        encoding="utf-8",
-    )
-    for candidate, value, hypothesis in (
-        (first, 1, "Use the direct implementation"),
-        (first, 3, "Improve the direct implementation"),
-        (second, 2, "Use the cached implementation"),
-    ):
-        candidate_id, session_id, workspace = candidate
-        (workspace / "initial_program.py").write_text(
-            f"VALUE = {value}\n", encoding="utf-8"
-        )
-        report = runtime.run_verifier(
-            run_id,
-            candidate_id,
-            agent_session_id=session_id,
-            hypothesis=hypothesis,
-        )
-        assert report.disposition == "keep"
-
-    first_task = runtime._load_evidence_annotation_task(run_id, first[0], 1)
-    task = runtime._load_evidence_annotation_task(run_id, second[0], 1)
-    assert first_task is not None and first_task.comparison_basis == []
-    assert task is not None and task.supplemental_evaluation_enabled is True
-    assert [item.candidate_id for item in task.comparison_basis] == [first[0]]
-    assert [item.iteration for item in task.comparison_basis] == [2]
-    task_payload = task.model_dump(mode="json")
-    assert "task_context" not in task_payload
-    assert task.task_context_source == "goal_plus_raw_goal"
-    assert task.task_context_ref == "goal_plus:gp_test:revision:1"
-    assert len(task.task_context_sha256 or "") == 64
-
-    context = runtime._evidence_annotation_context(run_id, second[0], 1)
-    assert "acceptance_contract" not in context
-    assert context["task_context"] == "Fix the public cache invalidation issue."
-    assert context["task_context_source"] == "goal_plus_raw_goal"
-    assert context["supplemental_evaluation_enabled"] is True
-    assert context["changed_files"] == ["initial_program.py"]
-    assert context["verifier_contract"][0]["role"] == "ranking_signal"
-    assert context["verifier_contract"][0]["command"][-1] == "evaluator.py"
-    assert context["comparison_basis"] == [
-        item.model_dump(mode="json") for item in task.comparison_basis
-    ]
-    assert context["peer_evidence"][0]["candidate_id"] == first[0]
-
-    peer = task.comparison_basis[0]
+    task = runtime._load_evidence_annotation_task(run_id, candidate_id, 1)
+    assert task is not None
     runtime._write_evidence_annotation_task(
         task.model_copy(
             update={
                 "state": "completed",
                 "view": EvidenceViewRecord(
                     run_id=run_id,
-                    candidate_id=second[0],
+                    candidate_id=candidate_id,
                     iteration=1,
                     attempt_commit=task.attempt_commit,
-                    description="Changed the implementation to use a cached value.",
-                    supplemental_evaluation=SupplementalEvaluation.model_validate(
+                    description="Changed the implementation to handle more inputs.",
+                    acceptance_view=AcceptanceViewAssessment.model_validate(
                         {
-                            "summary": "The cache is faster but adds invalidation risk.",
-                            "dimensions": [
+                            "summary": "The diff provides partial public evidence.",
+                            "criteria": [
                                 {
-                                    "name": "Cache coherence",
-                                    "finding": "The diff introduces a cache without an invalidation path.",
+                                    "criterion_id": "input_generalization",
+                                    "status": "partial",
                                     "confidence": "medium",
                                     "evidence": ["initial_program.py diff"],
+                                    "rationale": "The broader branch is visible, but hidden behavior is unknown.",
                                 }
                             ],
-                            "comparisons": [
-                                {
-                                    **peer.model_dump(mode="json"),
-                                    "relation": "tradeoff",
-                                    "rationale": "This version scores higher but has more stateful risk.",
-                                    "evidence": ["hard score", "candidate diff"],
-                                }
-                            ],
-                            "limitations": ["No hidden evaluator evidence is available."],
                         }
                     ),
-                    comparison_basis=task.comparison_basis,
                     created_at="2026-01-01T00:00:00Z",
                 ),
             }
         )
     )
 
-    entries = runtime.get_global_evidence(second[1])
-    entry = next(item for item in entries if item["candidate_id"] == second[0])
-    assert "task_context" not in entry
-    assert "task_context_source" not in entry
-    assert entry["score"] == 2.0
-    assert entry["supplemental_available"] is True
-    assert "supplemental_evaluation" not in entry
-
-    detail = runtime.get_evidence_detail(first[1], second[0], 1)
-    assert detail["commit"] == task.attempt_commit
-    assert detail["supplemental_evaluation"]["dimensions"][0]["name"] == (
-        "Cache coherence"
-    )
-    assert detail["supplemental_evaluation"]["comparisons"][0][
-        "candidate_id"
-    ] == first[0]
-
-    completed_task = runtime._load_evidence_annotation_task(run_id, second[0], 1)
-    assert completed_task is not None and completed_task.view is not None
-    runtime._write_evidence_annotation_task(
-        completed_task.model_copy(
-            update={
-                "state": "completed",
-                "view": completed_task.view.model_copy(
-                    update={"attempt_commit": "stale"}
-                ),
-            }
-        )
-    )
-    with pytest.raises(RuntimeError, match="does not match iteration"):
-        runtime.get_evidence_detail(first[1], second[0], 1)
-
-
-def test_supplemental_capability_and_detail_respect_disabled_and_independent_modes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime, run_id, candidates = _search_with_candidates(
-        tmp_path,
-        2,
-        strategy_updates={"config": {"global_evidence_mode": "independent"}},
-    )
-    first, second = candidates
-    disabled = runtime.get_agent_context(first[1])
-    assert disabled["supplemental_evaluation_enabled"] is False
-    with pytest.raises(RuntimeError, match="disabled"):
-        runtime.get_evidence_detail(first[1], first[0], 1)
-
-    monkeypatch.setenv(SUPPLEMENTAL_EVALUATION_ENABLED_ENV, "1")
-    enabled = runtime.get_agent_context(first[1])
-    assert enabled["supplemental_evaluation_enabled"] is True
-    with pytest.raises(PermissionError, match="caller's candidate"):
-        runtime.get_evidence_detail(first[1], second[0], 1)
+    [entry] = runtime.get_global_evidence(session_id)
+    assert entry["score"] == 1.0
+    assert entry["acceptance_view"]["criteria"][0] == {
+        "criterion_id": "input_generalization",
+        "status": "partial",
+        "confidence": "medium",
+        "evidence": ["initial_program.py diff"],
+        "rationale": "The broader branch is visible, but hidden behavior is unknown.",
+    }
 
 
 def test_worker_hypothesis_is_required_and_parent_evidence_is_private(

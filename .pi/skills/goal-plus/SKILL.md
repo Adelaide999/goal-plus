@@ -55,21 +55,20 @@ ranking verifier 必须输出一个最终 JSON 对象，其中包含有限数值
 直接填写，不要根据校验错误猜字段。`search_freeze_spec` 会重复 verifier 预检，
 契约无效时会在候选 worker 启动前拒绝 spec。
 
-原生 Pi 命令使用显式角色名：`main=A` 切换 Main，`annotator=B` 冻结 Evidence
-Annotation 模型，`workers=C,D` 分配 Candidate Worker。只解析用户实际填写的角色；省略的
-角色保持现有 host 默认或继承语义，不从另一个显式角色猜默认值。扩展在模型轮次开始前解析
-并切换 Main，并把规范化后的完整 `provider/model` Main/Annotator 路由注入启动上下文。
-冻结 SearchSpec 时把显式 Annotator 写入 `strategy.evidence_annotator.model`。
+如果 process metric 稀疏、容易饱和，或只是最终 hidden/official 指标的公开代理，根据公开
+issue、benchmark 说明、代码和测试生成任务特定的 `acceptance_view`。通常冻结 3–8 项
+criterion，覆盖实际需求、边界与异常路径、分支/状态空间、回归与 API/行为兼容，并按
+benchmark 补充 hidden 泛化风险或性能/资源余量。不要机械复制通用清单；只保留对当前任务
+有区分度且能从 diff、公开测试或硬 verifier 结果观察的项目。不得读取、猜测或写入 hidden
+数据、gold patch 或最终 judge 结果。所有 criterion 都是 `must assess` 语义，不使用
+`required`；固定 `tie_policy="retain_latest"` 且 `affects_final_result=false`。
+Acceptance View 只引导搜索并显示在 Global Evidence，不参与最终硬 PASS/FAIL、数值分数、
+selection 或 promotion gate。硬指标已经充分对齐时省略该字段。Goal Mode 始终不创建它。
+benchmark 机制消融可通过环境变量 `GOAL_PLUS_ACCEPTANCE_VIEW_ENABLED=0` 关闭该策略；
+Spec Discovery 开始时检查该变量，关闭时不要生成 `acceptance_view`。冻结运行时也会强制
+移除该字段，恢复硬分持平即回滚的默认行为。
 
-不要在 SearchSpec 中生成软 rubric 或预设评价维度。Spec Discovery 只能冻结硬 metric、
-verifier、编辑范围、预算和 promotion 合同。开放式补充评价发生在每次 Evidence 结算之后：
-独立 annotator 根据当前候选累计 diff 和当时其他已结算候选的快照，自行提出与任务实际
-相关的观察维度并动态比较。它不读取 hidden 数据，不产生总分或最终推荐，也不改变硬
-PASS/FAIL、数值排名、candidate-local 结算、selection 或 promotion。MainAgent
-不负责定义这些维度，也不要根据 benchmark 类型向 annotator 预埋固定清单。
-
-如果原始命令包含 `workers=...` 或兼容别名 `models=...`，先调用
-`goal_plus_list_models(host="pi-rpc")`，将用户
+如果原始命令包含 `models=...`，先调用 `goal_plus_list_models(host="pi-rpc")`，将用户
 填写的名称解析为唯一可用模型并冻结到 `strategy.models`；不存在或不唯一时，在创建
 run 前直接返回错误。`workers=A,B max_parallel=4` 表示 A、B、A、B；
 `workers=A,B A1B3 max_parallel=4`（等价写法 `workers=A*1,B*3`）表示显式
@@ -332,22 +331,18 @@ candidate-local history 由运行时拥有，不是本地 plan 文件。worker �
 `context.results` 和继承的 `context.results_tsv` 作为恢复来源。每轮修改前读取
 `search_get_global_evidence`。其他 candidate 的尝试只通过这个窄视图披露；`view=null`
 只表示 annotator 尚未更新，worker 不等待或轮询，先依据 commit、score、disposition 和
-自己的推理独立探索。`context.supplemental_evaluation_enabled=false` 时不要
-等待或尝试读取补充评价；启用时仅以 `supplemental_available` 标记可展开的行。仅在线路
-停滞、结构性分数跃升、hidden 泛化风险或官方/本地结果
-背离时，通过 `search_get_evidence_detail` 按需读取完整评价，且不重复读取同一不可变行。
-完整内容包含 annotator 根据实际 Evidence 后验提出的观察维度，以及 annotation task 创建时
-对其他已结算候选的动态比较。它不来自
-FrozenSpec，不作为硬分、推荐或 promotion gate；worker 可据此形成假设，但应独立核对。仅在
+自己的推理独立探索。冻结 spec 启用 Acceptance View 时，逐项观察用于发现多个候选共同
+missing、partial 或 unknown 的高重要度搜索缺口，但不作为硬分或 promotion gate。仅在
 worker 独立判断确有必要时，才在当前 workspace 使用
 `git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace，
 也不 checkout/reset peer commit。worker verifier 用一句话 `hypothesis` 客观概括本轮实际
 尝试。运行时校验工作区根目录
 `results.tsv`，为每份返回报告追加且只追加一条记录，并提交账本。worker 绝不直接编辑它。
-process verifier 同时返回 candidate-local `disposition`：严格改善为 `keep`，同分为
-`retain` 并成为最新工作基线，退化为 `discard`，无有效排名证据为 `failure`。runtime
-保留实际被测 commit，并只在 `discard`/`failure` 后恢复 candidate best；worker 不得
-自行 reset verifier-backed 状态。开放式补充评价不改变结算、硬 score 或最终 PASS/FAIL。
+process verifier 同时返回 candidate-local `disposition`：严格改善为 `keep`；启用
+Acceptance View 时，同硬分有效尝试为 `retain` 并成为下一轮基线；未启用时同分、以及
+所有退化尝试为 `discard`；无有效排名证据为 `failure`。Acceptance View 不改变硬 score
+或最终 PASS/FAIL。runtime 保留实际被测 commit，并在 `discard`/`failure` 后恢复
+candidate best；worker 不得自行 reset verifier-backed 状态。
 如果 worker 提供 handoff，后续 iteration history 会包含最新结构化 `research_summary`；
 应使用其中任务特定的结果和问题，避免重复失败变体。
 

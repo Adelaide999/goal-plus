@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from goal_plus.models import (
+    AcceptanceViewSpec,
     AgentHostHandle,
     AgentSessionRecord,
     Budget,
@@ -25,144 +26,8 @@ from goal_plus.models import (
     WorkerBudget,
     ModelSpec,
 )
-from goal_plus.runtime import (
-    FileSearchRuntime,
-    SUPPLEMENTAL_EVALUATION_ENABLED_ENV,
-    SUPPLEMENTAL_EVALUATION_REQUIRED_ENV,
-)
+from goal_plus.runtime import ACCEPTANCE_VIEW_ENABLED_ENV, FileSearchRuntime
 from tests._runtime_helpers import make_project
-
-
-def test_legacy_tool_adoption_declaration_drops_mode() -> None:
-    adoption = ToolAdoptionRecord.model_validate(
-        {
-            "tool_id": "tool_001",
-            "snapshot_hash": "abc123",
-            "mode": "adapted",
-        }
-    )
-
-    assert adoption.model_dump(mode="json") == {
-        "tool_id": "tool_001",
-        "snapshot_hash": "abc123",
-    }
-
-
-def test_candidate_task_drops_legacy_shared_dir_path() -> None:
-    task = CandidateTask.model_validate(
-        {
-            "run_id": "run_1",
-            "candidate_id": "c001",
-            "hypothesis": "try a change",
-            "workspace": ".",
-            "shared_dir": ".gp/runs/run_1/shared",
-            "allowed_files": ["initial_program.py"],
-            "denied_files": ["evaluator.py"],
-        }
-    )
-
-    assert "shared_dir" not in task.model_dump(mode="json")
-
-
-def test_legacy_iteration_infers_shared_tool_publish_status() -> None:
-    asset = {
-        "asset_id": "legacy-asset",
-        "candidate_id": "c001",
-        "iteration": 1,
-        "snapshot_hash": "abc123",
-        "name": "legacy helper",
-        "source_relative_path": "legacy-helper",
-        "read_only_path": "/tmp/legacy-helper",
-        "files": ["helper.py"],
-        "size_bytes": 12,
-        "created_at": "2026-08-03T00:00:00Z",
-    }
-
-    published = IterationRecord.model_validate(
-        {
-            "iteration": 1,
-            "shared_tools": [asset],
-            "created_at": "2026-08-03T00:00:00Z",
-        }
-    )
-    partial = IterationRecord.model_validate(
-        {
-            "iteration": 1,
-            "shared_tools": [asset],
-            "shared_tool_errors": ["second asset rejected"],
-            "created_at": "2026-08-03T00:00:00Z",
-        }
-    )
-    unknown = IterationRecord.model_validate(
-        {"iteration": 1, "created_at": "2026-08-03T00:00:00Z"}
-    )
-
-    assert published.shared_tool_publish_status == "published"
-    assert partial.shared_tool_publish_status == "partially_published"
-    assert unknown.shared_tool_publish_status == "legacy_unknown"
-    assert not {
-        "adopted_tools",
-        "adoption_confounded",
-        "toolization_decision",
-        "toolization_advisories",
-    } & set(
-        unknown.model_dump(mode="json")
-    )
-
-
-def test_toolization_decision_enforces_positive_signals_and_exclusions() -> None:
-    staged = ToolizationDecision.model_validate(
-        {
-            "outcome": "staged",
-            "signals": ["repeated_sequence", "parser_or_trace"],
-            "rationale": "  Encodes a repeated trace workflow.  ",
-            "tool_names": ["trace-checker"],
-        }
-    )
-    not_applicable = ToolizationDecision.model_validate(
-        {
-            "outcome": "not_applicable",
-            "signals": [],
-            "exclusion": "single_common_command",
-            "rationale": "Only one ordinary command was used.",
-            "tool_names": [],
-        }
-    )
-
-    assert staged.rationale == "Encodes a repeated trace workflow."
-    assert not_applicable.exclusion == "single_common_command"
-
-    for payload, message in [
-        (
-            {
-                "outcome": "staged",
-                "signals": [],
-                "rationale": "No positive signal.",
-                "tool_names": ["helper"],
-            },
-            "requires at least one signal",
-        ),
-        (
-            {
-                "outcome": "staged",
-                "signals": ["domain_probe"],
-                "rationale": "No named staged tool.",
-                "tool_names": [],
-            },
-            "requires at least one tool name",
-        ),
-        (
-            {
-                "outcome": "not_applicable",
-                "signals": [],
-                "rationale": "No concrete exclusion.",
-                "tool_names": [],
-            },
-            "requires an exclusion",
-        ),
-    ]:
-        with pytest.raises(ValidationError, match=message):
-            ToolizationDecision.model_validate(payload)
 
 
 def valid_spec_dict() -> dict:
@@ -201,40 +66,88 @@ def test_search_spec_parses_nested_models_and_serializes_enums() -> None:
     assert "models" not in dumped["strategy"]
 
 
-def test_required_supplemental_evaluation_rejects_disabled_mode(
+def test_search_spec_freezes_non_gating_acceptance_view() -> None:
+    data = valid_spec_dict()
+    data["acceptance_view"] = {
+        "rubric_name": "SWE issue coverage",
+        "benchmark_context": "The process gate only checks for a valid patch.",
+        "criteria": [
+            {
+                "id": "issue_requirements",
+                "category": "issue_coverage",
+                "description": "Cover each behavior requested by the issue.",
+                "importance": "high",
+                "evidence_hints": ["changed implementation", "focused tests"],
+            },
+            {
+                "id": "regression_risk",
+                "category": "regression",
+                "description": "Preserve adjacent behavior and API compatibility.",
+            },
+        ],
+    }
+
+    spec = SearchSpec.model_validate(data)
+
+    assert isinstance(spec.acceptance_view, AcceptanceViewSpec)
+    assert spec.acceptance_view.affects_final_result is False
+    assert spec.acceptance_view.tie_policy == "retain_latest"
+    dumped = spec.model_dump(mode="json")["acceptance_view"]
+    assert dumped["criteria"][0]["id"] == "issue_requirements"
+    assert "required" not in dumped["criteria"][0]
+
+
+def test_acceptance_view_rejects_gating_or_ambiguous_criteria() -> None:
+    data = valid_spec_dict()
+    data["acceptance_view"] = {
+        "rubric_name": "invalid",
+        "benchmark_context": "invalid contract",
+        "affects_final_result": True,
+        "criteria": [
+            {
+                "id": "coverage",
+                "category": "coverage",
+                "description": "Inspect coverage.",
+                "required": True,
+            }
+        ],
+    }
+    with pytest.raises(ValidationError):
+        SearchSpec.model_validate(data)
+
+    del data["acceptance_view"]["affects_final_result"]
+    del data["acceptance_view"]["criteria"][0]["required"]
+    data["acceptance_view"]["criteria"].append(
+        dict(data["acceptance_view"]["criteria"][0])
+    )
+    with pytest.raises(ValidationError, match="ids must be unique"):
+        SearchSpec.model_validate(data)
+
+
+def test_acceptance_view_ablation_is_enforced_at_freeze(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = make_project(tmp_path)
     data = valid_spec_dict()
     data["source_path"] = str(project)
-    monkeypatch.setenv(SUPPLEMENTAL_EVALUATION_ENABLED_ENV, "0")
-    monkeypatch.setenv(SUPPLEMENTAL_EVALUATION_REQUIRED_ENV, "1")
-
-    with pytest.raises(
-        ValueError,
-        match="requires GOAL_PLUS_SUPPLEMENTAL_EVALUATION_ENABLED=1",
-    ):
-        FileSearchRuntime(tmp_path / ".gp-missing").freeze_spec(
-            SearchSpec.model_validate(data), [project / "evaluator.py"]
-        )
-
-
-def test_supplemental_evaluation_does_not_change_frozen_spec(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project = make_project(tmp_path)
-    data = valid_spec_dict()
-    data["source_path"] = str(project)
-    monkeypatch.setenv(SUPPLEMENTAL_EVALUATION_ENABLED_ENV, "1")
-    monkeypatch.setenv(SUPPLEMENTAL_EVALUATION_REQUIRED_ENV, "1")
+    data["acceptance_view"] = {
+        "rubric_name": "SWE issue coverage",
+        "benchmark_context": "The hard process metric is sparse.",
+        "criteria": [
+            {
+                "id": "issue_requirements",
+                "category": "issue_coverage",
+                "description": "Cover each behavior requested by the issue.",
+            }
+        ],
+    }
+    monkeypatch.setenv(ACCEPTANCE_VIEW_ENABLED_ENV, "0")
 
     frozen = FileSearchRuntime(tmp_path / ".gp").freeze_spec(
         SearchSpec.model_validate(data), [project / "evaluator.py"]
     )
 
-    frozen_spec = frozen.spec.model_dump(mode="json")
-    assert "acceptance_view" not in frozen_spec
-    assert "supplemental_evaluation" not in frozen_spec
+    assert frozen.spec.acceptance_view is None
 
 
 def test_goal_plus_spec_draft_exposes_typed_partial_search_spec() -> None:

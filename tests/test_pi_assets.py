@@ -389,8 +389,9 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     assert "parameters: JsonArgs" not in text
     assert "goal_plus_record_triage: Type.Object" in text
     assert "const SearchSpecSchema = Type.Object" in text
-    assert "const AcceptanceViewSpec = Type.Object" not in text
-    assert "acceptance_view: Type.Optional" not in text
+    assert "const AcceptanceViewSpec = Type.Object" in text
+    assert "acceptance_view: Type.Optional" in text
+    assert 'affects_final_result: Type.Optional(Type.Literal(false))' in text
     assert 'Type.Literal("parallel_loops")' in text
     assert "search_invalidate_run: Type.Object" in text
     assert "source_run_id: Type.Optional(" in text
@@ -475,7 +476,7 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     assert "INSTALL_HINT" in text
 
 
-def test_pi_assets_use_open_posthoc_evaluation_as_non_gating_feedback() -> None:
+def test_pi_assets_use_acceptance_view_as_non_gating_search_feedback() -> None:
     skill = (ROOT / ".pi" / "skills" / "goal-plus" / "SKILL.md").read_text(
         encoding="utf-8"
     )
@@ -484,11 +485,10 @@ def test_pi_assets_use_open_posthoc_evaluation_as_non_gating_feedback() -> None:
     )
     combined = "\n".join((skill, worker))
 
-    assert "软 rubric 或预设评价维度" in skill
-    assert "开放式补充评价发生在每次 Evidence 结算之后" in skill
-    assert "不来自 FrozenSpec" in combined
-    assert "动态比较" in combined
-    assert "不改变结算、硬 score 或最终 PASS/FAIL" in combined
+    assert "Goal Mode 始终不创建它" in skill
+    assert '`tie_policy="retain_latest"`' in skill
+    assert "`retain`" in combined
+    assert "不改变硬 score 或最终 PASS/FAIL" in combined
 
 
 def test_pi_docs_record_runner_logs_and_native_stop_gate() -> None:
