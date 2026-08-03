@@ -185,6 +185,36 @@ def test_run_pi_search_candidate_reuses_current_worker_evidence(
     assert result["final_score_report"]["process_passed"] is True
 
 
+def test_run_pi_search_candidate_does_not_verify_unchanged_workspace(
+    tmp_path: Path,
+) -> None:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    frozen = runtime.freeze_spec(_pi_rpc_spec(project), [project / "evaluator.py"])
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    plan = runtime.plan_next(run_id, requested_k=1)
+    candidate = runtime.start_batch(run_id, plan.plan_id)[0]
+
+    def fake_worker(launch: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "host": "pi-rpc",
+            "external_id": launch["session_id"],
+            "metadata": {"assistant_text": "no material change"},
+        }
+
+    result = run_pi_search_candidate(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_id=candidate.candidate_id,
+        final_verify=True,
+        worker_runner=fake_worker,
+    )
+
+    assert runtime.list_iterations(run_id, candidate.candidate_id) == []
+    assert result["final_score_report"] is None
+    assert result["steps"][-1]["status"] == "skipped_unchanged_workspace"
+
+
 def test_run_pi_search_candidate_skips_duplicate_final_verify_for_infrastructure_failure(
     tmp_path: Path,
 ) -> None:

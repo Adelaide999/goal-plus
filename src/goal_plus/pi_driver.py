@@ -131,6 +131,36 @@ def _current_process_evidence(
     }
 
 
+def _candidate_has_unverified_changes(
+    tools: SearchTools,
+    run_id: str,
+    candidate_id: str,
+) -> bool:
+    runtime = tools.runtime
+    run = runtime._load_run(run_id)
+    frozen = runtime._load_frozen_spec(run.frozen_spec_id)
+    record = runtime._load_candidate_record(run_id, candidate_id)
+    state = runtime._candidate_artifact_state(run, frozen, record)
+    meaningful_status = runtime._git_status(
+        record.task.workspace,
+        ignore_runtime_noise=True,
+    )
+    settled_head = record.results_ledger_git_head
+    if not settled_head or not state.git_head:
+        return bool(state.changed_files or meaningful_status)
+    if state.git_head != settled_head:
+        try:
+            if runtime._git_changed_files(
+                record.task.workspace,
+                settled_head,
+                state.git_head,
+            ):
+                return True
+        except Exception:
+            return True
+    return bool(meaningful_status)
+
+
 def _pi_resume_agent_session_id(
     tools: SearchTools,
     *,
@@ -366,6 +396,18 @@ def run_pi_search_candidate(
                 "evidence_agent_session_id": current_evidence[
                     "evidence_agent_session_id"
                 ],
+            }
+        )
+    elif final_verify and not _candidate_has_unverified_changes(
+        tools,
+        run_id,
+        candidate_id,
+    ):
+        steps.append(
+            {
+                "tool": "search_run_verifier",
+                "candidate_id": candidate_id,
+                "status": "skipped_unchanged_workspace",
             }
         )
     elif final_verify:

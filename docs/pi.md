@@ -131,8 +131,11 @@ submit after initial pool creation and never replaces a candidate because of
 low score or lack of improvement. A `candidate_ready` event is published only
 after the driver has bound the handle, released any minimum lease, and confirmed
 durable Evidence for the current artifact. An exhausted unsatisfied lease emits
-`timed_out` instead. The driver reuses matching worker Evidence instead of adding
-a duplicate parent process iteration; parent verification is only a fallback.
+`timed_out` instead. While a minimum lease is active, Pi `agent_end` queues the
+next turn in the same process and native session until the configured closeout
+point. The driver reuses matching worker Evidence instead of adding a duplicate
+parent process iteration. Parent verification is only a fallback for a changed,
+unverified artifact; an unchanged workspace does not create a baseline iteration.
 
 There is no public synchronous candidate/batch runner. Pool open owns the
 initial fixed lane set; pool continue owns later dispatches for those same

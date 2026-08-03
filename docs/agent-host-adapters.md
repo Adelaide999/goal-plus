@@ -101,10 +101,11 @@ Codex supports a lower-bound single-worker AutoResearch lease through
 satisfied, while `max_runtime_seconds` remains the independent parent-watchdog
 upper bound. The adapter requires the lease to release before the parent soft
 closeout, preventing the two controls from racing. Pi exposes the same fields,
-but its host-local pool supervisor enforces them cumulatively across
-cross-process resumes of the same native session. Each resume receives only the
-remaining max runtime; infrastructure failure and pool/outer closeout terminate
-the lease.
+and its worker-role `agent_end` handler continues the same live Pi process and
+native session until closeout. The host-local pool supervisor remains the crash
+recovery boundary and enforces the lease cumulatively across cross-process
+resumes. Each resume receives only the remaining max runtime; infrastructure
+failure and pool/outer closeout terminate the lease.
 
 `strategy.worker_launch` carries optional host launch preferences. Codex maps
 `model`, `reasoning_effort`, and `service_tier` when exposed; Pi maps model and

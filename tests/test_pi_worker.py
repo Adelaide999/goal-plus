@@ -367,7 +367,15 @@ def test_run_pi_rpc_worker_returns_run_delta_metrics(
             "root": str(tmp_path / ".search"),
             "cwd": str(cwd),
             "prompt": "do work",
-            "budget_control": {"max_runtime_seconds": 30},
+            "budget_control": {
+                "max_runtime_seconds": 30,
+                "soft_closeout_seconds": 10,
+                "autoresearch_lease": {
+                    "mode": "pool_supervisor",
+                    "min_runtime_seconds": 20,
+                    "min_verifier_runs": 1,
+                },
+            },
             "model_pattern": "gpt-5.4-mini",
             "thinking_level": "high",
             "continuation": "native_session",
@@ -424,6 +432,7 @@ def test_run_pi_rpc_worker_returns_run_delta_metrics(
     )
     assert popen_env["GOAL_PLUS_SOURCE_PATH"] == str(pi_worker.default_extension_path().parents[2])
     assert popen_env["GOAL_PLUS_PI_ROLE"] == "worker"
+    assert int(popen_env["GOAL_PLUS_PI_WORKER_CONTINUE_UNTIL_MS"]) > 0
     assert handle["metadata"]["raw_logging"] is False
     assert handle["metadata"]["text_log"] is None
     assert handle["metadata"]["session_file"] == str(session_dir / "2026_agent_1.jsonl")

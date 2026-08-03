@@ -411,6 +411,7 @@ def test_pi_rpc_adapter_exposes_supervisor_autoresearch_lease() -> None:
         "start_event": "initial_pool_dispatch",
         "cumulative_across_dispatches": True,
     }
+    assert payload["budget_control"]["soft_closeout_seconds"] == 120
 
 
 @pytest.mark.pi
