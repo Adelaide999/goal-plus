@@ -171,7 +171,7 @@ class EvidenceAnnotatorSpec(SearchModel):
     model: str | None = None
     pi_provider: str | None = None
     reasoning_effort: str | None = None
-    timeout_seconds: int = Field(default=900, gt=0, le=900)
+    timeout_seconds: int = Field(default=1800, gt=0, le=1800)
     provider: "EvidenceAnnotatorProviderSpec | None" = None
 
     @field_validator("model", "pi_provider", "reasoning_effort")
@@ -223,7 +223,7 @@ class ResolvedEvidenceAnnotatorProfile(SearchModel):
     model: str | None = None
     pi_provider: str | None = Field(default=None, min_length=1)
     reasoning_effort: str | None = None
-    timeout_seconds: int = Field(gt=0, le=900)
+    timeout_seconds: int = Field(gt=0, le=1800)
     codex_home: str | None = None
     pi_home: str | None = None
     provider: ResolvedCodexProvider | None = None

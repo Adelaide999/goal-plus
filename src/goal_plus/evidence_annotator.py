@@ -420,7 +420,7 @@ class CodexEvidenceAnnotator:
         config = dict(context.get("annotator") or {})
         if not self._still_active(context):
             raise PermanentAnnotationError("annotation run is closed or expired")
-        timeout = float(config.get("timeout_seconds") or 900)
+        timeout = float(config.get("timeout_seconds") or 1800)
         outer_deadline = FileSearchRuntime._outer_deadline_epoch(
             context.get("outer_deadline_at")
         )
@@ -648,7 +648,7 @@ class PiEvidenceAnnotator:
         config = dict(context.get("annotator") or {})
         if not CodexEvidenceAnnotator._still_active(context):
             raise PermanentAnnotationError("annotation run is closed or expired")
-        timeout = float(config.get("timeout_seconds") or 900)
+        timeout = float(config.get("timeout_seconds") or 1800)
         outer_deadline = FileSearchRuntime._outer_deadline_epoch(
             context.get("outer_deadline_at")
         )
