@@ -169,16 +169,25 @@ class SelectedModel(SearchModel):
 
 class EvidenceAnnotatorSpec(SearchModel):
     model: str | None = None
+    pi_provider: str | None = None
     reasoning_effort: str | None = None
-    timeout_seconds: int = Field(default=300, gt=0, le=600)
+    timeout_seconds: int = Field(default=900, gt=0, le=900)
     provider: "EvidenceAnnotatorProviderSpec | None" = None
 
-    @field_validator("model", "reasoning_effort")
+    @field_validator("model", "pi_provider", "reasoning_effort")
     @classmethod
     def values_must_be_nonempty(cls, value: str | None) -> str | None:
         if value is not None and not value.strip():
             raise ValueError("annotator option must be non-empty when provided")
         return value
+
+    @model_validator(mode="after")
+    def provider_options_are_host_specific(self) -> "EvidenceAnnotatorSpec":
+        if self.provider is not None and self.pi_provider is not None:
+            raise ValueError(
+                "annotator provider and pi_provider cannot both be configured"
+            )
+        return self
 
 
 class EvidenceAnnotatorProviderSpec(SearchModel):
@@ -210,10 +219,13 @@ class ResolvedCodexProvider(SearchModel):
 
 
 class ResolvedEvidenceAnnotatorProfile(SearchModel):
+    host: AgentHostKind = "codex"
     model: str | None = None
+    pi_provider: str | None = Field(default=None, min_length=1)
     reasoning_effort: str | None = None
-    timeout_seconds: int = Field(gt=0, le=600)
+    timeout_seconds: int = Field(gt=0, le=900)
     codex_home: str | None = None
+    pi_home: str | None = None
     provider: ResolvedCodexProvider | None = None
 
 

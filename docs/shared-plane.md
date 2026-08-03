@@ -135,7 +135,9 @@ Global Evidence 只包含 worker 的 process-verifier 尝试。parent fallback v
 
 ## 客观 View
 
-`view` 是绑定到准确 Evidence identity 的异步、不可变 annotation。Annotator 可读取：
+`view` 是绑定到准确 Evidence identity 的异步、不可变 annotation。后台 drainer 按
+SearchSpec 的 `worker_host` 选择 Codex 或 Pi 的一次性无工具执行模式；不会为了
+annotation 跨用另一个 host。Annotator 可读取：
 
 - candidate 的一句 `hypothesis`；
 - 从本轮 settled base 到 attempt commit 的完整 diff；

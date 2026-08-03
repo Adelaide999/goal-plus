@@ -286,15 +286,24 @@ def test_evidence_annotator_config_is_optional_and_overridable() -> None:
             },
         }
     )
+    pi_explicit = StrategySpec(
+        worker_host="pi-rpc",
+        evidence_annotator={
+            "model": "deepseek-chat",
+            "pi_provider": "deepseek",
+        },
+    )
 
     assert inherited.model_dump(mode="json")["evidence_annotator"] == {
         "model": None,
+        "pi_provider": None,
         "reasoning_effort": None,
-        "timeout_seconds": 300,
+        "timeout_seconds": 900,
         "provider": None,
     }
     assert explicit.model_dump(mode="json")["evidence_annotator"] == {
         "model": "gpt-5.6-sol",
+        "pi_provider": None,
         "reasoning_effort": "medium",
         "timeout_seconds": 90,
         "provider": {
@@ -304,6 +313,13 @@ def test_evidence_annotator_config_is_optional_and_overridable() -> None:
             "api_key_env": "ANNOTATOR_API_KEY",
             "wire_api": "responses",
         },
+    }
+    assert pi_explicit.model_dump(mode="json")["evidence_annotator"] == {
+        "model": "deepseek-chat",
+        "pi_provider": "deepseek",
+        "reasoning_effort": None,
+        "timeout_seconds": 900,
+        "provider": None,
     }
 
 

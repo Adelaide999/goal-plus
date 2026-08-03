@@ -212,6 +212,7 @@ def test_annotator_config_overrides_then_inherits_worker_launch(
 
     task = runtime._load_evidence_annotation_task(run_id, candidate_id, 1)
     assert task is not None and task.profile is not None
+    assert task.profile.host == "codex"
     assert task.profile.model == "worker-model"
     assert task.profile.reasoning_effort == "low"
     assert task.profile.timeout_seconds == 90
@@ -243,9 +244,14 @@ def test_annotator_config_overrides_then_inherits_worker_launch(
     assert continued_context["annotator"]["model"] == "worker-model"
 
 
-def test_pi_worker_model_is_not_reused_as_a_codex_annotator_model(
+def test_pi_worker_model_is_inherited_by_pi_annotator(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    pi_home = tmp_path / "pi-home"
+    pi_home.mkdir()
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_home))
+    monkeypatch.setenv("PI_PROVIDER", "bench-openai")
     runtime, run_id, [candidate] = _search_with_candidates(
         tmp_path,
         1,
@@ -253,7 +259,7 @@ def test_pi_worker_model_is_not_reused_as_a_codex_annotator_model(
             "worker_host": "pi-rpc",
             "worker_budget": {"max_runtime_seconds": 60},
             "worker_launch": {
-                "model": "bench-openai/gpt-test",
+                "model": "gpt-test",
                 "reasoning_effort": "high",
             },
         },
@@ -268,10 +274,100 @@ def test_pi_worker_model_is_not_reused_as_a_codex_annotator_model(
     )
 
     task = runtime._load_evidence_annotation_task(run_id, candidate_id, 1)
-    assert task is not None
-    assert task.profile is None
-    assert task.state == "terminal_error"
-    assert "pi-rpc" in (task.last_error or "")
+    assert task is not None and task.profile is not None
+    assert task.state == "pending"
+    assert task.profile.host == "pi-rpc"
+    assert task.profile.model == "gpt-test"
+    assert task.profile.pi_provider == "bench-openai"
+    assert task.profile.reasoning_effort == "high"
+    assert task.profile.pi_home == str(pi_home)
+    assert task.profile.codex_home is None
+    assert task.profile.provider is None
+    context = runtime._evidence_annotation_context(run_id, candidate_id, 1)
+    assert context["annotator"]["pi_provider"] == "bench-openai"
+
+
+def test_pi_annotator_inherits_host_provider_and_model_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pi_home = tmp_path / "pi-home"
+    pi_home.mkdir()
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_home))
+    monkeypatch.setenv("PI_PROVIDER", "glm-proxy")
+    monkeypatch.setenv("PI_MODEL", "GLM-5.2")
+    runtime, run_id, [candidate] = _search_with_candidates(
+        tmp_path,
+        1,
+        strategy_updates={
+            "worker_host": "pi-rpc",
+            "worker_budget": {"max_runtime_seconds": 60},
+        },
+    )
+    candidate_id, session_id, workspace = candidate
+    (workspace / "initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
+    runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Set the Pi candidate value",
+    )
+
+    task = runtime._load_evidence_annotation_task(run_id, candidate_id, 1)
+    assert task is not None and task.profile is not None
+    assert task.profile.model == "GLM-5.2"
+    assert task.profile.pi_provider == "glm-proxy"
+
+
+@pytest.mark.parametrize(
+    "annotator_config",
+    [
+        {"model": "deepseek/deepseek-chat", "reasoning_effort": "low"},
+        {
+            "model": "deepseek-chat",
+            "pi_provider": "deepseek",
+            "reasoning_effort": "low",
+        },
+    ],
+)
+def test_pi_annotator_can_override_inherited_worker_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    annotator_config: dict[str, str],
+) -> None:
+    pi_home = tmp_path / "pi-home"
+    pi_home.mkdir()
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_home))
+    monkeypatch.setenv("PI_PROVIDER", "glm-proxy")
+    runtime, run_id, [candidate] = _search_with_candidates(
+        tmp_path,
+        1,
+        strategy_updates={
+            "worker_host": "pi-rpc",
+            "worker_budget": {"max_runtime_seconds": 60},
+            "worker_launch": {
+                "model": "GLM-5.2",
+                "reasoning_effort": "high",
+            },
+            "evidence_annotator": annotator_config,
+        },
+    )
+    candidate_id, session_id, workspace = candidate
+    (workspace / "initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
+    runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Set the Pi candidate value",
+    )
+
+    task = runtime._load_evidence_annotation_task(run_id, candidate_id, 1)
+    assert task is not None and task.profile is not None
+    assert task.state == "pending"
+    assert task.profile.host == "pi-rpc"
+    assert task.profile.model == annotator_config["model"]
+    assert task.profile.pi_provider == "deepseek"
+    assert task.profile.reasoning_effort == "low"
 
 
 def test_evidence_commit_captures_change_back_to_source(tmp_path: Path) -> None:

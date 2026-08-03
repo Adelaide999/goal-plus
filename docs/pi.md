@@ -16,6 +16,14 @@ RPC, print, and JSON modes. It persists the active id when the Pi session is
 persistent, injects hidden context, gates selected writes/Search calls, and
 runs a native turn-level stop gate. This is no host process Stop hook.
 
+For Pi Search runs, asynchronous Evidence annotation also stays on Pi. The
+run-scoped drainer uses an ephemeral `pi --mode json --no-session --no-tools`
+process, inherits the Pi worker model/provider unless explicitly overridden,
+and reads provider configuration from `PI_CODING_AGENT_DIR`. A qualified
+annotator model (`provider/model`) or `evidence_annotator.pi_provider` can select
+a provider independent of the Search worker. Verifier settlement never waits
+for this process.
+
 `/goal-plus edit`, `/goal-plus resume`, and `/goal-plus-with-final-check` share
 the same goal revision semantics as Codex. Required checks run through a
 separate read-only Pi RPC reviewer.
