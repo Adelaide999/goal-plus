@@ -361,7 +361,7 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     assert "search_invalidate_run: Type.Object" in text
     assert "source_run_id: Type.Optional(" in text
     assert 'pattern: "^run_"' in text
-    assert "初始 run 必须省略 source_run_id" in text
+    assert "初始 run 必须省略 source_run_id，或在 strict schema 下传 null" in text
     assert "const SearchSpecDraftSchema = Type.Partial(SearchSpecSchema)" in text
     assert "spec: SearchSpecSchema" in text
     assert "search_spec: SearchSpecDraftSchema" in text
@@ -382,6 +382,10 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
         "search_create: Type.Object", 1
     )[0]
     assert "spec: LooseObject" not in freeze_schema
+    create_schema = text.split("search_create: Type.Object", 1)[1].split(
+        "search_status: Type.Object", 1
+    )[0]
+    assert "Type.Null()" in create_schema
     annotator_schema = text.split("const EvidenceAnnotator = Type.Object", 1)[
         1
     ].split("const ModelSpec = Type.Object", 1)[0]

@@ -135,8 +135,9 @@ subagent 负责其候选工作区内的瓶颈分析、假设选择、特性迁�
 
 1. 调用 `search_freeze_spec`；如果后续 cycle 保持相同 verifier 和编辑契约，
    可复用现有 `frozen_spec_id`
-2. `search_create`。首个 run 必须省略 `source_run_id`；只有创建真实后继 run 时才传入
-   已存在的准确 `run_*` ID，绝不能传入 `initial` 或 `in_progress`
+2. `search_create`。首个 run 必须省略 `source_run_id`；如果 strict tool schema 要求
+   该属性则传 `null`。只有创建真实后继 run 时才传入已存在的准确 `run_*` ID，绝不能
+   传入 `initial` 或 `in_progress`
 3. `goal_plus_link_search_run`
 4. 调用且只调用一次 `search_plan_next(requested_k=budget.max_parallel)`，再调用且只调用
    一次 `search_start_batch`，创建全部初始候选。运行时会拒绝 `parallel_loops` 模式下的
