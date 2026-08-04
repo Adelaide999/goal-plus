@@ -275,6 +275,9 @@ def test_strategy_spec_accepts_codex_worker_launch_options() -> None:
 
 def test_evidence_annotator_config_is_optional_and_overridable() -> None:
     inherited = StrategySpec()
+    extended_timeout = StrategySpec(
+        evidence_annotator={"timeout_seconds": 1800}
+    )
     explicit = StrategySpec(
         evidence_annotator={
             "model": "gpt-5.6-sol",
@@ -286,15 +289,27 @@ def test_evidence_annotator_config_is_optional_and_overridable() -> None:
             },
         }
     )
+    pi_explicit = StrategySpec(
+        worker_host="pi-rpc",
+        evidence_annotator={
+            "model": "deepseek-chat",
+            "pi_provider": "deepseek",
+        },
+    )
 
     assert inherited.model_dump(mode="json")["evidence_annotator"] == {
         "model": None,
+        "pi_provider": None,
         "reasoning_effort": None,
-        "timeout_seconds": 300,
+        "timeout_seconds": 1800,
         "provider": None,
     }
+    assert extended_timeout.evidence_annotator.timeout_seconds == 1800
+    with pytest.raises(ValidationError):
+        StrategySpec(evidence_annotator={"timeout_seconds": 1801})
     assert explicit.model_dump(mode="json")["evidence_annotator"] == {
         "model": "gpt-5.6-sol",
+        "pi_provider": None,
         "reasoning_effort": "medium",
         "timeout_seconds": 90,
         "provider": {
@@ -304,6 +319,13 @@ def test_evidence_annotator_config_is_optional_and_overridable() -> None:
             "api_key_env": "ANNOTATOR_API_KEY",
             "wire_api": "responses",
         },
+    }
+    assert pi_explicit.model_dump(mode="json")["evidence_annotator"] == {
+        "model": "deepseek-chat",
+        "pi_provider": "deepseek",
+        "reasoning_effort": None,
+        "timeout_seconds": 1800,
+        "provider": None,
     }
 
 

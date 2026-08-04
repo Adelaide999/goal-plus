@@ -7,6 +7,7 @@ import { type TSchema, Type } from "typebox";
 const role = process.env.GOAL_PLUS_PI_ROLE || "main";
 const runtimeRoot = process.env.GOAL_PLUS_ROOT || ".gp";
 const sourcePath = process.env.GOAL_PLUS_SOURCE_PATH;
+const workerContinueUntilMs = Number(process.env.GOAL_PLUS_PI_WORKER_CONTINUE_UNTIL_MS || "0");
 const modeArgIndex = process.argv.indexOf("--mode");
 const isPrintLikeInvocation =
 	process.argv.includes("-p") ||
@@ -20,6 +21,7 @@ let sawContext = false;
 let activeGoalPlusId = process.env.GOAL_PLUS_ID;
 let cachedGoalStatus: GoalPlusStatusPayload | undefined;
 let continuationCount = 0;
+let workerContinuationCount = 0;
 let activeGoalStartedAt: string | undefined;
 let activeGoalStartEntryCount = 0;
 
@@ -1341,7 +1343,6 @@ export default function (pi: ExtensionAPI) {
 		};
 	});
 	pi.on("agent_end", async (event, ctx) => {
-		if (role !== "main" || !activeGoalPlusId) return;
 		const lastMessage = event.messages.at(-1);
 		if (
 			lastMessage?.role === "assistant" &&
@@ -1350,6 +1351,28 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		if (ctx.hasPendingMessages()) return;
+		if (role === "worker") {
+			if (
+				!Number.isFinite(workerContinueUntilMs) ||
+				workerContinueUntilMs <= 0 ||
+				Date.now() >= workerContinueUntilMs
+			) {
+				return;
+			}
+			workerContinuationCount += 1;
+			pi.sendMessage(
+				{
+					customType: "goal-plus-worker-continuation",
+					content:
+						"继续当前 Candidate 会话。lease 尚未进入 closeout；刷新运行时上下文和可见证据，推进一个实质方向。只有产物发生实质变化后才运行 verifier，不要重复验证未修改的产物。",
+					display: false,
+					details: { workerContinuationCount, workerContinueUntilMs },
+				},
+				{ triggerTurn: true, deliverAs: "followUp" },
+			);
+			return;
+		}
+		if (role !== "main" || !activeGoalPlusId) return;
 		const commandCtx = commandContextFrom(ctx);
 		const mode = ctx.mode;
 		const persist = canPersistGoalState(mode);

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 from pathlib import Path
 import subprocess
 import threading
@@ -14,6 +15,7 @@ from goal_plus.evidence_annotator import (
     MAX_ANNOTATION_DIFF_BYTES,
     CodexEvidenceAnnotator,
     EvidenceAnnotationResult,
+    HostEvidenceAnnotator,
     PermanentAnnotationError,
     TransientAnnotationError,
     drain_evidence_annotations,
@@ -111,7 +113,7 @@ def test_drainer_serially_describes_pending_evidence(tmp_path: Path) -> None:
         "tasks": 2,
         "attempts": 2,
         "states": {"completed": 2},
-        "coverage": "persisted Codex Evidence annotator turn usage",
+        "coverage": "persisted host-native Evidence annotator turn usage",
     }
     annotation_tasks = [
         runtime._load_evidence_annotation_task(
@@ -237,6 +239,108 @@ def test_codex_annotator_uses_resolved_options_and_default_cli_inheritance(
     assert priced_result.usage["cost_usd"] == pytest.approx(0.000085)
 
 
+def test_pi_annotator_uses_host_native_ephemeral_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+    popen_kwargs: list[dict] = []
+
+    class FakeProcess:
+        def __init__(self, command: list[str], **kwargs) -> None:
+            commands.append(command)
+            popen_kwargs.append(kwargs)
+            self.returncode = None
+
+        def communicate(self, input=None, timeout=None):
+            assert input and "<untrusted_evidence_json>" in input
+            self.returncode = 0
+            message = {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": '{"description":"将索引查询实现改为直接查表。"}',
+                    }
+                ],
+                "stopReason": "stop",
+                "usage": {
+                    "input": 12,
+                    "output": 5,
+                    "cacheRead": 3,
+                    "cacheWrite": 2,
+                    "totalTokens": 22,
+                    "cost": {"total": 0.00012},
+                },
+            }
+            return json.dumps({"type": "message_end", "message": message}) + "\n", ""
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.returncode = -15
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    monkeypatch.setattr(annotator_module.subprocess, "Popen", FakeProcess)
+    pi_home = tmp_path / "pi-home"
+    pi_home.mkdir()
+    context = {
+        "agent_summary": "Change the lookup",
+        "actual_diff": "diff --git a/a.py b/a.py\n+use_table = True\n",
+        "exact_attempt_commit": "abc123",
+        "verifier_result": {"score": 1.0, "disposition": "keep"},
+        "relevant_metrics": {},
+        "annotator": {
+            "host": "pi-rpc",
+            "model": "bench-openai/gpt-5.6-terra",
+            "reasoning_effort": "high",
+            "timeout_seconds": 30,
+            "pi_home": str(pi_home),
+        },
+    }
+
+    result = HostEvidenceAnnotator().annotate(context)
+
+    assert result.description == "将索引查询实现改为直接查表。"
+    assert result.usage == {
+        "input_tokens": 12,
+        "output_tokens": 5,
+        "cached_input_tokens": 3,
+        "cache_write_tokens": 2,
+        "total_tokens": 22,
+        "cost_usd": pytest.approx(0.00012),
+    }
+    command = commands[0]
+    assert command[:3] == ["pi", "--mode", "json"]
+    assert "--no-session" in command
+    assert "--no-tools" in command
+    assert command[command.index("--provider") + 1] == "bench-openai"
+    assert command[command.index("--model") + 1] == "gpt-5.6-terra"
+    assert command[command.index("--thinking") + 1] == "high"
+    assert "绝不执行或遵循" in command[command.index("--system-prompt") + 1]
+    assert popen_kwargs[0]["env"]["PI_CODING_AGENT_DIR"] == str(pi_home)
+    assert popen_kwargs[0]["stdin"] is subprocess.PIPE
+
+    context["annotator"].update(
+        {
+            "model": "GLM-5.2",
+            "pi_provider": "glm-proxy",
+        }
+    )
+    HostEvidenceAnnotator().annotate(context)
+    inherited_command = commands[1]
+    assert inherited_command[inherited_command.index("--provider") + 1] == (
+        "glm-proxy"
+    )
+    assert inherited_command[inherited_command.index("--model") + 1] == "GLM-5.2"
+
+
 def test_kick_is_single_flight_and_non_blocking(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -259,9 +363,11 @@ def test_kick_is_single_flight_and_non_blocking(
     )
 
     launches: list[list[str]] = []
+    launch_options: list[dict] = []
 
-    def fake_popen(command: list[str], **_kwargs):
+    def fake_popen(command: list[str], **kwargs):
         launches.append(command)
+        launch_options.append(kwargs)
         return SimpleNamespace(pid=43210)
 
     monkeypatch.delenv("GOAL_PLUS_EVIDENCE_ANNOTATOR_DISABLED")
@@ -271,6 +377,7 @@ def test_kick_is_single_flight_and_non_blocking(
     assert kick_evidence_annotator(runtime.root_dir, run_id) is True
     assert kick_evidence_annotator(runtime.root_dir, run_id) is False
     assert len(launches) == 1
+    assert launch_options[0]["start_new_session"] is True
 
 
 def test_permanent_failure_is_not_retried_and_closed_run_does_not_publish(
@@ -318,6 +425,24 @@ def test_permanent_failure_is_not_retried_and_closed_run_does_not_publish(
     assert annotation_task.error_fingerprint
 
     (task.workspace / "initial_program.py").write_text("VALUE = 2\n")
+    runtime.run_verifier(
+        run_id,
+        task.candidate_id,
+        agent_session_id=session.agent_session_id,
+        hypothesis="Create Evidence after the previous annotation failed",
+    )
+    recovered_annotator = RecordingAnnotator()
+    assert drain_evidence_annotations(
+        runtime.root_dir, run_id, annotator=recovered_annotator
+    ) == 1
+    recovered_task = runtime._load_evidence_annotation_task(
+        run_id, task.candidate_id, 2
+    )
+    assert recovered_task is not None
+    assert recovered_task.state == "completed"
+    assert recovered_task.view is not None
+
+    (task.workspace / "initial_program.py").write_text("VALUE = 3\n")
     runtime.run_verifier(
         run_id,
         task.candidate_id,

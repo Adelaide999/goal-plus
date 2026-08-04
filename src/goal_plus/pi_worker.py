@@ -724,12 +724,26 @@ def run_pi_rpc_worker(
 
     host_logs.mkdir(parents=True, exist_ok=True)
     session_dir.mkdir(parents=True, exist_ok=True)
+    worker_role = str(launch.get("role") or "worker")
+    worker_continue_until_ms: int | None = None
+    if worker_role == "worker" and isinstance(
+        budget.get("autoresearch_lease"), dict
+    ):
+        continue_seconds = max(0, timeout_seconds - soft_closeout_seconds)
+        if continue_seconds:
+            worker_continue_until_ms = int(
+                (time.time() + continue_seconds) * 1000
+            )
     env = {
         **os.environ,
         "GOAL_PLUS_ROOT": str(root),
-        "GOAL_PLUS_PI_ROLE": str(launch.get("role") or "worker"),
+        "GOAL_PLUS_PI_ROLE": worker_role,
         "GOAL_PLUS_SOURCE_PATH": str(default_extension_path().parents[2]),
     }
+    if worker_continue_until_ms is not None:
+        env["GOAL_PLUS_PI_WORKER_CONTINUE_UNTIL_MS"] = str(
+            worker_continue_until_ms
+        )
     selected_model_pattern = (
         model_pattern
         or launch.get("model_pattern")
@@ -974,6 +988,7 @@ def run_pi_rpc_worker(
             "timed_out": timed_out,
             "soft_closeout_seconds": soft_closeout_seconds,
             "soft_closeout_sent": soft_closeout_sent,
+            "worker_continue_until_ms": worker_continue_until_ms,
             "time_advisory_sent": time_advisory_sent,
             "time_advisory": time_advisory,
             "exit_code": proc.returncode,

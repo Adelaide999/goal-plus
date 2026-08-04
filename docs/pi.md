@@ -16,6 +16,14 @@ RPC, print, and JSON modes. It persists the active id when the Pi session is
 persistent, injects hidden context, gates selected writes/Search calls, and
 runs a native turn-level stop gate. This is no host process Stop hook.
 
+For Pi Search runs, asynchronous Evidence annotation also stays on Pi. The
+run-scoped drainer uses an ephemeral `pi --mode json --no-session --no-tools`
+process, inherits the Pi worker model/provider unless explicitly overridden,
+and reads provider configuration from `PI_CODING_AGENT_DIR`. A qualified
+annotator model (`provider/model`) or `evidence_annotator.pi_provider` can select
+a provider independent of the Search worker. Verifier settlement never waits
+for this process.
+
 `/goal-plus edit`, `/goal-plus resume`, and `/goal-plus-with-final-check` share
 the same goal revision semantics as Codex. Required checks run through a
 separate read-only Pi RPC reviewer.
@@ -123,8 +131,11 @@ submit after initial pool creation and never replaces a candidate because of
 low score or lack of improvement. A `candidate_ready` event is published only
 after the driver has bound the handle, released any minimum lease, and confirmed
 durable Evidence for the current artifact. An exhausted unsatisfied lease emits
-`timed_out` instead. The driver reuses matching worker Evidence instead of adding
-a duplicate parent process iteration; parent verification is only a fallback.
+`timed_out` instead. While a minimum lease is active, Pi `agent_end` queues the
+next turn in the same process and native session until the configured closeout
+point. The driver reuses matching worker Evidence instead of adding a duplicate
+parent process iteration. Parent verification is only a fallback for a changed,
+unverified artifact; an unchanged workspace does not create a baseline iteration.
 
 There is no public synchronous candidate/batch runner. Pool open owns the
 initial fixed lane set; pool continue owns later dispatches for those same

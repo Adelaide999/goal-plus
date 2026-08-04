@@ -197,6 +197,15 @@ def _soft_closeout_seconds(max_runtime_seconds: int) -> int:
     return min(45, max(5, int(max_runtime_seconds) // 5))
 
 
+def _pi_soft_closeout_seconds(
+    max_runtime_seconds: int,
+    min_runtime_seconds: int | None,
+) -> int:
+    if min_runtime_seconds:
+        return max(1, max_runtime_seconds - min_runtime_seconds)
+    return _soft_closeout_seconds(max_runtime_seconds)
+
+
 CODEX_CLOSEOUT_MESSAGE = (
     "Worker 的截止时间临近。停止启动新工作；如有需要，最后运行一次 "
     "search_run_verifier，写入 .tmp/handoff.json，并返回简洁摘要。"
@@ -581,6 +590,7 @@ class PiRpcAdapter:
         if not worker_budget:
             return None
         max_runtime_seconds = worker_budget.get("max_runtime_seconds")
+        min_runtime_seconds = worker_budget.get("min_runtime_seconds")
         budget_control: dict[str, Any] = {
             "mode": "pi_rpc_process_watchdog",
             "continuation": "native_session",
@@ -588,10 +598,10 @@ class PiRpcAdapter:
             "on_exceed": worker_budget.get("on_exceed", "interrupt"),
         }
         if max_runtime_seconds is not None:
-            budget_control["soft_closeout_seconds"] = _soft_closeout_seconds(
-                int(max_runtime_seconds)
+            budget_control["soft_closeout_seconds"] = _pi_soft_closeout_seconds(
+                int(max_runtime_seconds),
+                int(min_runtime_seconds) if min_runtime_seconds is not None else None,
             )
-        min_runtime_seconds = worker_budget.get("min_runtime_seconds")
         min_verifier_runs = worker_budget.get("min_verifier_runs")
         if min_runtime_seconds is not None or min_verifier_runs is not None:
             budget_control["autoresearch_lease"] = {
