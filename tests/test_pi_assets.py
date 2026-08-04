@@ -386,6 +386,11 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
         "search_status: Type.Object", 1
     )[0]
     assert "Type.Null()" in create_schema
+    select_schema = text.split("search_select: Type.Object", 1)[1].split(
+        "search_report: Type.Object", 1
+    )[0]
+    assert "run_id: Type.String()" in select_schema
+    assert "strategy" not in select_schema
     annotator_schema = text.split("const EvidenceAnnotator = Type.Object", 1)[
         1
     ].split("const ModelSpec = Type.Object", 1)[0]
