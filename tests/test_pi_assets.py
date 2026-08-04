@@ -149,6 +149,7 @@ def test_pi_goal_plus_skill_documents_parallel_loop_policy() -> None:
     assert "调用且只调用一次" in normalized
     assert "运行时会拒绝" in normalized
     assert "第二份 plan" in normalized
+    assert "首个 run 必须省略 `source_run_id`" in text
     assert "pi_search_pool_wait_any" in text
     assert "只是本次轮询超时" in normalized
     assert "不能调用 `pi_search_pool_close`" in normalized
@@ -358,7 +359,9 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     assert "const SearchSpecSchema = Type.Object" in text
     assert 'Type.Literal("parallel_loops")' in text
     assert "search_invalidate_run: Type.Object" in text
-    assert "source_run_id: Type.Optional(Type.String())" in text
+    assert "source_run_id: Type.Optional(" in text
+    assert 'pattern: "^run_"' in text
+    assert "初始 run 必须省略 source_run_id" in text
     assert "const SearchSpecDraftSchema = Type.Partial(SearchSpecSchema)" in text
     assert "spec: SearchSpecSchema" in text
     assert "search_spec: SearchSpecDraftSchema" in text
