@@ -271,6 +271,8 @@ def test_codex_worker_agent_calls_context_and_verifier() -> None:
     assert "search_get_global_evidence" in text
     assert "search_submit_iteration_plan" not in text
     assert "search_run_verifier" in text
+    assert "不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`" in text
+    assert "所有正确性与指标反馈必须通过 `search_run_verifier`" in text
     assert "不要传 `scope`" in text
     assert "run_id=..., candidate_id=..., agent_session_id=..., hypothesis=..." in text
     assert "工作区根目录" in text

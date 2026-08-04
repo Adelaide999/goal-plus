@@ -149,6 +149,7 @@ def test_pi_goal_plus_skill_documents_parallel_loop_policy() -> None:
     assert "调用且只调用一次" in normalized
     assert "运行时会拒绝" in normalized
     assert "第二份 plan" in normalized
+    assert "首个 run 必须省略 `source_run_id`" in text
     assert "pi_search_pool_wait_any" in text
     assert "只是本次轮询超时" in normalized
     assert "不能调用 `pi_search_pool_close`" in normalized
@@ -188,6 +189,8 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     assert "search_get_global_evidence" in text
     assert "search_submit_iteration_plan" not in text
     assert "search_run_verifier" in text
+    assert "不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`" in text
+    assert "所有正确性与指标反馈必须通过 `search_run_verifier`" in text
     assert "workspace/results.tsv" in text
     assert "且只追加一条已验证" in text
     assert "view=null" in text
@@ -358,7 +361,9 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     assert "const SearchSpecSchema = Type.Object" in text
     assert 'Type.Literal("parallel_loops")' in text
     assert "search_invalidate_run: Type.Object" in text
-    assert "source_run_id: Type.Optional(Type.String())" in text
+    assert "source_run_id: Type.Optional(" in text
+    assert 'pattern: "^run_"' in text
+    assert "初始 run 必须省略 source_run_id，或在 strict schema 下传 null" in text
     assert "const SearchSpecDraftSchema = Type.Partial(SearchSpecSchema)" in text
     assert "spec: SearchSpecSchema" in text
     assert "search_spec: SearchSpecDraftSchema" in text
@@ -379,6 +384,19 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
         "search_create: Type.Object", 1
     )[0]
     assert "spec: LooseObject" not in freeze_schema
+    create_schema = text.split("search_create: Type.Object", 1)[1].split(
+        "search_status: Type.Object", 1
+    )[0]
+    assert "Type.Null()" in create_schema
+    select_schema = text.split("search_select: Type.Object", 1)[1].split(
+        "search_report: Type.Object", 1
+    )[0]
+    assert "run_id: Type.String()" in select_schema
+    assert "strategy" not in select_schema
+    annotator_schema = text.split("const EvidenceAnnotator = Type.Object", 1)[
+        1
+    ].split("const ModelSpec = Type.Object", 1)[0]
+    assert "pi_provider: Type.Optional(NullableString)" in annotator_schema
     assert "goal_plus_monitor_snapshot: Type.Object" in text
     assert "search_get_agent_observability: Type.Object" in text
     assert "goal_plus_update_goal: Type.Object" in text

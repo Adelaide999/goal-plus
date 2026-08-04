@@ -190,6 +190,8 @@ def test_codex_launch_maps_candidate_contract_to_builtin_default_role() -> None:
     assert "search_report" in message
     assert "search_promote" in message
     assert "不要调用任何 `goal_plus_*` 工具" in message
+    assert "不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`" in message
+    assert "所有正确性与指标反馈必须通过 `search_run_verifier`" in message
 
 
 @pytest.mark.codex

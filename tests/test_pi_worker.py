@@ -290,6 +290,85 @@ def test_run_pi_rpc_worker_retries_flagged_prompt_once(
     assert handle["metadata"]["assistant_text"] == "continued after policy retry"
 
 
+def test_run_pi_rpc_worker_retries_stream_read_error_once(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    extension = tmp_path / "goal-plus.ts"
+    extension.write_text("// fake extension\n", encoding="utf-8")
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    prompts: list[str] = []
+
+    class FakeProc:
+        returncode = None
+
+    class FakeRpcClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            self.error: str | None = "stream_read_error"
+
+        def start(self) -> None:
+            return None
+
+        def auto_retry_pending(self) -> bool:
+            return False
+
+        def terminal_error(self) -> str | None:
+            return self.error
+
+        def command(self, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+            command_type = str(payload["type"])
+            if command_type == "get_entries":
+                return {"data": {"entries": [], "leafId": None}}
+            if command_type == "prompt":
+                prompts.append(str(payload["message"]))
+                if len(prompts) == 2:
+                    self.error = None
+                return {"data": {}}
+            if command_type == "get_state":
+                return {
+                    "data": {
+                        "isStreaming": False,
+                        "isCompacting": False,
+                        "pendingMessageCount": 0,
+                    }
+                }
+            if command_type == "get_last_assistant_text":
+                return {"data": {"text": "continued after stream retry"}}
+            if command_type == "get_session_stats":
+                return {"data": {}}
+            raise AssertionError(f"unexpected command {command_type}")
+
+    def fake_popen(*_args: Any, **_kwargs: Any) -> FakeProc:
+        return FakeProc()
+
+    def fake_kill_process_group(proc: FakeProc) -> None:
+        proc.returncode = 0
+
+    monkeypatch.setattr(pi_worker.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(pi_worker, "_RpcClient", FakeRpcClient)
+    monkeypatch.setattr(pi_worker, "_kill_process_group", fake_kill_process_group)
+
+    handle = pi_worker.run_pi_rpc_worker(
+        {
+            "agent_session_id": "agent_stream_retry",
+            "session_id": "agent_stream_retry",
+            "root": str(tmp_path / ".search"),
+            "cwd": str(cwd),
+            "prompt": "do work",
+            "budget_control": {"max_runtime_seconds": 120},
+        },
+        extension_path=extension,
+    )
+
+    assert prompts == [
+        "do work",
+        "上一次模型流被瞬时中断。保留当前会话和工作区，从权威 Goal Plus "
+        "运行时上下文继续当前任务，并尽快完成下一次正式 verifier。",
+    ]
+    assert handle["metadata"]["assistant_text"] == "continued after stream retry"
+
+
 def test_run_pi_rpc_worker_returns_run_delta_metrics(
     monkeypatch,
     tmp_path: Path,
