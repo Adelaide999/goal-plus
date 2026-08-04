@@ -742,7 +742,7 @@ def test_permanent_failure_is_not_retried_and_selection_does_not_cancel_view(
                 json.dumps(
                     {
                         "description": "Described Evidence after Search selection.",
-                        "supplemental_evaluation": None,
+                        "acceptance_view": None,
                     }
                 ),
                 encoding="utf-8",
@@ -787,6 +787,65 @@ def test_permanent_failure_is_not_retried_and_selection_does_not_cancel_view(
     monitor = json.loads(monitor_path.read_text())
     assert monitor["state"] == "completed"
     assert monitor["detail"] is None
+
+
+def test_wait_for_retries_settles_transient_view_after_promotion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".gp")
+    frozen = runtime.freeze_spec(
+        spec_for(project, max_parallel=1), [project / "evaluator.py"]
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    plan = runtime.plan_next(run_id, requested_k=1)
+    task = runtime.start_batch(run_id, plan.plan_id)[0]
+    session = runtime.start_agent_session(run_id, task.candidate_id)
+    (task.workspace / "initial_program.py").write_text(
+        "VALUE = 1\n", encoding="utf-8"
+    )
+    runtime.run_verifier(
+        run_id,
+        task.candidate_id,
+        agent_session_id=session.agent_session_id,
+        hypothesis="Create Evidence before promotion",
+    )
+    runtime.select(run_id)
+    runtime.promote(run_id, task.candidate_id)
+
+    class TransientThenSuccess:
+        calls = 0
+
+        def annotate(self, _context):
+            self.calls += 1
+            if self.calls == 1:
+                raise TransientAnnotationError("502 Bad Gateway")
+            return EvidenceAnnotationResult(
+                description="Described promoted Evidence after a transient retry.",
+                usage={},
+            )
+
+    monkeypatch.setattr(
+        annotator_module,
+        "ANNOTATION_RETRY_BACKOFF_SECONDS",
+        (0, 0),
+    )
+    annotator = TransientThenSuccess()
+    assert drain_evidence_annotations(
+        runtime.root_dir,
+        run_id,
+        annotator=annotator,
+        wait_for_retries=True,
+    ) == 1
+
+    annotation_task = runtime._load_evidence_annotation_task(
+        run_id, task.candidate_id, 1
+    )
+    assert annotator.calls == 2
+    assert annotation_task is not None
+    assert annotation_task.state == "completed"
+    assert annotation_task.view is not None
 
 
 def test_wait_for_retries_settles_transient_view_after_promotion(
