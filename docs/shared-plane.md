@@ -228,24 +228,6 @@ View 只用一句中文客观描述实际做了什么，不评价好坏、不推
 步。事实来源是 actual diff，而不是 candidate 的自述。Changed files、verifier command
 和 metrics 只提供验证上下文；命令名称本身或失败的测试不能证明目标行为已经实现。
 
-`supplemental_evaluation` 不读取 FrozenSpec 软标准。annotator 只依据当前候选累计 diff、
-公开 verifier Evidence 和 annotation task 创建时固定的 peer 快照，自行提出 1–8 个与当前
-任务实际相关的观察维度。它逐项给出 finding、证据与置信度，并对比较基线中的每个 peer
-返回非定向的 `similar`、`different`、`tradeoff`、`complementary` 或 `unknown`，不能借此
-选择赢家。没有 peer 时 comparisons 为空。limitations 明确列出公开 Evidence 无法判断的
-事项。
-
-这种评价发生在提交结算之后，因此不会在搜索开始前固定注意力方向。worker 可以把第三方
-观察作为下一轮假设来源，但必须独立核对；评价不产生总分或最终推荐，不能改变硬 score、
-PASS/FAIL、candidate-local 基线、run-wide 排名或 promotion gate。
-
-annotator 收到的累计 diff 使用 Git 函数级上下文和至少 10 行普通上下文，并继续受字节
-上限约束。上下文中未出现某个定义，不代表该定义不存在；这类判断必须降低置信度并写入
-`limitations`。每次 worker 调用 `search_get_global_evidence`，runtime 都会在对应
-`agent_sessions/*.json` 的 `global_evidence_reads` 中记录读取时间、当时 Evidence 数量、
-已完成 View 的 candidate/iteration/commit 引用以及其中是否含 supplemental evaluation。
-该读取记录只用于审计 View 是否在后续 verifier 之前可见，不参与候选结算或最终验收。
-
 `acceptance_view` 使用同一份不可变 Evidence，但只评估 FrozenSpec 中已经冻结的 criterion。
 每项状态是 `covered`、`partial`、`missing`、`unknown` 或 `not_applicable`，并附带置信度、
 证据定位和一句理由。证据不足必须返回 `unknown`，不能推断 hidden 结果。它没有总分，不能

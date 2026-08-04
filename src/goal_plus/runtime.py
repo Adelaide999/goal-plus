@@ -6584,6 +6584,16 @@ class FileSearchRuntime:
                 "failure_class": iteration.failure_class,
             },
             "relevant_metrics": iteration.metrics,
+            "verifier_contract": [
+                {
+                    "name": command.name,
+                    "role": str(command.role),
+                    "command": list(command.command),
+                    "cwd": command.cwd,
+                    "timeout_seconds": command.timeout_seconds,
+                }
+                for command in frozen.spec.process_verifiers
+            ],
             "objective": frozen.spec.objective,
             "acceptance_contract": (
                 frozen.spec.acceptance_view.model_dump(mode="json")
