@@ -348,7 +348,13 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 	search_create: Type.Object(
 		{
 			frozen_spec_id: Type.String(),
-			source_run_id: Type.Optional(Type.String()),
+			source_run_id: Type.Optional(
+				Type.String({
+					pattern: "^run_",
+					description:
+						"初始 run 必须省略 source_run_id；仅后继 run 传入真实已存在的 run_* ID。",
+				}),
+			),
 		},
 		{ additionalProperties: false },
 	),
@@ -520,6 +526,8 @@ const RuntimeToolDescriptions: Record<string, string> = {
 		"保存发现的 SearchSpec draft。新的 Pi spec 使用 orchestration_mode=parallel_loops，以 max_parallel 作为初始 candidate/subagent 数。",
 	search_freeze_spec:
 		"冻结不可变的 SearchSpec 和 verifier bundle。预检使用一次性源码副本，并拒绝 verifier 工作区副作用；并发 Search 下 verifier 临时文件必须放入唯一的 GOAL_PLUS_VERIFIER_TMPDIR/TMPDIR，绝不能使用固定 /tmp 路径。parallel_loops 模式由一份初始 plan 创建长期候选。",
+	search_create:
+		"从 frozen_spec_id 创建 Search run。初始 run 必须省略 source_run_id；仅在已有真实前驱时传入准确的 run_* ID，绝不能传 initial 或 in_progress。",
 	search_get_global_evidence:
 		"读取当前 run 的窄 Global Evidence 视图。每项包含 verifier attempt commit、score、keep/discard/failure 和可能延迟的客观 View；view=null 时无需等待，可先依据 Evidence 独立探索。",
 	search_run_verifier:
