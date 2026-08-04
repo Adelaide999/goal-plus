@@ -463,10 +463,7 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 		{ additionalProperties: false },
 	),
 	search_select: Type.Object(
-		{
-			run_id: Type.String(),
-			strategy: Type.Optional(Type.String()),
-		},
+		{ run_id: Type.String() },
 		{ additionalProperties: false },
 	),
 	search_report: Type.Object({ run_id: Type.String() }, { additionalProperties: false }),
