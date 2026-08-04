@@ -32,6 +32,15 @@ def _flagged_prompt_retry(error: str | None) -> str | None:
     return "继续当前任务：先刷新 Goal Plus 运行时上下文，再选择并验证一个实质性新方向。"
 
 
+def _stream_error_retry(error: str | None) -> str | None:
+    if not error or error.strip().lower() != "stream_read_error":
+        return None
+    return (
+        "上一次模型流被瞬时中断。保留当前会话和工作区，从权威 Goal Plus "
+        "运行时上下文继续当前任务，并尽快完成下一次正式 verifier。"
+    )
+
+
 def _bounded_error(value: Any, *, limit: int = 500) -> str | None:
     if value is None:
         return None
@@ -790,6 +799,7 @@ def run_pi_rpc_worker(
     timed_out = False
     soft_closeout_sent = False
     flagged_prompt_retried = False
+    stream_error_retried = False
     time_advisory_sent = False
     time_advisory: dict[str, Any] | None = None
     last_time_advisory_check = 0.0
@@ -919,6 +929,19 @@ def run_pi_rpc_worker(
                         timeout=min(60, remaining_after_state),
                     )
                     flagged_prompt_retried = True
+                    continue
+                retry_prompt = _stream_error_retry(terminal_error)
+                if (
+                    retry_prompt is not None
+                    and not stream_error_retried
+                    and str(launch.get("role") or "worker") == "worker"
+                    and remaining_after_state > soft_closeout_seconds
+                ):
+                    rpc.command(
+                        {"type": "prompt", "message": retry_prompt},
+                        timeout=min(60, remaining_after_state),
+                    )
+                    stream_error_retried = True
                     continue
                 break
             time.sleep(min(1.0, max(0.1, remaining)))
