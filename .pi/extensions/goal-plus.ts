@@ -146,6 +146,7 @@ const EvidenceAnnotatorProvider = Type.Object(
 const EvidenceAnnotator = Type.Object(
 	{
 		model: Type.Optional(NullableString),
+		pi_provider: Type.Optional(NullableString),
 		reasoning_effort: Type.Optional(NullableString),
 		timeout_seconds: Type.Optional(PositiveInteger),
 		provider: Type.Optional(Type.Union([EvidenceAnnotatorProvider, Type.Null()])),
