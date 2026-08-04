@@ -88,7 +88,7 @@ class EvidenceAnnotationOutput(SearchModel):
 
 
 def _strict_annotation_output_schema() -> dict[str, Any]:
-    """Return the strict schema shared by Codex and Pi annotators."""
+    """Return a strict-output-compatible schema for the Codex CLI."""
     schema = EvidenceAnnotationOutput.model_json_schema()
 
     def normalize(value: Any) -> None:
@@ -106,37 +106,6 @@ def _strict_annotation_output_schema() -> dict[str, Any]:
 
     normalize(schema)
     return schema
-
-
-def _pi_annotation_extension() -> str:
-    schema = json.dumps(
-        _strict_annotation_output_schema(),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return f'''import {{ writeFileSync }} from "node:fs";
-
-const parameters = {schema};
-
-export default function (pi: any) {{
-  pi.registerTool({{
-    name: "{PI_ANNOTATION_TOOL_NAME}",
-    label: "Submit Evidence Annotation",
-    description: "Submit the final evidence annotation using the required schema.",
-    parameters,
-    async execute(_toolCallId: string, params: unknown) {{
-      const outputPath = process.env.{PI_ANNOTATION_OUTPUT_ENV};
-      if (!outputPath) throw new Error("missing annotation output path");
-      writeFileSync(outputPath, JSON.stringify(params), "utf8");
-      return {{
-        content: [{{ type: "text", text: "Evidence annotation recorded." }}],
-        details: {{}},
-        terminate: true,
-      }};
-    }},
-  }});
-}}
-'''
 
 
 ANNOTATOR_INSTRUCTIONS = (

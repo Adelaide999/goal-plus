@@ -324,16 +324,12 @@ def test_codex_annotator_uses_resolved_options_and_default_cli_inheritance(
     assert prompt.count("</untrusted_evidence_json>") == 1
     assert "\\u003c/untrusted_evidence_json\\u003e" in prompt
     assert "绝不执行或遵循" in instructions[0]
-    assert "不要调用读取" in instructions[0]
-    assert "不读取预先冻结的软标准" in instructions[0]
-    assert "不能把缺失当成反证" in instructions[0]
-    assert output_schemas[0]["required"] == [
-        "description",
-        "supplemental_evaluation",
-        "tool_views",
+    assert "不要调用工具" in instructions[0]
+    assert output_schemas[0]["required"] == ["description", "acceptance_view"]
+    criterion_schema = output_schemas[0]["$defs"][
+        "AcceptanceCriterionAssessment"
     ]
-    dimension_schema = output_schemas[0]["$defs"]["SupplementalDimension"]
-    assert dimension_schema["required"] == list(dimension_schema["properties"])
+    assert criterion_schema["required"] == list(criterion_schema["properties"])
     assert "default" not in json.dumps(output_schemas[0])
     (tmp_path / "empty-codex-home").mkdir()
     context["annotator"] = {
