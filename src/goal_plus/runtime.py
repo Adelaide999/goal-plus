@@ -5807,6 +5807,7 @@ class FileSearchRuntime:
             "iteration": iteration.iteration,
             "agent_summary": iteration.hypothesis,
             "exact_attempt_commit": commit,
+            "changed_files": list(task.attempt_changed_files),
             "actual_diff": diff,
             "verifier_result": {
                 "score": iteration.score,
@@ -5815,6 +5816,16 @@ class FileSearchRuntime:
                 "failure_class": iteration.failure_class,
             },
             "relevant_metrics": iteration.metrics,
+            "verifier_contract": [
+                {
+                    "name": command.name,
+                    "role": str(command.role),
+                    "command": list(command.command),
+                    "cwd": command.cwd,
+                    "timeout_seconds": command.timeout_seconds,
+                }
+                for command in frozen.spec.process_verifiers
+            ],
             "objective": frozen.spec.objective,
             "acceptance_contract": (
                 frozen.spec.acceptance_view.model_dump(mode="json")
