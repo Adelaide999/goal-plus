@@ -2937,7 +2937,9 @@ class FileSearchRuntime:
         return (
             "首先调用 search_get_agent_context。只能在候选工作区中工作。"
             "每轮编辑前读取 search_get_global_evidence，修改后带一句话 hypothesis 调用 "
-            "search_run_verifier。使用运行时证据，不要依赖 transcript。"
+            "search_run_verifier。不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`；"
+            "所有正确性与指标反馈必须通过 `search_run_verifier`。使用运行时证据，不要依赖 "
+            "transcript。"
             "如果 verifier 报告 VerifierWorkspaceSideEffect 或 "
             "candidate_action=stop_and_report，报告基础设施阻塞原因并直接返回，不要重试。"
         )

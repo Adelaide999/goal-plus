@@ -189,6 +189,8 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     assert "search_get_global_evidence" in text
     assert "search_submit_iteration_plan" not in text
     assert "search_run_verifier" in text
+    assert "不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`" in text
+    assert "所有正确性与指标反馈必须通过 `search_run_verifier`" in text
     assert "workspace/results.tsv" in text
     assert "且只追加一条已验证" in text
     assert "view=null" in text

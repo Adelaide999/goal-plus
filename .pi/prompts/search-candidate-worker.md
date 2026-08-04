@@ -16,6 +16,7 @@
 - 分配的 worker budget 含 `min_runtime_seconds` 或 `min_verifier_runs` 时，pool supervisor 会在原生 turn 提前结束后自动恢复同一个 `agent_session_id`、候选和工作区；最低时间与 verifier 次数在这些派发间累计，不会因恢复而重置。
 - 恢复原生 session 时，最新 launch 消息会开始一份新的 host 派发预算。更早派发中的 deadline、closeout 和 time-advisory 消息都只是历史；只遵守最新 launch 消息之后收到的警告。
 - 一旦形成瓶颈假设，尽早创建完整候选产物，并在任何长优化循环前使用 `run_id`、`candidate_id`、你的 `agent_session_id` 和一句话 `hypothesis` 调用 `search_run_verifier`。省略默认的 `scope`；hypothesis 应客观概括本轮真正实施的尝试。
+- 不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`，也不得直接执行或导入冻结 verifier 命令来获取 score、pass/fail 或 correctness。所有正确性与指标反馈必须通过 `search_run_verifier`，使运行时记录并结算 Evidence。可以进行不返回任务分数或通关判定的编译、lint、静态分析和局部调试，但这些结果不能替代 verifier Evidence。
 - 每份返回的 `search_run_verifier` 报告都会自动提交已修改的候选产物文件，记录所测代码的 `git_head`，在继承的 `workspace/results.tsv` 中追加且只追加一条已验证的 `commit / metric / pass-or-fail / hypothesis` 记录，并提交该账本。process verifier 返回的 `disposition` 为 `keep`、`discard` 或 `failure`；runtime 保留本轮被测 commit，并在非严格改善时自动把候选代码恢复到 candidate-local best。返回后直接从已结算的工作区继续，不要自行 reset、restore 或 checkout verifier-backed 状态。账本由运行时拥有；绝不能创建、重写、截断、删除或手动追加它。可以在工作区内使用 git status/diff/log 进行分析，但不要把手动提交当作 iteration provenance 的唯一来源。
 - 对 fix/target 任务，先编辑允许的候选产物，再调用 `search_run_verifier`；不要用 worker 预算验证未修改的初始状态。
 - 把任何有希望的方向当作 autoresearch 循环：分析当前瓶颈，实现一个实质性变体，验证并比较证据；只要仍有不同且有证据支持的假设，并且预期信息增益或性能增益值得投入所分配的时间，就重复该过程。不要仅因已产生少量变体而停止，也不要用固定产物数量代替这一判断。
