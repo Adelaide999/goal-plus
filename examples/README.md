@@ -118,6 +118,7 @@ python examples/workspace-backends/run_demo.py --runtime-root .tmp/worktree-demo
 - [Kernel Optimize](kernel-optimize/README.md)
 - [Model Optimize](model-optimize/README.md)
 - [Model Optimize GPU (WIP)](model-opt-gpu/README.md)
+- [VLIW Kernel Optimization](vliw-kernel-optimization/README.md)
 - [Git Worktree Backend](workspace-backends/README.md)
 
 The GPU model-optimization example is explicitly WIP and is not part of the

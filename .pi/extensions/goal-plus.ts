@@ -918,8 +918,78 @@ function buildGoalPlusContext(status: GoalPlusStatusPayload): string {
 	return lines.join("\n");
 }
 
-function buildGoalStartPrompt(status: GoalPlusStatusPayload): string {
-	return [
+interface GoalPlusModelRouting {
+	main: string;
+	annotation: string;
+	worker: string;
+}
+
+function parseGoalPlusModelRouting(rawGoal: string): GoalPlusModelRouting | undefined {
+	const directives = [...rawGoal.matchAll(/(?:^|\s)model=([^\s]+)/gi)];
+	if (directives.length === 0) return undefined;
+	if (directives.length > 1) {
+		throw new Error("/goal-plus accepts at most one model= directive");
+	}
+	if (/(?:^|\s)models=/i.test(rawGoal)) {
+		throw new Error("model= role routing cannot be combined with models= worker allocation");
+	}
+	const values = (directives[0]?.[1] ?? "").split(",").map((value) => value.trim());
+	if (values.some((value) => value.length === 0) || values.length > 3) {
+		throw new Error("model= requires one, two, or three comma-separated model references");
+	}
+	const [main, second, third] = values;
+	if (!main) throw new Error("model= requires a main model reference");
+	return {
+		main,
+		annotation: third ? second! : main,
+		worker: third ?? second ?? main,
+	};
+}
+
+function resolvePiModelReference(ctx: ExtensionContext, requested: string) {
+	const needle = requested.toLowerCase();
+	const available = ctx.modelRegistry.getAvailable();
+	const canonical = available.filter(
+		(model) => `${model.provider}/${model.id}`.toLowerCase() === needle,
+	);
+	const exactIds = available.filter((model) => model.id.toLowerCase() === needle);
+	const exactNames = available.filter((model) => model.name.toLowerCase() === needle);
+	const matches = canonical.length > 0 ? canonical : exactIds.length > 0 ? exactIds : exactNames;
+	if (matches.length === 0) {
+		throw new Error(`requested Pi model is not available: ${requested}`);
+	}
+	if (matches.length > 1) {
+		throw new Error(`requested Pi model is ambiguous; use provider/model: ${requested}`);
+	}
+	return matches[0]!;
+}
+
+async function applyGoalPlusModelRouting(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	rawGoal: string,
+): Promise<GoalPlusModelRouting | undefined> {
+	const requested = parseGoalPlusModelRouting(rawGoal);
+	if (!requested) return undefined;
+	const main = resolvePiModelReference(ctx, requested.main);
+	const annotation = resolvePiModelReference(ctx, requested.annotation);
+	const worker = resolvePiModelReference(ctx, requested.worker);
+	const selected = await pi.setModel(main);
+	if (!selected) {
+		throw new Error(`Pi cannot authenticate the requested main model: ${requested.main}`);
+	}
+	return {
+		main: `${main.provider}/${main.id}`,
+		annotation: `${annotation.provider}/${annotation.id}`,
+		worker: `${worker.provider}/${worker.id}`,
+	};
+}
+
+function buildGoalStartPrompt(
+	status: GoalPlusStatusPayload,
+	modelRouting?: GoalPlusModelRouting,
+): string {
+	const lines = [
 		"继续此 Goal Plus 任务。",
 		"",
 		`goal_plus_id: ${status.goal_plus_id ?? activeGoalPlusId ?? "unknown"}`,
@@ -927,6 +997,18 @@ function buildGoalStartPrompt(status: GoalPlusStatusPayload): string {
 		"",
 		"原始目标：",
 		status.raw_goal ?? "",
+	];
+	if (modelRouting) {
+		lines.push(
+			"",
+			"已解析的模型路由：",
+			`- main: ${modelRouting.main}`,
+			`- annotation: ${modelRouting.annotation}`,
+			`- worker: ${modelRouting.worker}`,
+			"- Main 已在本轮开始前切换。冻结 SearchSpec 时，将 annotation 写入 strategy.evidence_annotator.model，并将 worker 写入 strategy.models。",
+		);
+	}
+	lines.push(
 		"",
 		"重要事项：",
 		"- goal_plus_create 工具已经创建此记录。不要为该目标再次调用 goal_plus_create。",
@@ -940,7 +1022,8 @@ function buildGoalStartPrompt(status: GoalPlusStatusPayload): string {
 		"- 绝不能编造 frozen_spec_id、run_id、plan_id、candidate_id 或 agent_session_id。只使用紧邻的前序运行时工具返回的准确 id；在 goal_plus_link_search_run 前调用 search_create。",
 		"- 如果尚未准备好进入 Search，在 Goal Mode 中继续，并在停止前更新 goal-plus 状态。",
 		"- 如果该记录要求最终检查，调用 goal_plus_prepare_final_check(checker_host=\"pi\")，然后把其 launch payload 传给 pi_goal_plus_run_final_check。",
-	].join("\n");
+	);
+	return lines.join("\n");
 }
 
 interface GoalPlusSlashRequest {
@@ -973,6 +1056,20 @@ async function createGoalPlusStart(
 	rawGoal: string,
 	withFinalCheck = false,
 ): Promise<string | undefined> {
+	let modelRouting: GoalPlusModelRouting | undefined;
+	try {
+		modelRouting = await applyGoalPlusModelRouting(pi, ctx, rawGoal);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		ctx.ui.notify(message, "error");
+		pi.sendMessage({
+			customType: "goal-plus-error",
+			content: message,
+			display: true,
+			details: { stage: "model-routing" },
+		});
+		return undefined;
+	}
 	const commandCtx = commandContextFrom(ctx);
 	const startEntryCount = ctx.sessionManager.getEntries().length;
 	const result = await runJsonCli(pi, commandCtx, "goal_plus_create", {
@@ -1001,7 +1098,7 @@ async function createGoalPlusStart(
 		display: true,
 		details: { goal_plus_id: status.goal_plus_id },
 	});
-	return buildGoalStartPrompt(status);
+	return buildGoalStartPrompt(status, modelRouting);
 }
 
 async function updateGoalPlusStart(
@@ -1222,11 +1319,11 @@ export default function (pi: ExtensionAPI) {
 	}
 	if (!isPrintLikeInvocation) {
 		pi.registerCommand("goal-plus", {
-			description: "运行、编辑或恢复原生 Pi Goal Plus（mode=autonomous|probe）",
+			description: "运行、编辑或恢复原生 Pi Goal Plus（支持 model= 角色路由）",
 			handler: async (args, ctx) => {
 				const request = goalPlusRequestFromSlashInput(`/goal-plus ${args}`);
 				if (!request || (request.action !== "resume" && !request.rawGoal)) {
-					ctx.ui.notify("Usage: /goal-plus [mode=autonomous|probe] <goal>, /goal-plus edit [mode=...] <full revised goal>, or /goal-plus resume", "error");
+					ctx.ui.notify("Usage: /goal-plus [mode=autonomous|probe] [model=main[,annotation,worker]] <goal>, /goal-plus edit [mode=...] <full revised goal>, or /goal-plus resume", "error");
 					return;
 				}
 				const deliverAsFollowUp = !ctx.isIdle();
@@ -1243,7 +1340,7 @@ export default function (pi: ExtensionAPI) {
 			handler: async (args, ctx) => {
 				const rawGoal = args.trim();
 				if (!rawGoal) {
-					ctx.ui.notify("Usage: /goal-plus-with-final-check [mode=autonomous|probe] <goal>", "error");
+					ctx.ui.notify("Usage: /goal-plus-with-final-check [mode=autonomous|probe] [model=main[,annotation,worker]] <goal>", "error");
 					return;
 				}
 				const prompt = await createGoalPlusStart(pi, ctx, rawGoal, true);
