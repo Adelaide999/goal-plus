@@ -6495,8 +6495,6 @@ class FileSearchRuntime:
                     "diff",
                     "--full-index",
                     "--no-ext-diff",
-                    "--function-context",
-                    "--unified=10",
                     candidate_base_commit,
                     commit,
                     "--",
@@ -6504,64 +6502,6 @@ class FileSearchRuntime:
                 ],
                 max_bytes=MAX_EVIDENCE_ANNOTATION_DIFF_BYTES,
             )
-        peer_evidence = self._evidence_comparison_peers(
-            run_id,
-            comparison_basis=task.comparison_basis,
-        )
-        task_context = frozen.spec.objective
-        task_context_source = "frozen_objective"
-        if task.task_context_source is not None:
-            resolved_context, resolved_source, resolved_ref = (
-                self._evidence_task_context(
-                    run_id,
-                    fallback=frozen.spec.objective,
-                )
-            )
-            if (
-                resolved_source != task.task_context_source
-                or resolved_ref != task.task_context_ref
-                or sha256_text(resolved_context) != task.task_context_sha256
-            ):
-                raise RuntimeError(
-                    "annotation task context no longer matches its snapshot"
-                )
-            task_context = resolved_context
-            task_context_source = resolved_source
-        published_tools = []
-        remaining_tool_bytes = TOOL_VIEW_MAX_CONTENT_BYTES
-        if iteration.shared_tools:
-            manager = SharedDirManager(self._run_dir(run_id))
-            prior = next(
-                (
-                    item
-                    for item in reversed(record.iterations)
-                    if item.iteration < iteration.iteration and item.score is not None
-                ),
-                None,
-            )
-            for tool in iteration.shared_tools:
-                tool_input, used = manager.tool_view_input(
-                    tool, max_content_bytes=remaining_tool_bytes
-                )
-                tool_input["goal_evidence"] = {
-                    "score": iteration.score,
-                    "baseline_score": prior.score if prior is not None else None,
-                    "goal_delta": (
-                        iteration.score - prior.score
-                        if iteration.score is not None and prior is not None
-                        else None
-                    ),
-                    "goal_effect": (
-                        "unknown" if prior is None
-                        else "improved" if iteration.disposition == "keep"
-                        else "unchanged" if iteration.disposition == "retain"
-                        else "degraded" if iteration.disposition == "discard"
-                        else "failed"
-                    ),
-                    "disposition": iteration.disposition,
-                }
-                published_tools.append(tool_input)
-                remaining_tool_bytes = max(0, remaining_tool_bytes - used)
         return {
             "run_id": run_id,
             "candidate_id": candidate_id,
@@ -6573,10 +6513,6 @@ class FileSearchRuntime:
             "candidate_base_commit": candidate_base_commit,
             "candidate_changed_files": candidate_changed_files,
             "candidate_diff": candidate_diff,
-            "diff_context_policy": (
-                "git function context with at least 10 unchanged lines around hunks; "
-                "output remains byte-bounded and may omit definitions outside the diff"
-            ),
             "verifier_result": {
                 "score": iteration.score,
                 "process_passed": iteration.process_passed,
