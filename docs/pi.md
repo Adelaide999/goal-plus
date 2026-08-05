@@ -91,6 +91,30 @@ remaining upper budget. Infrastructure failure, pool close, or outer closeout
 stops this automatic continuation. Before each remaining hard limit, the runner
 sends one closeout steer. `max_turns` is only a prompt hint.
 
+### Role model routing
+
+The native Pi command can select the main, Evidence Annotation, and Search
+worker models in one line:
+
+```text
+/goal-plus model=A optimize ...
+/goal-plus model=A,B max_parallel=4 optimize ...
+/goal-plus model=A,B,C max_parallel=4 optimize ...
+```
+
+The one-value form uses A for all three roles. The two-value form uses A for
+the main and annotator and B for every worker. The three-value form assigns
+main=A, annotator=B, and worker=C. Pi resolves each value against its model
+registry before creating the Goal Plus record, switches the main model before
+the first model turn, and injects canonical `provider/model` references for the
+SearchSpec. The annotator is frozen in `strategy.evidence_annotator.model`; the
+worker is frozen in `strategy.models` and remains fixed across each candidate's
+continuations.
+
+Use qualified `provider/model` references when an id exists under more than one
+provider. Do not combine the role shorthand `model=` with the worker-allocation
+form `models=` below.
+
 ### Multi-model selection
 
 Use `models` directly in the natural-language command. Because Pi can expose

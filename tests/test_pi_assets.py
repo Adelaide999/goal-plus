@@ -285,6 +285,11 @@ def test_pi_extension_registers_role_tools_gate_and_workspace_guard() -> None:
     assert 'pi.registerCommand("goal-plus"' in text
     assert 'pi.registerCommand("goal-plus-with-final-check"' in text
     assert "mode=autonomous|probe" in text
+    assert "parseGoalPlusModelRouting" in text
+    assert "applyGoalPlusModelRouting" in text
+    assert "await pi.setModel(main)" in text
+    assert "strategy.evidence_annotator.model" in text
+    assert "strategy.models" in text
     assert "goal-plus-native-state" in text
     assert 'pi.on("session_start"' in text
     assert 'pi.on("before_agent_start"' in text

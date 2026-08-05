@@ -1,6 +1,10 @@
 首先调用 `goal_plus_create(raw_goal="$ARGUMENTS")`，必须在 triage、规划、编辑或 Search 之前调用。
 除了加载 goal-plus skill 之外，在调用 `goal_plus_record_triage` 之前不要读取或审计目标文件。
 
+原生入口若注入了 `model=` 的已解析 Main/Annotation/Worker 路由，严格使用该路由：
+Main 已由入口切换；冻结 SearchSpec 时把 Annotation 写入
+`strategy.evidence_annotator.model`，把 Worker 写入 `strategy.models`。
+
 # Goal Plus
 
 对以下原始用户目标使用 `/skill:goal-plus`：

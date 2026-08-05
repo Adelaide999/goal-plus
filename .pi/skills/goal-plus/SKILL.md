@@ -55,6 +55,14 @@ ranking verifier 必须输出一个最终 JSON 对象，其中包含有限数值
 直接填写，不要根据校验错误猜字段。`search_freeze_spec` 会重复 verifier 预检，
 契约无效时会在候选 worker 启动前拒绝 spec。
 
+原生 Pi 命令支持角色级简写：`model=A` 表示 Main、Evidence Annotation 和所有 Worker
+都使用 A；`model=A,B` 表示 Main/Annotation 使用 A、Worker 使用 B；
+`model=A,B,C` 依次指定 Main、Annotation、Worker。扩展在模型轮次开始前解析并切换
+Main，并把规范化后的完整 `provider/model` 路由注入启动上下文。冻结 SearchSpec 时必须把
+解析后的 Annotation 写入 `strategy.evidence_annotator.model`，把 Worker 作为唯一条目写入
+`strategy.models`；不要把 Main 模型写成 Worker 默认值。`model=` 不能和 `models=` 同时
+出现。
+
 如果原始命令包含 `models=...`，先调用 `goal_plus_list_models(host="pi-rpc")`，将用户
 填写的名称解析为唯一可用模型并冻结到 `strategy.models`；不存在或不唯一时，在创建
 run 前直接返回错误。`models=A,B max_parallel=4` 表示 A、B、A、B；
