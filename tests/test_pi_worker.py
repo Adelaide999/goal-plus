@@ -205,6 +205,47 @@ def test_rpc_client_clears_terminal_error_after_successful_recovery(
     assert client.terminal_error() is None
 
 
+def test_rpc_client_requests_refresh_for_length_without_tool_call(
+    tmp_path: Path,
+) -> None:
+    client = pi_worker._RpcClient(  # type: ignore[arg-type]
+        proc=object(),
+        event_log=tmp_path / "events.jsonl",
+        text_log=None,
+    )
+
+    client._track_terminal_error(
+        {
+            "type": "agent_end",
+            "willRetry": False,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "stopReason": "length",
+                    "content": [{"type": "thinking", "thinking": "bounded"}],
+                }
+            ],
+        }
+    )
+    assert client.refresh_reason() == "length_without_tool_call"
+    assert client.terminal_error() is None
+
+    client._track_terminal_error(
+        {
+            "type": "agent_end",
+            "willRetry": False,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "stopReason": "length",
+                    "content": [{"type": "toolCall", "name": "read"}],
+                }
+            ],
+        }
+    )
+    assert client.refresh_reason() is None
+
+
 def test_run_pi_rpc_worker_retries_flagged_prompt_once(
     monkeypatch,
     tmp_path: Path,

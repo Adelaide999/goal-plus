@@ -268,7 +268,80 @@ def test_pi_pool_continue_pins_existing_native_session(
         / "request.json"
     )
     assert submitted["continuation"] == "native_session"
+    assert submitted["refresh_session"] is False
     assert request["redispatch"] is True
+    assert request["refresh_session"] is False
+    assert request["resume_agent_session_id"] == session.agent_session_id
+
+
+def test_pi_pool_continue_honors_pending_session_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    frozen = runtime.freeze_spec(
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    candidate_id = _planned_candidates(runtime, run_id, 1)[0]
+    session = runtime.start_agent_session(run_id, candidate_id)
+    monkeypatch.setattr(pi_pool, "_launch_pool_job", lambda **_kwargs: 999999)
+    opened = open_pi_search_pool(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_ids=[candidate_id],
+    )
+    first_job_id = opened["submitted"][0]["job_id"]
+    with exclusive_file_lock(
+        pi_pool._pool_lock_path(runtime.root_dir, opened["pool_id"])
+    ):
+        write_json(
+            pi_pool._job_dir(runtime.root_dir, opened["pool_id"], first_job_id)
+            / "result.json",
+            {
+                "ok": True,
+                "agent_session_id": session.agent_session_id,
+                "handle": {
+                    "metadata": {
+                        "refresh_required": True,
+                        "refresh_reason": "length_without_tool_call",
+                    }
+                },
+                "lease": {
+                    "satisfied": True,
+                    "pending_session_refresh_reason": "length_without_tool_call",
+                },
+            },
+        )
+        job = pi_pool._load_job(runtime.root_dir, opened["pool_id"], first_job_id)
+        job.update(
+            {
+                "status": "completed",
+                "finished_at": utc_timestamp(),
+                "error": None,
+            }
+        )
+        pi_pool._write_job(runtime.root_dir, opened["pool_id"], job)
+
+    submitted = continue_pi_search_pool(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        candidate_id=candidate_id,
+    )
+    request = load_json(
+        pi_pool._job_dir(
+            runtime.root_dir,
+            opened["pool_id"],
+            submitted["job_id"],
+        )
+        / "request.json"
+    )
+
+    assert submitted["continuation"] == "new_session_refresh"
+    assert submitted["refresh_session"] is True
+    assert request["refresh_reason"] == "length_without_tool_call"
     assert request["resume_agent_session_id"] == session.agent_session_id
 
 
@@ -432,6 +505,100 @@ def test_pi_pool_worker_continues_same_session_until_cumulative_lease(
     assert result["lease"]["satisfied"] is True
     assert result["lease"]["dispatch_count"] == 3
     assert result["lease"]["elapsed_seconds"] == 12
+
+
+def test_pi_pool_worker_refreshes_length_only_session_and_keeps_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    frozen = runtime.freeze_spec(
+        _pi_rpc_spec_with_budget(project, max_parallel=1),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    candidate_id = _planned_candidates(runtime, run_id, 1)[0]
+    monkeypatch.setattr(pi_pool, "_launch_pool_job", lambda **_kwargs: os.getpid())
+    opened = open_pi_search_pool(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_ids=[candidate_id],
+        worker_budgets={
+            candidate_id: {
+                "min_runtime_seconds": 8,
+                "min_verifier_runs": 1,
+                "max_runtime_seconds": 20,
+                "on_exceed": "interrupt",
+            }
+        },
+    )
+    submitted = opened["submitted"][0]
+    now = [0.0]
+    calls: list[dict[str, Any]] = []
+
+    def fake_driver(**request: Any) -> dict[str, Any]:
+        calls.append(request)
+        now[0] += 4
+        if len(calls) == 1:
+            return {
+                "ok": True,
+                "run_id": run_id,
+                "candidate_id": candidate_id,
+                "agent_session_id": "agent_old",
+                "handle": {
+                    "metadata": {
+                        "refresh_required": True,
+                        "refresh_reason": "length_without_tool_call",
+                    }
+                },
+                "bound_session": {"counters": {"verifier_runs": 0}},
+                "steps": [],
+                "final_score_report": None,
+            }
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "agent_session_id": "agent_fresh",
+            "handle": {"metadata": {"refresh_required": False}},
+            "bound_session": {"counters": {"verifier_runs": 1}},
+            "steps": [],
+            "final_score_report": {
+                "aggregate_score": 1.0,
+                "process_passed": True,
+            },
+        }
+
+    monkeypatch.setattr(pi_pool.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(pi_pool, "run_pi_search_candidate", fake_driver)
+
+    assert run_pool_worker(
+        root_dir=runtime.root_dir,
+        pool_id=opened["pool_id"],
+        job_id=submitted["job_id"],
+    ) == 0
+
+    assert len(calls) == 2
+    assert calls[0]["refresh_session"] is False
+    assert calls[1]["refresh_session"] is True
+    assert calls[1]["redispatch"] is False
+    assert calls[1]["resume_agent_session_id"] is None
+    result = load_json(
+        pi_pool._job_dir(runtime.root_dir, opened["pool_id"], submitted["job_id"])
+        / "result.json"
+    )
+    assert result["lease"]["satisfied"] is True
+    assert result["lease"]["verifier_runs"] == 1
+    assert result["lease"]["agent_session_ids"] == ["agent_old", "agent_fresh"]
+    assert result["lease"]["session_refreshes"] == [
+        {
+            "dispatch": 2,
+            "reason": "length_without_tool_call",
+            "from_agent_session_id": "agent_old",
+            "to_agent_session_id": "agent_fresh",
+        }
+    ]
 
 
 def test_pi_pool_worker_backs_off_after_dispatch_without_new_verifier(

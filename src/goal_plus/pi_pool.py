@@ -246,6 +246,17 @@ def _lease_verifier_runs(result: dict[str, Any]) -> int:
     return int(value) if isinstance(value, int) and value >= 0 else 0
 
 
+def _session_refresh_reason(result: dict[str, Any]) -> str | None:
+    handle = result.get("handle")
+    if not isinstance(handle, dict):
+        return None
+    metadata = handle.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("refresh_required") is not True:
+        return None
+    reason = metadata.get("refresh_reason")
+    return reason if isinstance(reason, str) and reason else "worker_requested"
+
+
 def _pool_is_open(root_dir: Path | str, pool_id: str) -> bool:
     with exclusive_file_lock(_pool_lock_path(root_dir, pool_id)):
         return _load_pool(root_dir, pool_id)["state"] == "open"
@@ -281,6 +292,29 @@ def _resume_agent_session_id(
     raise RuntimeError(
         f"candidate {candidate_id} has no Pi native session to continue"
     )
+
+
+def _pending_session_refresh_reason(
+    root_dir: Path | str,
+    *,
+    candidate_id: str,
+    jobs: list[dict[str, Any]],
+    pool_id: str,
+) -> str | None:
+    for job in reversed(jobs):
+        if job.get("candidate_id") != candidate_id:
+            continue
+        result_path = _job_dir(root_dir, pool_id, str(job["job_id"])) / "result.json"
+        if not result_path.exists():
+            continue
+        result = load_json(result_path)
+        lease = result.get("lease")
+        if isinstance(lease, dict):
+            reason = lease.get("pending_session_refresh_reason")
+            if isinstance(reason, str) and reason:
+                return reason
+        return _session_refresh_reason(result)
+    return None
 
 
 def _launch_pool_job(
@@ -437,6 +471,16 @@ def _submit_pi_search_pool(
             if redispatch
             else None
         )
+        refresh_reason = (
+            _pending_session_refresh_reason(
+                root_dir,
+                candidate_id=candidate_id,
+                jobs=jobs,
+                pool_id=pool_id,
+            )
+            if redispatch
+            else None
+        )
         effective_worker_budget = _resolve_worker_budget(
             root_dir,
             str(pool["run_id"]),
@@ -452,7 +496,14 @@ def _submit_pi_search_pool(
             "run_id": pool["run_id"],
             "candidate_id": candidate_id,
             "redispatch": bool(redispatch),
-            "continuation": "native_session" if redispatch else "new_session",
+            "refresh_session": refresh_reason is not None,
+            "continuation": (
+                "new_session_refresh"
+                if refresh_reason is not None
+                else "native_session"
+                if redispatch
+                else "new_session"
+            ),
             "status": "starting",
             "pid": None,
             "created_at": now,
@@ -467,6 +518,8 @@ def _submit_pi_search_pool(
             "run_id": pool["run_id"],
             "candidate_id": candidate_id,
             "redispatch": bool(redispatch),
+            "refresh_session": refresh_reason is not None,
+            "refresh_reason": refresh_reason,
             "resume_agent_session_id": resume_agent_session_id,
             "worker_budget": effective_worker_budget,
             "final_verify": bool(final_verify),
@@ -506,7 +559,14 @@ def _submit_pi_search_pool(
         "job_id": job_id,
         "candidate_id": candidate_id,
         "redispatch": bool(redispatch),
-        "continuation": "native_session" if redispatch else "new_session",
+        "refresh_session": refresh_reason is not None,
+        "continuation": (
+            "new_session_refresh"
+            if refresh_reason is not None
+            else "native_session"
+            if redispatch
+            else "new_session"
+        ),
         "status": "running",
         "pid": pid,
     }
@@ -846,13 +906,23 @@ def run_pool_worker(
             dispatch_count = 0
             no_progress_dispatches = 0
             agent_session_id = request.get("resume_agent_session_id")
-            verifier_run_baseline = 0
+            agent_session_ids: list[str] = []
+            verifier_run_baselines: dict[str, int] = {}
+            observed_verifier_runs: dict[str, int] = {}
+            refresh_next_reason = (
+                str(request["refresh_reason"])
+                if request.get("refresh_session") and request.get("refresh_reason")
+                else None
+            )
+            session_refreshes: list[dict[str, Any]] = []
             if agent_session_id is not None:
                 prior_session = FileSearchRuntime(root_dir)._load_agent_session_by_id(
                     str(agent_session_id),
                     run_id=str(request["run_id"]),
                 )
-                verifier_run_baseline = int(
+                agent_session_id = str(agent_session_id)
+                agent_session_ids.append(agent_session_id)
+                verifier_run_baselines[agent_session_id] = int(
                     prior_session.counters.get("verifier_runs", 0)
                 )
             release_reason = "no_minimum_lease"
@@ -879,12 +949,21 @@ def run_pool_worker(
                 else:
                     dispatch_budget.pop("min_verifier_runs", None)
 
+                refresh_dispatch = refresh_next_reason is not None
+                prior_agent_session_id = agent_session_id
                 dispatch_request = {
                     **request,
-                    "redispatch": bool(request.get("redispatch"))
-                    if dispatch_count == 0
-                    else True,
-                    "resume_agent_session_id": agent_session_id,
+                    "redispatch": (
+                        False
+                        if refresh_dispatch
+                        else bool(request.get("redispatch"))
+                        if dispatch_count == 0
+                        else True
+                    ),
+                    "refresh_session": refresh_dispatch,
+                    "resume_agent_session_id": (
+                        None if refresh_dispatch else agent_session_id
+                    ),
                     "worker_budget": dispatch_budget,
                 }
                 previous_verifier_runs = verifier_runs
@@ -915,18 +994,45 @@ def run_pool_worker(
                 returned_session_id = result.get("agent_session_id")
                 if not isinstance(returned_session_id, str) or not returned_session_id:
                     raise RuntimeError("Pi candidate driver returned no agent_session_id")
-                if agent_session_id is not None and returned_session_id != agent_session_id:
+                if (
+                    prior_agent_session_id is not None
+                    and returned_session_id != prior_agent_session_id
+                    and not refresh_dispatch
+                ):
                     raise RuntimeError(
                         "Pi candidate continuation changed the native agent session"
                     )
+                if (
+                    refresh_dispatch
+                    and prior_agent_session_id is not None
+                    and returned_session_id == prior_agent_session_id
+                ):
+                    raise RuntimeError(
+                        "Pi candidate refresh reused the prior native agent session"
+                    )
+                if refresh_dispatch:
+                    session_refreshes.append(
+                        {
+                            "dispatch": dispatch_count,
+                            "reason": refresh_next_reason,
+                            "from_agent_session_id": prior_agent_session_id,
+                            "to_agent_session_id": returned_session_id,
+                        }
+                    )
                 agent_session_id = returned_session_id
-                verifier_runs = max(
-                    verifier_runs,
+                if agent_session_id not in agent_session_ids:
+                    agent_session_ids.append(agent_session_id)
+                verifier_run_baselines.setdefault(agent_session_id, 0)
+                observed_verifier_runs[agent_session_id] = max(
+                    observed_verifier_runs.get(agent_session_id, 0),
                     max(
                         0,
-                        _lease_verifier_runs(result) - verifier_run_baseline,
+                        _lease_verifier_runs(result)
+                        - verifier_run_baselines[agent_session_id],
                     ),
                 )
+                verifier_runs = sum(observed_verifier_runs.values())
+                refresh_next_reason = _session_refresh_reason(result)
                 if verifier_runs > previous_verifier_runs:
                     no_progress_dispatches = 0
                 else:
@@ -948,9 +1054,13 @@ def run_pool_worker(
                 if not _pool_is_open(root_dir, pool_id):
                     release_reason = "pool_closing"
                     break
-                backoff_seconds = min(
-                    _no_progress_backoff_seconds(no_progress_dispatches),
-                    max(0.0, max_runtime_seconds - elapsed),
+                backoff_seconds = (
+                    0.0
+                    if refresh_next_reason is not None
+                    else min(
+                        _no_progress_backoff_seconds(no_progress_dispatches),
+                        max(0.0, max_runtime_seconds - elapsed),
+                    )
                 )
                 if backoff_seconds:
                     time.sleep(backoff_seconds)
@@ -980,6 +1090,9 @@ def run_pool_worker(
                     "min_verifier_runs": min_verifier_runs,
                     "dispatch_count": dispatch_count,
                     "agent_session_id": agent_session_id,
+                    "agent_session_ids": agent_session_ids,
+                    "session_refreshes": session_refreshes,
+                    "pending_session_refresh_reason": refresh_next_reason,
                 },
             }
         except _PoolWorkerInterrupted:

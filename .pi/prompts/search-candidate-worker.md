@@ -13,7 +13,7 @@
 - 把分配的候选思路当作假设，而不是必须实现的方案。编辑前充分检查源码、运行时历史和当前产物，以识别可能的瓶颈。如果证据表明该思路剩余潜力很小，记录原因，并在候选目标范围内转向更有希望且有证据支持的变体。
 - 重新派发时，在同一候选工作区继续这条自主循环。刷新权威运行时上下文，并自行选择下一个有证据支持的假设。不要等待主 agent 提供方向。低分、一次没有改进的迭代或其他候选领先，都不会终止你的循环。
 - 公开指标饱和、当前没有未验证 diff 或同分会回滚，都不代表 hidden 泛化搜索结束。在最低 lease 释放前，继续选择泛化、反例、结构边界或简化方向的实质性变体并验证；同分或回滚的 Evidence 仍有信息价值。
-- 分配的 worker budget 含 `min_runtime_seconds` 或 `min_verifier_runs` 时，pool supervisor 会在原生 turn 提前结束后自动恢复同一个 `agent_session_id`、候选和工作区；最低时间与 verifier 次数在这些派发间累计，不会因恢复而重置。
+- 分配的 worker budget 含 `min_runtime_seconds` 或 `min_verifier_runs` 时，pool supervisor 通常会在原生 turn 提前结束后自动恢复同一个 `agent_session_id`、候选和工作区。如果上一轮因 `stopReason="length"` 结束且没有 tool call，supervisor 会改为给同一候选和工作区创建新的 `agent_session_id`，避免继承被截断的 thinking 上下文；最低时间与 verifier 次数在这些派发间累计，刷新不会重置累计值。
 - 恢复原生 session 时，最新 launch 消息会开始一份新的 host 派发预算。更早派发中的 deadline、closeout 和 time-advisory 消息都只是历史；只遵守最新 launch 消息之后收到的警告。
 - 一旦形成瓶颈假设，尽早创建完整候选产物，并在任何长优化循环前使用 `run_id`、`candidate_id`、你的 `agent_session_id` 和一句话 `hypothesis` 调用 `search_run_verifier`。省略默认的 `scope`；hypothesis 应客观概括本轮真正实施的尝试。
 - 不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`，也不得直接执行或导入冻结 verifier 命令来获取 score、pass/fail 或 correctness。所有正确性与指标反馈必须通过 `search_run_verifier`，使运行时记录并结算 Evidence。可以进行不返回任务分数或通关判定的编译、lint、静态分析和局部调试，但这些结果不能替代 verifier Evidence。

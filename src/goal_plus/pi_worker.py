@@ -71,6 +71,28 @@ def _bounded_json(value: Any, *, depth: int = 0) -> Any:
     return _bounded_error(value, limit=500)
 
 
+def _count_tool_calls(message: Any) -> int:
+    if not isinstance(message, dict):
+        return 0
+    content = message.get("content")
+    if not isinstance(content, list):
+        return 0
+    return sum(
+        1
+        for item in content
+        if isinstance(item, dict) and item.get("type") == "toolCall"
+    )
+
+
+def _length_without_tool_call(message: Any) -> bool:
+    return (
+        isinstance(message, dict)
+        and message.get("role") == "assistant"
+        and message.get("stopReason") == "length"
+        and _count_tool_calls(message) == 0
+    )
+
+
 def _git_snapshot(workspace: Path) -> dict[str, Any]:
     if not (workspace / ".git").exists():
         return {
@@ -340,6 +362,7 @@ class _RpcClient:
         self._responses: dict[str, dict[str, Any]] = {}
         self._completed_tools: list[str] = []
         self._terminal_error: str | None = None
+        self._refresh_reason: str | None = None
         self._counter = 0
         self._auto_retry_until = 0.0
         self._stdout_thread = threading.Thread(target=self._read_stdout, daemon=True)
@@ -457,6 +480,11 @@ class _RpcClient:
         if not isinstance(last_message, dict):
             return
         error = last_message.get("errorMessage") or last_message.get("error")
+        self._refresh_reason = (
+            "length_without_tool_call"
+            if _length_without_tool_call(last_message)
+            else None
+        )
         if last_message.get("stopReason") == "error" or error:
             self._terminal_error = _bounded_error(error) or "Pi agent ended with error"
         else:
@@ -464,6 +492,9 @@ class _RpcClient:
 
     def terminal_error(self) -> str | None:
         return self._terminal_error
+
+    def refresh_reason(self) -> str | None:
+        return self._refresh_reason
 
 
 def default_extension_path() -> Path:
@@ -809,6 +840,7 @@ def run_pi_rpc_worker(
     metrics_baseline = dict(launch.get("metrics_baseline") or {})
     last_state_data: dict[str, Any] = {}
     pi_metrics: dict[str, Any] | None = None
+    refresh_reason: str | None = None
 
     def _abort_for_timeout() -> None:
         nonlocal timed_out
@@ -916,6 +948,9 @@ def run_pi_rpc_worker(
                 if auto_retry_pending():
                     time.sleep(min(1.0, max(0.1, remaining)))
                     continue
+                refresh_reason = getattr(rpc, "refresh_reason", lambda: None)()
+                if refresh_reason is not None:
+                    break
                 terminal_error = getattr(rpc, "terminal_error", lambda: None)()
                 retry_prompt = _flagged_prompt_retry(terminal_error)
                 if (
@@ -1014,6 +1049,8 @@ def run_pi_rpc_worker(
             "worker_continue_until_ms": worker_continue_until_ms,
             "time_advisory_sent": time_advisory_sent,
             "time_advisory": time_advisory,
+            "refresh_required": refresh_reason is not None,
+            "refresh_reason": refresh_reason,
             "exit_code": proc.returncode,
             "continuation": str(launch.get("continuation") or "native_session"),
         },
