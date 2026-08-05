@@ -918,31 +918,52 @@ function buildGoalPlusContext(status: GoalPlusStatusPayload): string {
 	return lines.join("\n");
 }
 
-interface GoalPlusModelRouting {
-	main: string;
-	annotation: string;
-	worker: string;
+interface GoalPlusRoleModels {
+	main?: string;
+	annotator?: string;
+	workerDirective?: "workers" | "models";
 }
 
-function parseGoalPlusModelRouting(rawGoal: string): GoalPlusModelRouting | undefined {
-	const directives = [...rawGoal.matchAll(/(?:^|\s)model=([^\s]+)/gi)];
-	if (directives.length === 0) return undefined;
-	if (directives.length > 1) {
-		throw new Error("/goal-plus accepts at most one model= directive");
+function commandDirective(rawGoal: string, name: string): string | undefined {
+	const marker = new RegExp(`(?:^|\\s)${name}=`, "gi");
+	const markers = [...rawGoal.matchAll(marker)];
+	if (markers.length > 1) {
+		throw new Error(`/goal-plus accepts at most one ${name}= directive`);
 	}
-	if (/(?:^|\s)models=/i.test(rawGoal)) {
-		throw new Error("model= role routing cannot be combined with models= worker allocation");
+	if (markers.length === 0) return undefined;
+	const value = rawGoal.match(new RegExp(`(?:^|\\s)${name}=([^\\s]+)`, "i"))?.[1]?.trim();
+	if (!value) throw new Error(`${name}= requires a value`);
+	return value;
+}
+
+function roleModelDirective(rawGoal: string, name: string): string | undefined {
+	const value = commandDirective(rawGoal, name);
+	if (value?.includes(",")) {
+		throw new Error(`${name}= accepts exactly one model; use workers= for a list`);
 	}
-	const values = (directives[0]?.[1] ?? "").split(",").map((value) => value.trim());
-	if (values.some((value) => value.length === 0) || values.length > 3) {
-		throw new Error("model= requires one, two, or three comma-separated model references");
+	return value;
+}
+
+function parseGoalPlusRoleModels(rawGoal: string): GoalPlusRoleModels | undefined {
+	if (/(?:^|\s)model=/i.test(rawGoal)) {
+		throw new Error("model= is not supported; use main=, annotator=, and workers=");
 	}
-	const [main, second, third] = values;
-	if (!main) throw new Error("model= requires a main model reference");
+	const main = roleModelDirective(rawGoal, "main");
+	const annotator = roleModelDirective(rawGoal, "annotator");
+	const workers = commandDirective(rawGoal, "workers");
+	const models = commandDirective(rawGoal, "models");
+	if (workers && models) {
+		throw new Error("workers= and models= are aliases; specify only one");
+	}
+	const workerModels = workers ?? models;
+	if (workerModels?.split(",").some((value) => value.trim().length === 0)) {
+		throw new Error("workers=/models= contains an empty model reference");
+	}
+	if (!main && !annotator && !workerModels) return undefined;
 	return {
 		main,
-		annotation: third ? second! : main,
-		worker: third ?? second ?? main,
+		annotator,
+		workerDirective: workers ? "workers" : models ? "models" : undefined,
 	};
 }
 
@@ -964,30 +985,35 @@ function resolvePiModelReference(ctx: ExtensionContext, requested: string) {
 	return matches[0]!;
 }
 
-async function applyGoalPlusModelRouting(
+async function applyGoalPlusRoleModels(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	rawGoal: string,
-): Promise<GoalPlusModelRouting | undefined> {
-	const requested = parseGoalPlusModelRouting(rawGoal);
+): Promise<GoalPlusRoleModels | undefined> {
+	const requested = parseGoalPlusRoleModels(rawGoal);
 	if (!requested) return undefined;
-	const main = resolvePiModelReference(ctx, requested.main);
-	const annotation = resolvePiModelReference(ctx, requested.annotation);
-	const worker = resolvePiModelReference(ctx, requested.worker);
-	const selected = await pi.setModel(main);
-	if (!selected) {
-		throw new Error(`Pi cannot authenticate the requested main model: ${requested.main}`);
+	const main = requested.main
+		? resolvePiModelReference(ctx, requested.main)
+		: undefined;
+	const annotator = requested.annotator
+		? resolvePiModelReference(ctx, requested.annotator)
+		: undefined;
+	if (main) {
+		const selected = await pi.setModel(main);
+		if (!selected) {
+			throw new Error(`Pi cannot authenticate the requested main model: ${requested.main}`);
+		}
 	}
 	return {
-		main: `${main.provider}/${main.id}`,
-		annotation: `${annotation.provider}/${annotation.id}`,
-		worker: `${worker.provider}/${worker.id}`,
+		main: main ? `${main.provider}/${main.id}` : undefined,
+		annotator: annotator ? `${annotator.provider}/${annotator.id}` : undefined,
+		workerDirective: requested.workerDirective,
 	};
 }
 
 function buildGoalStartPrompt(
 	status: GoalPlusStatusPayload,
-	modelRouting?: GoalPlusModelRouting,
+	roleModels?: GoalPlusRoleModels,
 ): string {
 	const lines = [
 		"继续此 Goal Plus 任务。",
@@ -998,14 +1024,18 @@ function buildGoalStartPrompt(
 		"原始目标：",
 		status.raw_goal ?? "",
 	];
-	if (modelRouting) {
+	if (roleModels) {
 		lines.push(
 			"",
 			"已解析的模型路由：",
-			`- main: ${modelRouting.main}`,
-			`- annotation: ${modelRouting.annotation}`,
-			`- worker: ${modelRouting.worker}`,
-			"- Main 已在本轮开始前切换。冻结 SearchSpec 时，将 annotation 写入 strategy.evidence_annotator.model，并将 worker 写入 strategy.models。",
+		);
+		if (roleModels.main) lines.push(`- main: ${roleModels.main}（已切换）`);
+		if (roleModels.annotator) lines.push(`- annotator: ${roleModels.annotator}`);
+		if (roleModels.workerDirective) {
+			lines.push(`- workers: 使用原始目标中的 ${roleModels.workerDirective}= 分配。`);
+		}
+		lines.push(
+			"- 冻结 SearchSpec 时，只写入显式角色：annotator 写入 strategy.evidence_annotator.model；workers=/models= 按原有分配规则写入 strategy.models。未指定的角色保持现有 host 默认或继承语义。",
 		);
 	}
 	lines.push(
@@ -1056,9 +1086,9 @@ async function createGoalPlusStart(
 	rawGoal: string,
 	withFinalCheck = false,
 ): Promise<string | undefined> {
-	let modelRouting: GoalPlusModelRouting | undefined;
+	let roleModels: GoalPlusRoleModels | undefined;
 	try {
-		modelRouting = await applyGoalPlusModelRouting(pi, ctx, rawGoal);
+		roleModels = await applyGoalPlusRoleModels(pi, ctx, rawGoal);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		ctx.ui.notify(message, "error");
@@ -1098,7 +1128,7 @@ async function createGoalPlusStart(
 		display: true,
 		details: { goal_plus_id: status.goal_plus_id },
 	});
-	return buildGoalStartPrompt(status, modelRouting);
+	return buildGoalStartPrompt(status, roleModels);
 }
 
 async function updateGoalPlusStart(
@@ -1319,11 +1349,11 @@ export default function (pi: ExtensionAPI) {
 	}
 	if (!isPrintLikeInvocation) {
 		pi.registerCommand("goal-plus", {
-			description: "运行、编辑或恢复原生 Pi Goal Plus（支持 model= 角色路由）",
+			description: "运行、编辑或恢复原生 Pi Goal Plus（支持显式角色模型）",
 			handler: async (args, ctx) => {
 				const request = goalPlusRequestFromSlashInput(`/goal-plus ${args}`);
 				if (!request || (request.action !== "resume" && !request.rawGoal)) {
-					ctx.ui.notify("Usage: /goal-plus [mode=autonomous|probe] [model=main[,annotation,worker]] <goal>, /goal-plus edit [mode=...] <full revised goal>, or /goal-plus resume", "error");
+					ctx.ui.notify("Usage: /goal-plus [mode=autonomous|probe] [main=model] [annotator=model] [workers=model,...] <goal>, /goal-plus edit [mode=...] <full revised goal>, or /goal-plus resume", "error");
 					return;
 				}
 				const deliverAsFollowUp = !ctx.isIdle();
@@ -1340,7 +1370,7 @@ export default function (pi: ExtensionAPI) {
 			handler: async (args, ctx) => {
 				const rawGoal = args.trim();
 				if (!rawGoal) {
-					ctx.ui.notify("Usage: /goal-plus-with-final-check [mode=autonomous|probe] [model=main[,annotation,worker]] <goal>", "error");
+					ctx.ui.notify("Usage: /goal-plus-with-final-check [mode=autonomous|probe] [main=model] [annotator=model] [workers=model,...] <goal>", "error");
 					return;
 				}
 				const prompt = await createGoalPlusStart(pi, ctx, rawGoal, true);

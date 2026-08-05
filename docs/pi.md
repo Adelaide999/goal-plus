@@ -91,39 +91,37 @@ remaining upper budget. Infrastructure failure, pool close, or outer closeout
 stops this automatic continuation. Before each remaining hard limit, the runner
 sends one closeout steer. `max_turns` is only a prompt hint.
 
-### Role model routing
+### Explicit role models
 
 The native Pi command can select the main, Evidence Annotation, and Search
-worker models in one line:
+worker models with role-named parameters:
 
 ```text
-/goal-plus model=A optimize ...
-/goal-plus model=A,B max_parallel=4 optimize ...
-/goal-plus model=A,B,C max_parallel=4 optimize ...
+/goal-plus main=A annotator=B workers=C,D max_parallel=4 optimize ...
 ```
 
-The one-value form uses A for all three roles. The two-value form uses A for
-the main and annotator and B for every worker. The three-value form assigns
-main=A, annotator=B, and worker=C. Pi resolves each value against its model
-registry before creating the Goal Plus record, switches the main model before
-the first model turn, and injects canonical `provider/model` references for the
-SearchSpec. The annotator is frozen in `strategy.evidence_annotator.model`; the
-worker is frozen in `strategy.models` and remains fixed across each candidate's
-continuations.
+`main=` switches the current Pi model before the first model turn.
+`annotator=` freezes `strategy.evidence_annotator.model`. `workers=` resolves
+one or more models into `strategy.models`; uncounted entries round-robin and
+counted entries retain the allocation rules below. Omitted roles keep their
+existing host default or inheritance behavior rather than inheriting from an
+unrelated explicit role.
 
 Use qualified `provider/model` references when an id exists under more than one
-provider. Do not combine the role shorthand `model=` with the worker-allocation
-form `models=` below.
+provider. Existing `models=` remains a compatibility alias for `workers=` so
+older commands retain exactly the same Candidate allocation semantics. Do not
+specify both aliases in one request.
 
 ### Multi-model selection
 
-Use `models` directly in the natural-language command. Because Pi can expose
+Use `workers` (or the compatibility alias `models`) directly in the
+natural-language command. Because Pi can expose
 the same model id from multiple providers, canonical `provider/model` values
 are the clearest form:
 
 ```text
-/goal-plus models=openai-codex/gpt-5.6-terra,openai-codex/gpt-5.6-sol max_parallel=4 optimize ...
-/goal-plus models=openai-codex/gpt-5.6-terra,openai-codex/gpt-5.6-sol A1B3 max_parallel=4 optimize ...
+/goal-plus workers=openai-codex/gpt-5.6-terra,openai-codex/gpt-5.6-sol max_parallel=4 optimize ...
+/goal-plus workers=openai-codex/gpt-5.6-terra,openai-codex/gpt-5.6-sol A1B3 max_parallel=4 optimize ...
 ```
 
 Goal Plus obtains the catalog from Pi RPC `get_available_models` through
@@ -131,7 +129,8 @@ Goal Plus obtains the catalog from Pi RPC `get_available_models` through
 matches one entry uniquely. Uncounted entries round-robin; `A1B3` (or
 `A*1,B*3`) becomes explicit counts that must sum to `max_parallel`. The
 runtime-generated `selected_models` are immutable
-per candidate/native session. Omitting `models` keeps Pi's current default.
+per candidate/native session. Omitting both `workers` and `models` keeps Pi's
+current default.
 
 ## Parallel Loops
 
