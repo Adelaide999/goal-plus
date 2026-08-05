@@ -168,6 +168,8 @@ def test_pi_goal_plus_skill_documents_parallel_loop_policy() -> None:
     assert "candidate_ready" in text
     assert "最低累计 lease" in normalized
     assert "自动恢复同一个 session 和 worktree" in normalized
+    assert "创建新的 `agent_session_id`" in normalized
+    assert "已有工作区改动和 durable Evidence 保留" in normalized
     assert "复用匹配当前产物的 durable Evidence" in normalized
     assert "同一工作区" in normalized
     assert "保留 `agent_session_id` 和候选身份" in normalized
@@ -247,6 +249,9 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     assert "运行时历史" in text
     assert "原生会话上下文可以保留推理" in text
     assert "绝不能覆盖持久化运行时证据" in text
+    assert '因 `stopReason="length"` 结束且没有 tool call' in text
+    assert "避免继承被截断的 thinking 上下文" in text
+    assert "刷新不会重置累计值" in text
     assert "VerifierWorkspaceSideEffect" in text
     assert "VerifierDeadlineInsufficient" in text
     assert "candidate_action=stop_and_report" in text
@@ -304,13 +309,9 @@ def test_pi_extension_registers_role_tools_gate_and_workspace_guard() -> None:
     assert 'lastMessage.stopReason === "aborted"' in text
     assert 'lastMessage.stopReason === "length"' in text
     assert "countToolCalls(lastMessage.content) === 0" in text
-    assert 'recoveryReason: "length_without_tool_call"' in text
-    assert (
-        "上一轮因达到输出长度上限而结束，并且没有调用任何工具。"
-        "停止继续展开完整分析或重新复述问题。"
-        "基于已有上下文选择一个最小、可验证的实际动作；立即调用工具执行。"
-        "获得工具结果后再继续推理。"
-    ) in text
+    assert "if (lengthWithoutToolCall) return;" in text
+    assert 'recoveryReason: "length_without_tool_call"' not in text
+    assert "上一轮因达到输出长度上限而结束" not in text
     assert 'pi.on("tool_call"' in text
     assert 'goal_plus_gate' in text
     assert "tool_name" in text

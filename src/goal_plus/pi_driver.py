@@ -196,6 +196,7 @@ def run_pi_search_candidate(
     run_id: str,
     candidate_id: str,
     redispatch: bool = False,
+    refresh_session: bool = False,
     resume_agent_session_id: str | None = None,
     worker_budget: dict[str, Any] | None = None,
     final_verify: bool = True,
@@ -211,7 +212,17 @@ def run_pi_search_candidate(
     steps: list[dict[str, Any]] = []
     worker_budget_override = dict(worker_budget) if worker_budget is not None else None
 
-    if redispatch:
+    if refresh_session:
+        if resume_agent_session_id is not None:
+            raise ValueError(
+                "resume_agent_session_id cannot be used when refresh_session=true"
+            )
+        session = tools.search_redispatch_candidate(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            worker_budget=worker_budget_override,
+        )
+    elif redispatch:
         resumed_session_id = _pi_resume_agent_session_id(
             tools,
             run_id=run_id,
@@ -235,12 +246,15 @@ def run_pi_search_candidate(
     steps.append(
         {
             "tool": (
-                "search_continue_agent_session"
+                "search_redispatch_candidate"
+                if refresh_session
+                else "search_continue_agent_session"
                 if redispatch
                 else "search_start_agent_session"
             ),
             "agent_session_id": agent_session_id,
             "candidate_id": candidate_id,
+            "session_refresh": refresh_session,
             "worker_budget_override": worker_budget_override,
         }
     )

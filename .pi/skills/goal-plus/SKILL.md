@@ -161,7 +161,8 @@ subagent 负责其候选工作区内的瓶颈分析、假设选择、特性迁�
    有 durable process Evidence；仅有一次原始进程退出不代表成功。原生 turn 在最低时间或最低
    verifier 次数前结束时，supervisor 会占用同一个 slot，自动恢复同一个 session 和 worktree。
    如果 worker assistant 因 `stopReason="length"` 结束，且该响应没有 tool call，worker-local
-   扩展会在同一个原生 session 注入专用行动提示并立即触发下一 turn；main agent 不参与判断或恢复。
+   扩展不会续跑旧上下文；driver 会返回 refresh 信号，pool supervisor 随即在同一 candidate/workspace
+   上创建新的 `agent_session_id`。main agent 不参与判断或恢复，已有工作区改动和 durable Evidence 保留。
    最低 lease 到硬上限仍未满足时返回 `timed_out`；pool 关闭返回 `interrupted`，执行失败返回
    `failed`。这些事件都不是 candidate ready，必须按未完成处理。只要返回的
    `active_count>0`，就继续等待 supervisor 的准确状态，不自行推算 lease 剩余时间。

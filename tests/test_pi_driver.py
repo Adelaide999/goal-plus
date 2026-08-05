@@ -347,6 +347,54 @@ def test_run_pi_search_candidate_resumes_same_native_session_across_processes(
     ] == [1001, 1002]
 
 
+def test_run_pi_search_candidate_refreshes_with_new_native_session(
+    tmp_path: Path,
+) -> None:
+    project = _make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    frozen = runtime.freeze_spec(_pi_rpc_spec(project), [project / "evaluator.py"])
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    plan = runtime.plan_next(run_id, requested_k=1)
+    candidate = runtime.start_batch(run_id, plan.plan_id)[0]
+    launches: list[dict[str, Any]] = []
+
+    def fake_worker(launch: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+        launches.append(dict(launch))
+        return {
+            "host": "pi-rpc",
+            "external_id": launch["session_id"],
+            "metadata": {"continuation": "native_session"},
+        }
+
+    first = run_pi_search_candidate(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_id=candidate.candidate_id,
+        final_verify=False,
+        worker_runner=fake_worker,
+    )
+    refreshed = run_pi_search_candidate(
+        root_dir=runtime.root_dir,
+        run_id=run_id,
+        candidate_id=candidate.candidate_id,
+        refresh_session=True,
+        final_verify=False,
+        worker_runner=fake_worker,
+    )
+
+    assert first["agent_session_id"] != refreshed["agent_session_id"]
+    assert refreshed["steps"][0]["tool"] == "search_redispatch_candidate"
+    assert refreshed["steps"][0]["session_refresh"] is True
+    assert refreshed["launch"]["session_id"] == refreshed["agent_session_id"]
+    assert refreshed["launch"]["cwd"] == first["launch"]["cwd"]
+    assert len(runtime._load_agent_sessions(run_id)) == 2
+    context = runtime.get_agent_context(refreshed["agent_session_id"])
+    assert context["resume"]["is_redispatch"] is True
+    assert context["resume"]["previous_sessions"][0]["agent_session_id"] == (
+        first["agent_session_id"]
+    )
+
+
 def test_run_pi_search_candidate_accepts_explicit_long_worker_budget(
     tmp_path: Path,
 ) -> None:
