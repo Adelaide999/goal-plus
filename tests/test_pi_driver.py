@@ -108,6 +108,7 @@ def test_run_pi_search_candidate_binds_worker_handle_and_final_verifies(
         root_dir=runtime.root_dir,
         run_id=run_id,
         candidate_id=candidate.candidate_id,
+        refresh_reason=None,
         final_verify=True,
         worker_runner=fake_worker,
         pi_binary="fake-pi",

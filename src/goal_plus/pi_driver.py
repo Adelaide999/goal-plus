@@ -197,6 +197,7 @@ def run_pi_search_candidate(
     candidate_id: str,
     redispatch: bool = False,
     refresh_session: bool = False,
+    refresh_reason: str | None = None,
     resume_agent_session_id: str | None = None,
     worker_budget: dict[str, Any] | None = None,
     final_verify: bool = True,
@@ -255,6 +256,7 @@ def run_pi_search_candidate(
             "agent_session_id": agent_session_id,
             "candidate_id": candidate_id,
             "session_refresh": refresh_session,
+            "session_refresh_reason": refresh_reason if refresh_session else None,
             "worker_budget_override": worker_budget_override,
         }
     )
