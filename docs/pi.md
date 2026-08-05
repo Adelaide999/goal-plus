@@ -156,9 +156,12 @@ after the driver has bound the handle, released any minimum lease, and confirmed
 durable Evidence for the current artifact. An exhausted unsatisfied lease emits
 `timed_out` instead. While a minimum lease is active, Pi `agent_end` queues the
 next turn in the same process and native session until the configured closeout
-point. The driver reuses matching worker Evidence instead of adding a duplicate
-parent process iteration. Parent verification is only a fallback for a changed,
-unverified artifact; an unchanged workspace does not create a baseline iteration.
+point. When the last assistant response ends with `stopReason="length"` and has
+no tool call, the worker-local extension queues a targeted action prompt instead
+of the generic continuation prompt; the main agent is not involved. The driver
+reuses matching worker Evidence instead of adding a duplicate parent process
+iteration. Parent verification is only a fallback for a changed, unverified
+artifact; an unchanged workspace does not create a baseline iteration.
 
 There is no public synchronous candidate/batch runner. Pool open owns the
 initial fixed lane set; pool continue owns later dispatches for those same

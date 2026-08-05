@@ -1479,6 +1479,10 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("agent_end", async (event, ctx) => {
 		const lastMessage = event.messages.at(-1);
+		const lengthWithoutToolCall =
+			lastMessage?.role === "assistant" &&
+			lastMessage.stopReason === "length" &&
+			countToolCalls(lastMessage.content) === 0;
 		if (
 			lastMessage?.role === "assistant" &&
 			(lastMessage.stopReason === "error" || lastMessage.stopReason === "aborted")
@@ -1498,10 +1502,15 @@ export default function (pi: ExtensionAPI) {
 			pi.sendMessage(
 				{
 					customType: "goal-plus-worker-continuation",
-					content:
-						"继续当前 Candidate 会话。lease 尚未进入 closeout；刷新运行时上下文和可见证据，推进一个实质方向。只有产物发生实质变化后才运行 verifier，不要重复验证未修改的产物。",
+					content: lengthWithoutToolCall
+						? "上一轮因达到输出长度上限而结束，并且没有调用任何工具。停止继续展开完整分析或重新复述问题。基于已有上下文选择一个最小、可验证的实际动作；立即调用工具执行。获得工具结果后再继续推理。"
+						: "继续当前 Candidate 会话。lease 尚未进入 closeout；刷新运行时上下文和可见证据，推进一个实质方向。只有产物发生实质变化后才运行 verifier，不要重复验证未修改的产物。",
 					display: false,
-					details: { workerContinuationCount, workerContinueUntilMs },
+					details: {
+						workerContinuationCount,
+						workerContinueUntilMs,
+						...(lengthWithoutToolCall ? { recoveryReason: "length_without_tool_call" } : {}),
+					},
 				},
 				{ triggerTurn: true, deliverAs: "followUp" },
 			);

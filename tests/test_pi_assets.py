@@ -302,6 +302,15 @@ def test_pi_extension_registers_role_tools_gate_and_workspace_guard() -> None:
     assert 'lastMessage?.role === "assistant"' in text
     assert 'lastMessage.stopReason === "error"' in text
     assert 'lastMessage.stopReason === "aborted"' in text
+    assert 'lastMessage.stopReason === "length"' in text
+    assert "countToolCalls(lastMessage.content) === 0" in text
+    assert 'recoveryReason: "length_without_tool_call"' in text
+    assert (
+        "上一轮因达到输出长度上限而结束，并且没有调用任何工具。"
+        "停止继续展开完整分析或重新复述问题。"
+        "基于已有上下文选择一个最小、可验证的实际动作；立即调用工具执行。"
+        "获得工具结果后再继续推理。"
+    ) in text
     assert 'pi.on("tool_call"' in text
     assert 'goal_plus_gate' in text
     assert "tool_name" in text
