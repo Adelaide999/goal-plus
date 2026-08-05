@@ -15,14 +15,16 @@ pi -p "$(cat examples/vliw-kernel-optimization/pi-goal-prompt.md)"
 The checked-in prompt uses this role routing:
 
 ```text
-model=gpt-5.6-terra,gpt-5.6-sol
+main=openai/gpt-5.6-terra annotator=openai/gpt-5.6-terra workers=zai/glm-5.2
 ```
 
-The first model runs the Main Agent and Evidence Annotation; the second model
-runs both candidate Workers. These short ids must resolve uniquely in the local
+`main` and `annotator` select those roles explicitly; `workers` uses the
+existing Candidate model allocation and can contain one or more models. These
+short ids must resolve uniquely in the local
 Pi registry; use qualified `provider/model` values if a model id is ambiguous.
-A single value uses the same model for all three roles, while three values
-select Main, Annotation, and Worker independently.
+For example, `workers=worker-a,worker-b` round-robins two models over the fixed
+candidate lanes. Existing `models=` remains a compatibility alias for
+`workers=`.
 
 The equivalent interactive request is the first line of
 [`pi-goal-prompt.md`](pi-goal-prompt.md). No SearchSpec or experiment launcher
