@@ -21,7 +21,10 @@ def test_pi_assets_exist() -> None:
         path.relative_to(ROOT).as_posix()
         for path in (ROOT / ".pi" / "skills").glob("*/SKILL.md")
     )
-    assert skill_files == [".pi/skills/goal-plus/SKILL.md"]
+    assert skill_files == [
+        ".pi/skills/goal-plus-install/SKILL.md",
+        ".pi/skills/goal-plus/SKILL.md",
+    ]
 
 
 def test_pyproject_exposes_pi_console_scripts() -> None:
