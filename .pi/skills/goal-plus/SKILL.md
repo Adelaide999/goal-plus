@@ -55,13 +55,20 @@ ranking verifier 必须输出一个最终 JSON 对象，其中包含有限数值
 直接填写，不要根据校验错误猜字段。`search_freeze_spec` 会重复 verifier 预检，
 契约无效时会在候选 worker 启动前拒绝 spec。
 
-如果原始命令包含 `models=...`，先调用 `goal_plus_list_models(host="pi-rpc")`，将用户
+原生 Pi 命令使用显式角色名：`main=A` 切换 Main，`annotator=B` 冻结 Evidence
+Annotation 模型，`workers=C,D` 分配 Candidate Worker。只解析用户实际填写的角色；省略的
+角色保持现有 host 默认或继承语义，不从另一个显式角色猜默认值。扩展在模型轮次开始前解析
+并切换 Main，并把规范化后的完整 `provider/model` Main/Annotator 路由注入启动上下文。
+冻结 SearchSpec 时把显式 Annotator 写入 `strategy.evidence_annotator.model`。
+
+如果原始命令包含 `workers=...` 或兼容别名 `models=...`，先调用
+`goal_plus_list_models(host="pi-rpc")`，将用户
 填写的名称解析为唯一可用模型并冻结到 `strategy.models`；不存在或不唯一时，在创建
-run 前直接返回错误。`models=A,B max_parallel=4` 表示 A、B、A、B；
-`models=A,B A1B3 max_parallel=4`（等价写法 `models=A*1,B*3`）表示显式
+run 前直接返回错误。`workers=A,B max_parallel=4` 表示 A、B、A、B；
+`workers=A,B A1B3 max_parallel=4`（等价写法 `workers=A*1,B*3`）表示显式
 A1B3，数量之和必须等于
-`max_parallel`。`models=A,B 每个一个` 表示 `max_parallel=2`。用户没有填写
-`models` 时不要探测目录，保持 Pi 当前默认模型。
+`max_parallel`。`workers=A,B 每个一个` 表示 `max_parallel=2`。`workers=` 与
+`models=` 不能同时出现。没有填写任一 Worker 参数时不要探测目录，保持 Pi 当前默认模型。
 
 冻结预检在一次性源码副本中运行，并要求 verifier 保持该工作区只读。编译器产物和临时
 输出应放入唯一的 `GOAL_PLUS_VERIFIER_TMPDIR`/`TMPDIR` 或 Python
