@@ -1774,17 +1774,8 @@ class FileSearchRuntime:
                 agent_session_id,
                 run_id=session.run_id,
             )
-            run = self._load_run(session.run_id)
+            self._load_run(session.run_id)
             view = self._global_evidence_view(session.run_id)
-            self.attach_external_evaluations(session.run_id, view)
-            frozen = self._load_frozen_spec(run.frozen_spec_id)
-            mode = self._global_evidence_mode(frozen.spec.strategy.config)
-            if mode == "independent":
-                view = [
-                    entry
-                    for entry in view
-                    if entry["candidate_id"] == session.candidate_id
-                ]
             completed_views = [
                 GlobalEvidenceViewReference(
                     candidate_id=str(entry["candidate_id"]),
@@ -1792,7 +1783,7 @@ class FileSearchRuntime:
                     commit=str(entry["commit"]),
                     view_created_at=str(entry["view_created_at"]),
                     supplemental_evaluation_present=(
-                        bool(entry.get("supplemental_available"))
+                        entry["supplemental_evaluation"] is not None
                     ),
                 )
                 for entry in view
@@ -6275,6 +6266,7 @@ class FileSearchRuntime:
             "score": iteration.score,
             "disposition": iteration.disposition,
             "view": view.description if view is not None else None,
+            "view_created_at": view.created_at if view is not None else None,
             "supplemental_evaluation": (
                 view.supplemental_evaluation.model_dump(mode="json")
                 if view is not None and view.supplemental_evaluation is not None
@@ -6501,6 +6493,8 @@ class FileSearchRuntime:
                     "diff",
                     "--full-index",
                     "--no-ext-diff",
+                    "--function-context",
+                    "--unified=10",
                     candidate_base_commit,
                     commit,
                     "--",
@@ -6542,6 +6536,10 @@ class FileSearchRuntime:
             "candidate_base_commit": candidate_base_commit,
             "candidate_changed_files": candidate_changed_files,
             "candidate_diff": candidate_diff,
+            "diff_context_policy": (
+                "git function context with at least 10 unchanged lines around hunks; "
+                "output remains byte-bounded and may omit definitions outside the diff"
+            ),
             "verifier_result": {
                 "score": iteration.score,
                 "process_passed": iteration.process_passed,

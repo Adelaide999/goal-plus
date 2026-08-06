@@ -125,32 +125,12 @@ decisions produce iteration advisories only. The staging inventory remains
 authoritative, and decisions/advisories do not affect score, disposition,
 selection, or promotion. `view=null` in Global Evidence means annotation has not been
 published yet; workers continue independently and do not wait or poll.
-`strategy.config.global_evidence_mode` controls Evidence delivery without
-changing the candidate-visible prompt or tool surface. `manual` is the default:
-candidates explicitly read the shared run view. `auto` also injects that shared
-view as `global_evidence_snapshot` after each successful worker process verifier.
-`independent` does not inject and limits explicit reads to the calling
-candidate's own Evidence. Parent and promotion verification are unchanged.
-Snapshot failures add `global_evidence_warning` without changing the successful
-verifier result. `GOAL_PLUS_GLOBAL_EVIDENCE_MODE` can supply the mode before
-freeze; the effective value is persisted in the frozen spec, and a conflicting
-explicit `strategy.config.global_evidence_mode` is rejected.
-
 Every call persists a `global_evidence_reads` entry on the calling agent
 session. The entry records the read timestamp and exact completed
 candidate/iteration/commit View references visible at that moment, so reports
 can distinguish a View published after the last verifier from one available
 before a later attempt. These receipts are observational and never affect
 settlement, selection, promotion, or hard PASS/FAIL.
-When `shared_dir.enabled=true`, Global Evidence additionally projects only tools whose Tool View has
-been generated and runtime-bound. A worker may call `search_copy_shared_tool` with that exact
-`tool_id` and `snapshot_hash`; the next process verifier atomically consumes the local copy receipt.
-This records a candidate-local adoption but does not create a separate tool score, recommendation, or
-selection rule.
-`ToolizationDecision` is an iteration-local review fact and never enters Global
-Evidence. The publication path remains staging -> attributed passing process
-verifier -> immutable shared snapshot -> annotator-bound Tool View -> Global
-Evidence -> exact copy receipt -> adopted tool record.
 Each worker settlement snapshots the exact attempt base/head, worker host, and
 resolved annotator model/provider into an internal task. Codex runs annotations
 through ephemeral `codex exec`; Pi runs them through ephemeral, tool-free
