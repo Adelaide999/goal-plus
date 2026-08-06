@@ -153,28 +153,6 @@ const EvidenceAnnotator = Type.Object(
 	},
 	{ additionalProperties: false },
 );
-const AcceptanceCriterion = Type.Object(
-	{
-		id: Type.String({ pattern: "^[a-z][a-z0-9_-]*$" }),
-		category: Type.String({ minLength: 1 }),
-		description: Type.String({ minLength: 1 }),
-		importance: Type.Optional(
-			Type.Union([Type.Literal("high"), Type.Literal("medium"), Type.Literal("low")]),
-		),
-		evidence_hints: Type.Optional(Type.Array(Type.String())),
-	},
-	{ additionalProperties: false },
-);
-const AcceptanceViewSpec = Type.Object(
-	{
-		rubric_name: Type.String({ minLength: 1 }),
-		benchmark_context: Type.String({ minLength: 1 }),
-		criteria: Type.Array(AcceptanceCriterion, { minItems: 1, maxItems: 12 }),
-		tie_policy: Type.Optional(Type.Literal("retain_latest")),
-		affects_final_result: Type.Optional(Type.Literal(false)),
-	},
-	{ additionalProperties: false },
-);
 const ModelSpec = Type.Object(
 	{
 		model: Type.String({ minLength: 1 }),
@@ -253,7 +231,6 @@ const SearchSpecSchema = Type.Object(
 		promotion_verifiers: Type.Optional(Type.Array(VerifierCommand)),
 		constraints: Type.Optional(LooseObject),
 		root_hypotheses: Type.Optional(Type.Array(Type.String())),
-		acceptance_view: Type.Optional(Type.Union([AcceptanceViewSpec, Type.Null()])),
 		strategy: Type.Optional(StrategySpec),
 		workspace: Type.Optional(WorkspaceSpec),
 		shared_dir: Type.Optional(SharedDirSpec),
@@ -617,9 +594,9 @@ const RuntimeToolDescriptions: Record<string, string> = {
 	search_get_agent_context:
 		"读取当前 worker 的权威 candidate 上下文。candidate_task.share_out_dir 非空表示已启用 shared_dir：同一 run 内可供 peer 使用的 repeated_sequence、domain_probe、parser_or_trace 或 peer_setup_reduction 默认应工具化；短小、任务专属、来自临时代码片段或只输出退出码都不是排除理由。只有 single_common_command、logic_free_wrapper、restricted_artifact、candidate_private_state 或 duplicate_snapshot 支持 not_applicable。",
 	search_get_global_evidence:
-		"读取当前 run 的窄 Global Evidence 视图。每项包含 verifier attempt commit、硬 score、keep/retain/discard/failure、可能延迟的客观 View，以及冻结契约启用时的结构化 Acceptance View；任一 View 为 null 时都无需等待，可先依据 Evidence 独立探索。",
+		"读取当前 run 的窄 Global Evidence 视图。每项包含 verifier attempt commit、硬 score、disposition、可能延迟的客观 View，以及启用时由 ViewAgent 后验生成的开放式 supplemental_evaluation 和动态 peer 比较；任一 View 为 null 时都无需等待，可先依据 Evidence 独立探索。",
 	search_run_verifier:
-		"为一个候选评分。worker process verifier 必须提供一句话 hypothesis，客观概括本轮实际尝试。每份返回的 verifier 报告都会在运行时拥有、继承而来的 workspace/results.tsv 中追加且只追加一条已验证记录，并提交该文件。process verifier 返回 keep/retain/discard/failure disposition；启用 Acceptance View 时，同硬分有效尝试为 retain 并成为最新工作基线，否则非严格改善会恢复 candidate-local best。Acceptance View 不改变硬 score 或最终 PASS/FAIL。带 candidate_action=stop_and_report 的 VerifierWorkspaceSideEffect 属于基础设施失败：worker 必须停止，不能清理或重试，使父级能够修复并重新冻结。",
+		"为一个候选评分。worker process verifier 必须提供一句话 hypothesis，客观概括本轮实际尝试。每份返回的 verifier 报告都会在运行时拥有、继承而来的 workspace/results.tsv 中追加且只追加一条已验证记录，并提交该文件。新 run 只有严格硬分改善会成为 candidate-local best；同分或退化会恢复此前硬分最佳。开放式补充评价和动态 peer 比较不改变结算、硬 score 或最终 PASS/FAIL。带 candidate_action=stop_and_report 的 VerifierWorkspaceSideEffect 属于基础设施失败：worker 必须停止，不能清理或重试，使父级能够修复并重新冻结。",
 	search_invalidate_run:
 		"主 agent 确认 verifier 契约、覆盖范围、确定性、目标对齐或基础设施失败后，原子地隔离该 run。随后中断每个 host worker，等待 active worker 数归零，修复并重新冻结，再使用 source_run_id 创建后继项。",
 	search_report:

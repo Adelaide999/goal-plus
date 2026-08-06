@@ -110,8 +110,12 @@ EVIDENCE_ANNOTATOR_PROVIDER_NAME_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_PROVIDER_NA
 EVIDENCE_ANNOTATOR_API_KEY_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_API_KEY_ENV"
 EVIDENCE_ANNOTATOR_WIRE_API_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_WIRE_API"
 OUTER_DEADLINE_ENV = "GOAL_PLUS_OUTER_DEADLINE_AT"
-ACCEPTANCE_VIEW_ENABLED_ENV = "GOAL_PLUS_ACCEPTANCE_VIEW_ENABLED"
-ACCEPTANCE_VIEW_REQUIRED_ENV = "GOAL_PLUS_ACCEPTANCE_VIEW_REQUIRED"
+SUPPLEMENTAL_EVALUATION_ENABLED_ENV = (
+    "GOAL_PLUS_SUPPLEMENTAL_EVALUATION_ENABLED"
+)
+SUPPLEMENTAL_EVALUATION_REQUIRED_ENV = (
+    "GOAL_PLUS_SUPPLEMENTAL_EVALUATION_REQUIRED"
+)
 
 
 def _boolean_environment_value(
@@ -132,17 +136,21 @@ def _boolean_environment_value(
     raise ValueError(f"{name} must be a boolean value, found {raw!r}")
 
 
-def acceptance_view_enabled(environment: dict[str, str] | None = None) -> bool:
+def supplemental_evaluation_enabled(
+    environment: dict[str, str] | None = None,
+) -> bool:
     return _boolean_environment_value(
-        ACCEPTANCE_VIEW_ENABLED_ENV,
-        default=True,
+        SUPPLEMENTAL_EVALUATION_ENABLED_ENV,
+        default=False,
         environment=environment,
     )
 
 
-def acceptance_view_required(environment: dict[str, str] | None = None) -> bool:
+def supplemental_evaluation_required(
+    environment: dict[str, str] | None = None,
+) -> bool:
     return _boolean_environment_value(
-        ACCEPTANCE_VIEW_REQUIRED_ENV,
+        SUPPLEMENTAL_EVALUATION_REQUIRED_ENV,
         default=False,
         environment=environment,
     )
@@ -608,26 +616,19 @@ class FileSearchRuntime:
             process.wait()
 
     def freeze_spec(self, spec: SearchSpec, verifier_artifacts: list[Path]) -> FrozenSpec:
-        view_enabled = acceptance_view_enabled()
-        view_required = acceptance_view_required()
-        if view_required and not view_enabled:
+        supplemental_enabled = supplemental_evaluation_enabled()
+        supplemental_required = supplemental_evaluation_required()
+        if supplemental_required and not supplemental_enabled:
             raise ValueError(
-                f"{ACCEPTANCE_VIEW_REQUIRED_ENV}=1 requires "
-                f"{ACCEPTANCE_VIEW_ENABLED_ENV}=1"
+                f"{SUPPLEMENTAL_EVALUATION_REQUIRED_ENV}=1 requires "
+                f"{SUPPLEMENTAL_EVALUATION_ENABLED_ENV}=1"
             )
-        if not view_enabled and spec.acceptance_view is not None:
-            spec = spec.model_copy(update={"acceptance_view": None})
-        if view_required:
-            if spec.acceptance_view is None:
-                raise ValueError(
-                    f"{ACCEPTANCE_VIEW_REQUIRED_ENV}=1 requires SearchSpec.acceptance_view"
-                )
-            criterion_count = len(spec.acceptance_view.criteria)
-            if not 3 <= criterion_count <= 8:
-                raise ValueError(
-                    f"{ACCEPTANCE_VIEW_REQUIRED_ENV}=1 requires 3 to 8 "
-                    f"acceptance criteria, found {criterion_count}"
-                )
+        if spec.acceptance_view is not None:
+            raise ValueError(
+                "SearchSpec.acceptance_view is retired for new runs; "
+                "ViewAgent now performs open-ended supplemental evaluation "
+                "after Evidence settlement"
+            )
         spec = _normalize_verifier_cwds_for_candidate_workspace(spec)
         spec = self._apply_global_evidence_mode_from_environment(spec)
         spec = self._normalize_strategy_models(spec)
@@ -3646,9 +3647,9 @@ class FileSearchRuntime:
             "把 context.agent_session_id 传给 search_run_verifier，并省略 scope 以使用 process verifier；同时用一句话 hypothesis 客观概括本轮实际尝试。",
             "每次 run_verifier 调用都会记录一个 iteration。在配置的 host 预算内工作。尽早完成并验证候选，在达到限制前停止启动新的优化 iteration，并留出足够时间返回简洁摘要。",
             "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
-            "process verifier 返回 keep/retain/discard/failure disposition；启用 Acceptance View 时，同硬分有效尝试为 retain 并成为下一轮基线，否则非严格改善或验证失败时恢复 candidate-local best。Acceptance View 不改变硬分或最终验收。下一轮直接从返回后的已结算工作区继续。",
+            "process verifier 对新 run 返回 keep/discard/failure disposition；只有严格硬分改善才成为 candidate-local best，同分、退化或验证失败都会恢复此前硬分最佳。开放式补充评价和 peer 比较不改变结算、硬分或最终验收。下一轮直接从返回后的已结算工作区继续。",
             "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
-            "Global Evidence 展示 peer 的 verifier commit、硬分、disposition、可能延迟的客观 View 和可选的任务特定 Acceptance View。软项中的 missing、partial 或 unknown 可用于形成新假设，但不参与最终验收。任一 View 为 null 都不要求等待；可先按自己的方向探索。只有代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
+            "Global Evidence 展示 peer 的 verifier commit、硬分、disposition、可能延迟的客观 View，以及 ViewAgent 基于实际 Evidence 生成的开放式 supplemental_evaluation。它会动态比较 annotation task 创建时其他已结算候选，但不使用 FrozenSpec 软标准、不参与结算或最终验收。将它视为第三方观察而非推荐；任一 View 为 null 都不要求等待。只有代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
         ]
         share_out_dir = None
         if frozen.spec.shared_dir.enabled:
@@ -6274,6 +6275,11 @@ class FileSearchRuntime:
             "score": iteration.score,
             "disposition": iteration.disposition,
             "view": view.description if view is not None else None,
+            "supplemental_evaluation": (
+                view.supplemental_evaluation.model_dump(mode="json")
+                if view is not None and view.supplemental_evaluation is not None
+                else None
+            ),
             "acceptance_view": (
                 view.acceptance_view.model_dump(mode="json")
                 if view is not None and view.acceptance_view is not None
@@ -6502,6 +6508,29 @@ class FileSearchRuntime:
                 ],
                 max_bytes=MAX_EVIDENCE_ANNOTATION_DIFF_BYTES,
             )
+        peer_evidence = self._evidence_comparison_peers(
+            run_id,
+            comparison_basis=task.comparison_basis,
+        )
+        task_context = frozen.spec.objective
+        task_context_source = "frozen_objective"
+        if task.task_context_source is not None:
+            resolved_context, resolved_source, resolved_ref = (
+                self._evidence_task_context(
+                    run_id,
+                    fallback=frozen.spec.objective,
+                )
+            )
+            if (
+                resolved_source != task.task_context_source
+                or resolved_ref != task.task_context_ref
+                or sha256_text(resolved_context) != task.task_context_sha256
+            ):
+                raise RuntimeError(
+                    "annotation task context no longer matches its snapshot"
+                )
+            task_context = resolved_context
+            task_context_source = resolved_source
         return {
             "run_id": run_id,
             "candidate_id": candidate_id,
@@ -6531,6 +6560,15 @@ class FileSearchRuntime:
                 for command in frozen.spec.process_verifiers
             ],
             "objective": frozen.spec.objective,
+            "task_context": task_context,
+            "task_context_source": task_context_source,
+            "supplemental_evaluation_enabled": (
+                task.supplemental_evaluation_enabled
+            ),
+            "peer_evidence": peer_evidence,
+            "comparison_basis": [
+                item.model_dump(mode="json") for item in task.comparison_basis
+            ],
             "acceptance_contract": (
                 frozen.spec.acceptance_view.model_dump(mode="json")
                 if frozen.spec.acceptance_view is not None
@@ -6616,7 +6654,7 @@ class FileSearchRuntime:
                 for iteration in record.iterations
                 if iteration.agent_session_id is not None
                 and self._git_iteration_eligible(iteration)
-                and iteration.disposition in {None, "keep"}
+                and iteration.disposition in {None, "keep", "retain"}
             ]
             if not eligible:
                 continue
