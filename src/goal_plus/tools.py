@@ -174,7 +174,23 @@ class SearchTools:
             agent_session_id=agent_session_id,
             hypothesis=hypothesis,
         )
-        return report.model_dump(mode="json")
+        result = report.model_dump(mode="json")
+        if scope != "process" or agent_session_id is None:
+            return result
+        try:
+            if not self.runtime.should_inject_global_evidence_after_verifier(run_id):
+                return result
+            snapshot = self.runtime.get_global_evidence(agent_session_id)
+        except Exception as exc:
+            result["global_evidence_injected"] = False
+            result["global_evidence_warning"] = (
+                f"Global Evidence injection failed: {type(exc).__name__}: {exc}"
+            )
+            return result
+        result["global_evidence_snapshot"] = snapshot
+        result["global_evidence_injected"] = True
+        result["global_evidence_entry_count"] = len(snapshot)
+        return result
 
     def search_list_iterations(
         self,

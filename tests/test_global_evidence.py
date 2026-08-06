@@ -8,6 +8,7 @@ import pytest
 
 from goal_plus.models import EvidenceViewRecord, SearchSpec
 from goal_plus.runtime import FileSearchRuntime
+from goal_plus.tools import SearchTools
 from tests._runtime_helpers import git_commit_all, make_project, spec_for
 
 
@@ -52,6 +53,7 @@ def _git(workspace: Path, *args: str) -> str:
 def test_global_evidence_is_immediate_and_view_is_late_bound(tmp_path: Path) -> None:
     runtime, run_id, candidates = _search_with_candidates(tmp_path, 2)
     first, second = candidates
+    assert not runtime.should_inject_global_evidence_after_verifier(run_id)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert list(
@@ -133,6 +135,29 @@ def test_global_evidence_is_immediate_and_view_is_late_bound(tmp_path: Path) -> 
         check=True,
     )
     assert _git(first[2], "show", f"{peer_commit}:initial_program.py") == "VALUE = 2"
+
+
+def test_post_verifier_global_evidence_injection_is_opt_in(tmp_path: Path) -> None:
+    runtime, run_id, [candidate] = _search_with_candidates(
+        tmp_path,
+        1,
+        strategy_updates={
+            "config": {"inject_global_evidence_after_verifier": True}
+        },
+    )
+    candidate_id, session_id, workspace = candidate
+    (workspace / "initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    report = SearchTools(runtime).search_run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Set the candidate value",
+    )
+
+    assert report["global_evidence_injected"] is True
+    assert report["global_evidence_entry_count"] == 1
+    assert report["global_evidence_snapshot"][0]["candidate_id"] == candidate_id
 
 
 def test_worker_hypothesis_is_required_and_parent_evidence_is_private(
