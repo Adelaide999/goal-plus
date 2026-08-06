@@ -1692,6 +1692,12 @@ class FileSearchRuntime:
         self._kick_evidence_annotator(session.run_id)
         return view
 
+    def should_inject_global_evidence_after_verifier(self, run_id: str) -> bool:
+        run = self._load_run(run_id)
+        frozen = self._load_frozen_spec(run.frozen_spec_id)
+        config = frozen.spec.strategy.config
+        return config.get("inject_global_evidence_after_verifier") is True
+
     def run_verifier(
         self,
         run_id: str,
