@@ -96,6 +96,14 @@ EVIDENCE_ANNOTATOR_WIRE_API_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_WIRE_API"
 OUTER_DEADLINE_ENV = "GOAL_PLUS_OUTER_DEADLINE_AT"
 
 
+def closeout_reserve_seconds(config: dict[str, Any]) -> float:
+    return float(
+        config.get("closeout_reserve_seconds")
+        or config.get("reserve_closeout_seconds")
+        or 0
+    )
+
+
 @dataclass(frozen=True)
 class _CandidateArtifactState:
     changed_files: list[str]
@@ -1781,12 +1789,7 @@ class FileSearchRuntime:
                 )
                 closeout_seconds = max(
                     0.0,
-                    float(
-                        frozen.spec.strategy.config.get(
-                            "reserve_closeout_seconds", 0
-                        )
-                        or 0
-                    ),
+                    closeout_reserve_seconds(frozen.spec.strategy.config),
                 )
                 remaining_seconds = outer_deadline - time.time()
                 required_seconds = verifier_seconds + closeout_seconds

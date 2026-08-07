@@ -2619,8 +2619,14 @@ def test_run_verifier_records_failure_class_on_timeout(
     assert it.score == 0.0
 
 
+@pytest.mark.parametrize(
+    "reserve_key",
+    ["closeout_reserve_seconds", "reserve_closeout_seconds"],
+)
 def test_process_verifier_requires_time_for_suite_and_closeout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reserve_key: str,
 ) -> None:
     project = make_project(tmp_path)
     runtime = FileSearchRuntime(tmp_path / ".search")
@@ -2628,7 +2634,7 @@ def test_process_verifier_requires_time_for_suite_and_closeout(
         project,
         {
             "name": "random",
-            "config": {"reserve_closeout_seconds": 20},
+            "config": {reserve_key: 20},
         },
         max_parallel=1,
     )
@@ -2639,7 +2645,15 @@ def test_process_verifier_requires_time_for_suite_and_closeout(
     session = runtime.start_agent_session(run_id, candidate.candidate_id)
     monkeypatch.setenv("GOAL_PLUS_OUTER_DEADLINE_AT", str(time.time() + 40))
 
-    with pytest.raises(RuntimeError, match="VerifierDeadlineInsufficient"):
+    def verifier_must_not_start(*_args, **_kwargs):
+        raise AssertionError("deadline admission must run before the verifier process")
+
+    monkeypatch.setattr(runtime, "_execute_verifier_process", verifier_must_not_start)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"VerifierDeadlineInsufficient:.*closeout reserves 20\.0s",
+    ):
         runtime.run_verifier(
             run_id,
             candidate.candidate_id,
@@ -2649,6 +2663,38 @@ def test_process_verifier_requires_time_for_suite_and_closeout(
 
     assert runtime.list_iterations(run_id, candidate.candidate_id) == []
     assert runtime._load_run(run_id).state == RunState.WAITING_FOR_WORKERS
+
+
+def test_process_verifier_starts_when_suite_and_canonical_closeout_fit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    spec = spec_with_strategy(
+        project,
+        {
+            "name": "random",
+            "config": {"closeout_reserve_seconds": 60},
+        },
+        max_parallel=1,
+    )
+    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    plan = runtime.plan_next(run_id, requested_k=1)
+    candidate = runtime.start_batch(run_id, plan.plan_id)[0]
+    session = runtime.start_agent_session(run_id, candidate.candidate_id)
+    monkeypatch.setenv("GOAL_PLUS_OUTER_DEADLINE_AT", str(time.time() + 100))
+
+    report = runtime.run_verifier(
+        run_id,
+        candidate.candidate_id,
+        agent_session_id=session.agent_session_id,
+        hypothesis="Run when the 30 second suite and 60 second reserve fit",
+    )
+
+    assert report.process_passed is True
+    assert len(runtime.list_iterations(run_id, candidate.candidate_id)) == 1
 
 
 def test_list_iterations_empty_for_fresh_candidate(tmp_path: Path) -> None:
