@@ -1764,6 +1764,51 @@ def test_freeze_rejects_worker_lease_fields_in_strategy_config(
         runtime.freeze_spec(spec, [project / "evaluator.py"])
 
 
+def test_freeze_rejects_unknown_global_evidence_mode(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    spec = spec_for(project).model_copy(deep=True)
+    spec.strategy.config["global_evidence_mode"] = "sometimes"
+
+    with pytest.raises(ValueError, match="global_evidence_mode"):
+        runtime.freeze_spec(spec, [project / "evaluator.py"])
+
+
+def test_freeze_persists_global_evidence_mode_from_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    spec = spec_for(project)
+    monkeypatch.setenv("GOAL_PLUS_GLOBAL_EVIDENCE_MODE", "independent")
+
+    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
+
+    assert "global_evidence_mode" not in spec.strategy.config
+    assert frozen.spec.strategy.config["global_evidence_mode"] == "independent"
+    persisted = load_json(
+        runtime.specs_dir / frozen.frozen_spec_id / "frozen_spec.json"
+    )
+    assert persisted["spec"]["strategy"]["config"][
+        "global_evidence_mode"
+    ] == "independent"
+
+
+def test_freeze_rejects_conflicting_global_evidence_mode_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = make_project(tmp_path)
+    runtime = FileSearchRuntime(tmp_path / ".search")
+    spec = spec_for(project).model_copy(deep=True)
+    spec.strategy.config["global_evidence_mode"] = "auto"
+    monkeypatch.setenv("GOAL_PLUS_GLOBAL_EVIDENCE_MODE", "independent")
+
+    with pytest.raises(ValueError, match="conflicts"):
+        runtime.freeze_spec(spec, [project / "evaluator.py"])
+
+
 @pytest.mark.codex
 def test_codex_worker_launch_options_flow_to_spawn_payload(tmp_path: Path) -> None:
     project = make_project(tmp_path)

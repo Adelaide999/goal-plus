@@ -20,6 +20,7 @@ def disable_real_evidence_annotator(
 ) -> None:
     """Unit tests opt into annotator process launches explicitly."""
     monkeypatch.setenv("GOAL_PLUS_EVIDENCE_ANNOTATOR_DISABLED", "1")
+    monkeypatch.delenv("GOAL_PLUS_GLOBAL_EVIDENCE_MODE", raising=False)
 
 
 def pytest_collection_modifyitems(
