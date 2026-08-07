@@ -15,7 +15,6 @@ from goal_plus.agent_pool import WorkerPoolEvent
 from goal_plus.pi_driver import run_pi_search_candidate
 from goal_plus.runtime import (
     FileSearchRuntime,
-    closeout_reserve_seconds,
     exclusive_file_lock,
     load_json,
     utc_timestamp,
@@ -184,8 +183,16 @@ def _lease_max_runtime_seconds(
     runtime = FileSearchRuntime(root_dir)
     run = runtime._load_run(run_id)
     frozen = runtime._load_frozen_spec(run.frozen_spec_id)
-    reserve = closeout_reserve_seconds(frozen.spec.strategy.config)
+    reserve = _closeout_reserve_seconds(frozen.spec.strategy.config)
     return min(configured, max(0.0, outer_deadline - time.time() - reserve))
+
+
+def _closeout_reserve_seconds(config: dict[str, Any]) -> float:
+    return float(
+        config.get("closeout_reserve_seconds")
+        or config.get("reserve_closeout_seconds")
+        or 0
+    )
 
 
 def _assert_active_pool_close_allowed(
@@ -206,7 +213,7 @@ def _assert_active_pool_close_allowed(
     if run.invalidated_at:
         return
     frozen = runtime._load_frozen_spec(run.frozen_spec_id)
-    reserve = closeout_reserve_seconds(frozen.spec.strategy.config)
+    reserve = _closeout_reserve_seconds(frozen.spec.strategy.config)
     remaining = outer_deadline - time.time()
     if remaining > reserve:
         raise RuntimeError(
