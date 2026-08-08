@@ -94,6 +94,8 @@ EVIDENCE_ANNOTATOR_PROVIDER_NAME_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_PROVIDER_NA
 EVIDENCE_ANNOTATOR_API_KEY_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_API_KEY_ENV"
 EVIDENCE_ANNOTATOR_WIRE_API_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_WIRE_API"
 OUTER_DEADLINE_ENV = "GOAL_PLUS_OUTER_DEADLINE_AT"
+GLOBAL_EVIDENCE_MODE_ENV = "GOAL_PLUS_GLOBAL_EVIDENCE_MODE"
+GLOBAL_EVIDENCE_MODES = frozenset({"manual", "auto", "independent"})
 
 
 @dataclass(frozen=True)
@@ -551,6 +553,7 @@ class FileSearchRuntime:
 
     def freeze_spec(self, spec: SearchSpec, verifier_artifacts: list[Path]) -> FrozenSpec:
         spec = _normalize_verifier_cwds_for_candidate_workspace(spec)
+        spec = self._apply_global_evidence_mode_from_environment(spec)
         spec = self._normalize_strategy_models(spec)
         self._validate_strategy_config(spec.strategy)
         source_root = Path(spec.source_path).resolve()
@@ -1687,10 +1690,34 @@ class FileSearchRuntime:
     def get_global_evidence(self, agent_session_id: str) -> list[dict[str, Any]]:
         """Return settled worker evidence and any completed objective views."""
         session = self._load_agent_session_by_id(agent_session_id)
-        self._load_run(session.run_id)
+        run = self._load_run(session.run_id)
         view = self._global_evidence_view(session.run_id)
+        frozen = self._load_frozen_spec(run.frozen_spec_id)
+        mode = self._global_evidence_mode(frozen.spec.strategy.config)
+        if mode == "independent":
+            view = [
+                entry
+                for entry in view
+                if entry["candidate_id"] == session.candidate_id
+            ]
         self._kick_evidence_annotator(session.run_id)
         return view
+
+    @staticmethod
+    def _global_evidence_mode(config: dict[str, Any]) -> str:
+        if "global_evidence_mode" in config:
+            return str(config["global_evidence_mode"])
+        if config.get("share_global_evidence") is False:
+            return "independent"
+        if config.get("inject_global_evidence_after_verifier") is True:
+            return "auto"
+        return "manual"
+
+    def should_inject_global_evidence_after_verifier(self, run_id: str) -> bool:
+        run = self._load_run(run_id)
+        frozen = self._load_frozen_spec(run.frozen_spec_id)
+        mode = self._global_evidence_mode(frozen.spec.strategy.config)
+        return mode == "auto"
 
     def run_verifier(
         self,
@@ -2626,7 +2653,34 @@ class FileSearchRuntime:
             )
 
     @staticmethod
+    def _apply_global_evidence_mode_from_environment(spec: SearchSpec) -> SearchSpec:
+        environment_mode = os.environ.get(GLOBAL_EVIDENCE_MODE_ENV)
+        if environment_mode is None:
+            return spec
+        environment_mode = environment_mode.strip()
+        if environment_mode not in GLOBAL_EVIDENCE_MODES:
+            allowed = ", ".join(sorted(GLOBAL_EVIDENCE_MODES))
+            raise ValueError(
+                f"{GLOBAL_EVIDENCE_MODE_ENV} must be one of {allowed}"
+            )
+        configured_mode = spec.strategy.config.get("global_evidence_mode")
+        if configured_mode is not None and configured_mode != environment_mode:
+            raise ValueError(
+                "strategy.config.global_evidence_mode conflicts with "
+                f"{GLOBAL_EVIDENCE_MODE_ENV}"
+            )
+        config = {**spec.strategy.config, "global_evidence_mode": environment_mode}
+        strategy = spec.strategy.model_copy(update={"config": config})
+        return spec.model_copy(update={"strategy": strategy})
+
+    @staticmethod
     def _validate_strategy_config(strategy: StrategySpec) -> None:
+        evidence_mode = strategy.config.get("global_evidence_mode", "manual")
+        if evidence_mode not in GLOBAL_EVIDENCE_MODES:
+            allowed = ", ".join(sorted(GLOBAL_EVIDENCE_MODES))
+            raise ValueError(
+                "strategy.config.global_evidence_mode must be one of " + allowed
+            )
         misplaced = sorted(
             {"min_runtime_seconds", "min_verifier_runs"}.intersection(
                 strategy.config

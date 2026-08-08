@@ -8,6 +8,7 @@ import pytest
 
 from goal_plus.models import EvidenceViewRecord, SearchSpec
 from goal_plus.runtime import FileSearchRuntime
+from goal_plus.tools import SearchTools
 from tests._runtime_helpers import git_commit_all, make_project, spec_for
 
 
@@ -52,6 +53,7 @@ def _git(workspace: Path, *args: str) -> str:
 def test_global_evidence_is_immediate_and_view_is_late_bound(tmp_path: Path) -> None:
     runtime, run_id, candidates = _search_with_candidates(tmp_path, 2)
     first, second = candidates
+    assert not runtime.should_inject_global_evidence_after_verifier(run_id)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert list(
@@ -133,6 +135,56 @@ def test_global_evidence_is_immediate_and_view_is_late_bound(tmp_path: Path) -> 
         check=True,
     )
     assert _git(first[2], "show", f"{peer_commit}:initial_program.py") == "VALUE = 2"
+
+
+@pytest.mark.parametrize("mode", ["auto", "independent"])
+def test_post_verifier_injection_respects_global_evidence_mode(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    runtime, run_id, candidates = _search_with_candidates(
+        tmp_path,
+        2,
+        strategy_updates={"config": {"global_evidence_mode": mode}},
+    )
+    reports = []
+    for candidate_id, session_id, workspace in candidates:
+        (workspace / "initial_program.py").write_text(
+            "VALUE = 1\n", encoding="utf-8"
+        )
+        reports.append(
+            SearchTools(runtime).search_run_verifier(
+                run_id,
+                candidate_id,
+                agent_session_id=session_id,
+                hypothesis="Set the candidate value",
+            )
+        )
+
+    explicit_candidates = [
+        [entry["candidate_id"] for entry in runtime.get_global_evidence(session_id)]
+        for _, session_id, _ in candidates
+    ]
+    expected_explicit = (
+        [[candidates[0][0], candidates[1][0]]] * 2
+        if mode == "auto"
+        else [[candidates[0][0]], [candidates[1][0]]]
+    )
+    assert explicit_candidates == expected_explicit
+    if mode == "independent":
+        assert all("global_evidence_injected" not in report for report in reports)
+        return
+
+    visible_candidates = [
+        [entry["candidate_id"] for entry in report["global_evidence_snapshot"]]
+        for report in reports
+    ]
+    expected_injected = [
+        [candidates[0][0]],
+        [candidates[0][0], candidates[1][0]],
+    ]
+    assert visible_candidates == expected_injected
+    assert [report["global_evidence_entry_count"] for report in reports] == [1, 2]
 
 
 def test_worker_hypothesis_is_required_and_parent_evidence_is_private(

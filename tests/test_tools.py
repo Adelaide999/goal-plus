@@ -190,6 +190,7 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         "agent_session_id": "agent_001",
         "source": "codex_session_jsonl",
     }
+    runtime.should_inject_global_evidence_after_verifier.return_value = False
     runtime.run_verifier.return_value = ScoreReport(
         run_id="run_1",
         candidate_id="c001",
@@ -270,12 +271,15 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
     assert verifier_report["verifier_results"][0]["log_path"].endswith(
         "iteration-0001-score-a1b2c3d4.log"
     )
-    assert tools.search_run_verifier(
+    worker_verifier_report = tools.search_run_verifier(
         "run_1",
         "c001",
         agent_session_id="agent_001",
         hypothesis="try a fused path",
-    )["aggregate_score"] == 1.0
+    )
+    assert worker_verifier_report["aggregate_score"] == 1.0
+    assert "global_evidence_injected" not in worker_verifier_report
+    assert "global_evidence_snapshot" not in worker_verifier_report
     runtime.run_verifier.assert_called_with(
         "run_1",
         "c001",
@@ -328,6 +332,69 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
     )
     runtime.get_agent_observability.assert_called_once_with("agent_001")
     runtime.get_global_evidence.assert_called_once_with("agent_001")
+
+
+def _successful_score_report() -> ScoreReport:
+    return ScoreReport(
+        run_id="run_1",
+        candidate_id="c001",
+        validity_passed=True,
+        process_passed=True,
+        aggregate_score=1.0,
+        verifier_results=[],
+    )
+
+
+def test_worker_verifier_injects_global_evidence_when_enabled() -> None:
+    runtime = Mock()
+    runtime.run_verifier.return_value = _successful_score_report()
+    snapshot = [{"candidate_id": "c002", "iteration": 3, "score": 2.0}]
+    runtime.should_inject_global_evidence_after_verifier.return_value = True
+    runtime.get_global_evidence.return_value = snapshot
+
+    result = SearchTools(runtime).search_run_verifier(
+        "run_1",
+        "c001",
+        agent_session_id="agent_001",
+        hypothesis="Try a different layout",
+    )
+
+    assert result["global_evidence_snapshot"] == snapshot
+    assert result["global_evidence_injected"] is True
+    assert result["global_evidence_entry_count"] == 1
+
+
+def test_worker_verifier_keeps_success_when_evidence_injection_fails() -> None:
+    runtime = Mock()
+    runtime.run_verifier.return_value = _successful_score_report()
+    runtime.should_inject_global_evidence_after_verifier.return_value = True
+    runtime.get_global_evidence.side_effect = RuntimeError("view unavailable")
+
+    result = SearchTools(runtime).search_run_verifier(
+        "run_1",
+        "c001",
+        agent_session_id="agent_001",
+        hypothesis="Try a different layout",
+    )
+
+    assert result["aggregate_score"] == 1.0
+    assert result["global_evidence_injected"] is False
+    assert "view unavailable" in result["global_evidence_warning"]
+    assert "global_evidence_snapshot" not in result
+
+
+def test_parent_and_promotion_verifiers_do_not_inject_global_evidence() -> None:
+    runtime = Mock()
+    runtime.run_verifier.return_value = _successful_score_report()
+    tools = SearchTools(runtime)
+
+    assert "global_evidence_injected" not in tools.search_run_verifier(
+        "run_1", "c001"
+    )
+    assert "global_evidence_injected" not in tools.search_run_verifier(
+        "run_1", "c001", scope="promotion"
+    )
+    runtime.should_inject_global_evidence_after_verifier.assert_not_called()
 
 
 def test_search_create_uses_models_frozen_in_the_spec() -> None:
