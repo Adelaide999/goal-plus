@@ -38,7 +38,7 @@ main agent
 | candidate worker | 选择自己的技术方向、修改自己的工作区、调用 verifier、提交 handoff |
 | main agent | triage、spec discovery、初始 candidate 分配、全局停止、最终收尾、确认 verifier 失效 |
 | Codex 或 Pi 宿主 | 实际 worker 启动、等待、续跑、deadline、interrupt 和原生 transcript |
-| Evidence annotator | 对每个已结算尝试生成一句客观描述 |
+| Evidence annotator | 尝试为每个已结算 worker iteration 生成一句客观描述 |
 
 Search runtime 不是 worker supervisor。`AgentSessionRecord` 只记录上下文、来源和
 宿主 launch payload，不表示进程是否存活。Pi 的 pool 状态因此单独保存在
@@ -135,9 +135,12 @@ Global Evidence 只包含 worker 的 process-verifier 尝试。parent fallback v
 
 ## 客观 View
 
-`view` 是绑定到准确 Evidence identity 的异步、不可变 annotation。后台 drainer 按
-SearchSpec 的 `worker_host` 选择 Codex 或 Pi 的一次性无工具执行模式；不会为了
-annotation 跨用另一个 host。Annotator 可读取：
+`view` 是绑定到准确 Evidence identity 的异步、不可变、best-effort annotation。后台
+drainer 按 SearchSpec 的 `worker_host` 选择 Codex 的一次性只读执行或 Pi 的一次性无工具
+执行；不会为了 annotation 跨用另一个 host。Annotator 可读取：
+
+完整的角色边界、host 路由、配置继承、重试状态和排障流程见
+[Evidence Annotator](evidence-annotator.md)。
 
 - candidate 的一句 `hypothesis`；
 - 从本轮 settled base 到 attempt commit 的完整 diff；
