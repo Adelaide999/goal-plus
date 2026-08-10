@@ -14,8 +14,10 @@ from goal_plus.goal_plus import FileGoalPlusRuntime
 from goal_plus.models import (
     AgentSessionRecord,
     CandidateRecord,
+    EvidenceAnnotationTask,
     FrozenSpec,
     GoalPlusRecord,
+    IterationRecord,
     RunRecord,
     SearchPlan,
 )
@@ -348,6 +350,52 @@ th { background: var(--surface-subtle); color: var(--muted); font-size: 10px; te
 th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
 tbody tr:last-child td { border-bottom: 0; }
 .selected-row td:first-child { box-shadow: inset 3px 0 0 var(--success); }
+.evidence-view-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  background: var(--surface-subtle);
+}
+.evidence-view-summary { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 11px; }
+.evidence-view-summary strong { display: block; color: var(--text); font-size: 15px; }
+.evidence-view-filters { display: flex; align-items: end; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.evidence-view-filter { display: grid; gap: 3px; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.evidence-view-filter select, .evidence-view-filter input {
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  text-transform: none;
+}
+.evidence-view-filter input { width: 220px; }
+.evidence-view-count { min-width: 82px; padding-bottom: 8px; color: var(--muted); font-size: 11px; text-align: right; }
+.evidence-view-scroll { max-height: 680px; border-radius: 0 0 6px 6px; overflow: auto; scrollbar-gutter: stable; }
+.evidence-view-table { min-width: 1420px; table-layout: fixed; }
+.evidence-view-table thead { position: sticky; top: 0; z-index: 3; }
+.evidence-view-table th:nth-child(1) { width: 178px; }
+.evidence-view-table th:nth-child(2) { width: 94px; }
+.evidence-view-table th:nth-child(3) { width: 74px; }
+.evidence-view-table th:nth-child(4) { width: 90px; }
+.evidence-view-table th:nth-child(5) { width: 112px; }
+.evidence-view-table th:nth-child(6) { width: 330px; }
+.evidence-view-table th:nth-child(7) { width: 390px; }
+.evidence-view-table th:nth-child(8) { width: 150px; }
+.evidence-view-table tbody tr:hover td { background: var(--accent-soft); }
+.evidence-copy { color: var(--text); line-height: 18px; }
+.evidence-view-copy { color: var(--text); font-weight: 600; line-height: 18px; }
+.evidence-view-meta { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
+.evidence-view-empty { color: var(--muted); font-style: italic; }
+.evidence-view-error { margin-top: 5px; color: var(--failure); font-size: 11px; line-height: 16px; }
+.evidence-view-monitor { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 15px; }
+.revision { display: block; overflow: hidden; color: var(--accent); text-overflow: ellipsis; white-space: nowrap; }
 .stats-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .stats-table { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .stats-table h3 { margin: 0; padding: 11px 12px; border-bottom: 1px solid var(--border); background: var(--surface-subtle); }
@@ -384,6 +432,10 @@ pre { max-height: 600px; overflow: auto; white-space: pre-wrap; overflow-wrap: a
   .timeline-head, .metric-lens-toolbar { align-items: flex-start; flex-direction: column; }
   .trajectory-head { align-items: flex-start; flex-direction: column; gap: 2px; }
   .trajectory-plot { min-height: 340px; }
+  .evidence-view-toolbar { align-items: stretch; flex-direction: column; }
+  .evidence-view-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .evidence-view-filter input { width: 100%; }
+  .evidence-view-count { min-width: 0; padding: 7px 0 0; text-align: left; }
   .metric-control { width: 100%; }
   .metric-control button { min-width: 0; flex: 1 1 0; padding-right: 4px; padding-left: 4px; font-size: 10px; }
 }
@@ -392,6 +444,7 @@ pre { max-height: 600px; overflow: auto; white-space: pre-wrap; overflow-wrap: a
   .kpi { min-height: auto; }
   .masthead-actions { align-items: flex-start; flex-direction: column; }
   .button { width: 100%; }
+  .evidence-view-filters { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 @media print {
@@ -406,6 +459,8 @@ pre { max-height: 600px; overflow: auto; white-space: pre-wrap; overflow-wrap: a
   .panel, .table-scroll, .stats-table, .timeline-shell, .trajectory-shell { break-inside: avoid; }
   details > * { display: block !important; }
   .timeline-scroll, .timeline-rows { max-height: none; overflow: visible; }
+  .evidence-view-scroll { max-height: none; overflow: visible; }
+  [data-evidence-row][hidden] { display: table-row !important; }
   .timeline { width: 100% !important; min-width: 0; }
   .timeline-row:first-child, .timeline-label { position: static; }
   .metric-lens-toolbar { display: none; }
@@ -827,6 +882,37 @@ _REPORT_SCRIPT = """
     });
     setMode(lens.dataset.metricMode || 'tokens-per-minute');
   });
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-evidence-view]'), function (view) {
+    var rows = Array.prototype.slice.call(view.querySelectorAll('[data-evidence-row]'));
+    var count = view.querySelector('[data-evidence-count]');
+    var filters = {
+      candidate: view.querySelector('[data-evidence-filter="candidate"]'),
+      disposition: view.querySelector('[data-evidence-filter="disposition"]'),
+      viewState: view.querySelector('[data-evidence-filter="view-state"]'),
+      text: view.querySelector('[data-evidence-filter="text"]')
+    };
+
+    function applyEvidenceFilters() {
+      var query = filters.text ? filters.text.value.trim().toLowerCase() : '';
+      var visible = 0;
+      rows.forEach(function (row) {
+        var matches = (!filters.candidate || !filters.candidate.value || row.dataset.candidate === filters.candidate.value) &&
+          (!filters.disposition || !filters.disposition.value || row.dataset.disposition === filters.disposition.value) &&
+          (!filters.viewState || !filters.viewState.value || row.dataset.viewState === filters.viewState.value) &&
+          (!query || row.textContent.toLowerCase().indexOf(query) !== -1);
+        row.hidden = !matches;
+        if (matches) visible += 1;
+      });
+      if (count) count.textContent = visible + ' of ' + rows.length + ' rows';
+    }
+
+    [filters.candidate, filters.disposition, filters.viewState].forEach(function (filter) {
+      if (filter) filter.addEventListener('change', applyEvidenceFilters);
+    });
+    if (filters.text) filters.text.addEventListener('input', applyEvidenceFilters);
+    applyEvidenceFilters();
+  });
 })();
 """
 
@@ -856,7 +942,11 @@ def _epoch(value: str | None) -> float | None:
 def _timestamp(epoch: float | None) -> str | None:
     if epoch is None:
         return None
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.fromtimestamp(epoch, tz=timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _duration(value: Any) -> str:
@@ -907,6 +997,7 @@ def _status_class(value: Any) -> str:
         "completed",
         "promoted",
         "passed",
+        "keep",
         "evaluated",
         "productive",
         "quiet",
@@ -929,6 +1020,7 @@ def _status_class(value: Any) -> str:
         "answer-only",
         "empty-output",
         "cannot-continue",
+        "terminal_error",
     }:
         return "failure"
     if normalized in {
@@ -938,6 +1030,9 @@ def _status_class(value: Any) -> str:
         "ready_to_promote",
         "planned",
         "started",
+        "pending",
+        "retry_wait",
+        "discard",
         "unavailable",
         "unverified-edit",
         "unverified-output",
@@ -1015,7 +1110,9 @@ def _pi_dispatch_usage(usage: Any) -> tuple[float | None, float | None]:
     return processed_tokens, _finite_float(usage.get("costTotal"))
 
 
-def _timeline_performance(task: dict[str, Any], timeline: dict[str, Any]) -> dict[str, Any]:
+def _timeline_performance(
+    task: dict[str, Any], timeline: dict[str, Any]
+) -> dict[str, Any]:
     start_epoch = _epoch(timeline.get("start_at"))
     duration = _finite_float(timeline.get("duration_seconds"))
     if start_epoch is None or duration is None:
@@ -1023,7 +1120,11 @@ def _timeline_performance(task: dict[str, Any], timeline: dict[str, Any]) -> dic
 
     statistics = task.get("statistics") or {}
     scores = statistics.get("scores") or {}
-    direction = str(scores.get("direction") or (task.get("frozen_spec") or {}).get("metric_direction") or "maximize")
+    direction = str(
+        scores.get("direction")
+        or (task.get("frozen_spec") or {}).get("metric_direction")
+        or "maximize"
+    )
     baseline, baseline_source = _timeline_score_baseline(task)
     selected = _finite_float(scores.get("selected"))
     checkpoints: list[dict[str, Any]] = []
@@ -1052,10 +1153,14 @@ def _timeline_performance(task: dict[str, Any], timeline: dict[str, Any]) -> dic
         if current is not None and not _is_better_score(score, current, direction):
             continue
         current = score
-        best_points.append({key: value for key, value in checkpoint.items() if key != "epoch"})
+        best_points.append(
+            {key: value for key, value in checkpoint.items() if key != "epoch"}
+        )
 
     worker_events = [
-        event for event in timeline.get("events", []) if event.get("kind") == "worker_session"
+        event
+        for event in timeline.get("events", [])
+        if event.get("kind") == "worker_session"
     ]
     metric_keys = (
         "score_gain",
@@ -1102,7 +1207,8 @@ def _timeline_performance(task: dict[str, Any], timeline: dict[str, Any]) -> dic
         if following[0] - previous[1] >= idle_threshold
     ]
     return {
-        "metric_name": scores.get("metric_name") or (task.get("frozen_spec") or {}).get("metric_name"),
+        "metric_name": scores.get("metric_name")
+        or (task.get("frozen_spec") or {}).get("metric_name"),
         "metric_direction": direction,
         "score": {
             "baseline": baseline,
@@ -1112,14 +1218,18 @@ def _timeline_performance(task: dict[str, Any], timeline: dict[str, Any]) -> dic
         },
         "metric_ranges": metric_ranges,
         "idle_intervals": idle_intervals,
-        "max_parallel": ((task.get("frozen_spec") or {}).get("budget") or {}).get("max_parallel"),
+        "max_parallel": ((task.get("frozen_spec") or {}).get("budget") or {}).get(
+            "max_parallel"
+        ),
     }
 
 
 def _load_models(path: Path, pattern: str, model: Any) -> list[Any]:
     if not path.exists():
         return []
-    return [model.model_validate(load_json(item)) for item in sorted(path.glob(pattern))]
+    return [
+        model.model_validate(load_json(item)) for item in sorted(path.glob(pattern))
+    ]
 
 
 def _find_goal_record(root: Path, run_id: str) -> GoalPlusRecord | None:
@@ -1146,7 +1256,9 @@ def _collect_observability(session: AgentSessionRecord) -> dict[str, Any]:
                 "ended_at": session.updated_at,
                 "duration_seconds": None,
                 "timed_out": bool(session.host_handle.metadata.get("timed_out")),
-                "runner_failed": bool(session.host_handle.metadata.get("runner_failed")),
+                "runner_failed": bool(
+                    session.host_handle.metadata.get("runner_failed")
+                ),
             },
             "usage": {},
             "context": {},
@@ -1154,20 +1266,120 @@ def _collect_observability(session: AgentSessionRecord) -> dict[str, Any]:
         }
 
 
-def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) -> dict[str, Any]:
+def _report_iteration_payload(
+    run_dir: Path,
+    run_id: str,
+    candidate_id: str,
+    iteration: IterationRecord,
+) -> dict[str, Any]:
+    annotation_path = (
+        run_dir
+        / "candidates"
+        / candidate_id
+        / "evidence-annotations"
+        / f"iteration-{iteration.iteration:04d}.json"
+    )
+    annotation = (
+        EvidenceAnnotationTask.model_validate(load_json(annotation_path))
+        if annotation_path.exists()
+        else None
+    )
+    if annotation is not None and (
+        annotation.run_id != run_id
+        or annotation.candidate_id != candidate_id
+        or annotation.iteration != iteration.iteration
+        or annotation.attempt_commit != iteration.git_head
+    ):
+        raise RuntimeError("evidence annotation does not match iteration")
+
+    view = (
+        annotation.view
+        if annotation is not None and annotation.state == "completed"
+        else None
+    )
+    if view is not None and (
+        view.run_id != run_id
+        or view.candidate_id != candidate_id
+        or view.iteration != iteration.iteration
+        or view.attempt_commit != iteration.git_head
+    ):
+        raise RuntimeError("evidence view does not match iteration")
+
+    annotation_monitor = None
+    if annotation is not None and annotation.attempt_history:
+        monitor_relative = annotation.attempt_history[-1].get("monitor_path")
+        if isinstance(monitor_relative, str) and monitor_relative:
+            runtime_root = run_dir.parents[1].resolve()
+            monitor_path = (runtime_root / monitor_relative).resolve()
+            if not monitor_path.is_relative_to(runtime_root):
+                raise RuntimeError("evidence annotation monitor escapes runtime root")
+            if monitor_path.exists():
+                monitor = load_json(monitor_path)
+                if not isinstance(monitor, dict) or (
+                    monitor.get("run_id") != run_id
+                    or monitor.get("candidate_id") != candidate_id
+                    or monitor.get("iteration") != iteration.iteration
+                    or monitor.get("attempt") != annotation.attempts
+                ):
+                    raise RuntimeError("evidence annotation monitor does not match iteration")
+                annotation_monitor = monitor
+
+    return {
+        "iteration": iteration.iteration,
+        "agent_session_id": iteration.agent_session_id,
+        "selected_model": iteration.selected_model,
+        "exact_model_ref": iteration.exact_model_ref,
+        "adapter_version": iteration.adapter_version,
+        "score": iteration.score,
+        "process_passed": iteration.process_passed,
+        "hypothesis": iteration.hypothesis,
+        "summary": iteration.summary,
+        "failure_class": iteration.failure_class,
+        "git_head": iteration.git_head,
+        "disposition": iteration.disposition,
+        "restored_to_iteration": iteration.restored_to_iteration,
+        "restored_to_git_head": iteration.restored_to_git_head,
+        "workspace_git_head_after_settlement": (
+            iteration.workspace_git_head_after_settlement
+        ),
+        "created_at": iteration.created_at,
+        "changed_files": iteration.changed_files,
+        "view": view.description if view is not None else None,
+        "view_state": annotation.state if annotation is not None else "not_requested",
+        "view_created_at": view.created_at if view is not None else None,
+        "view_error": annotation.last_error if annotation is not None else None,
+        "annotation_attempts": annotation.attempts if annotation is not None else 0,
+        "annotation_monitor": annotation_monitor,
+    }
+
+
+def _task_details(
+    root: Path, task_summary: dict[str, Any], report_run_id: str
+) -> dict[str, Any]:
     run_id = task_summary.get("run_id")
     if not isinstance(run_id, str) or not run_id:
-        return {**task_summary, "is_report_run": False, "plans": [], "candidates": [], "sessions": []}
+        return {
+            **task_summary,
+            "is_report_run": False,
+            "plans": [],
+            "candidates": [],
+            "sessions": [],
+        }
     run_dir = root / "runs" / run_id
     run = RunRecord.model_validate(load_json(run_dir / "run.json"))
     frozen = FrozenSpec.model_validate(
         load_json(root / "specs" / run.frozen_spec_id / "frozen_spec.json")
     )
     plans = _load_models(run_dir / "plans", "plan_*.json", SearchPlan)
-    candidates = _load_models(run_dir / "candidates", "*/candidate.json", CandidateRecord)
-    sessions = _load_models(run_dir / "agent_sessions", "agent_*.json", AgentSessionRecord)
+    candidates = _load_models(
+        run_dir / "candidates", "*/candidate.json", CandidateRecord
+    )
+    sessions = _load_models(
+        run_dir / "agent_sessions", "agent_*.json", AgentSessionRecord
+    )
     observations = {
-        session.agent_session_id: _collect_observability(session) for session in sessions
+        session.agent_session_id: _collect_observability(session)
+        for session in sessions
     }
     session_ids_by_candidate: dict[str, list[str]] = {}
     for session in sessions:
@@ -1208,17 +1420,21 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
                 "score": (
                     best.score
                     if best is not None
-                    else candidate.score_report.aggregate_score
-                    if candidate.score_report is not None
-                    and candidate.score_report.process_passed
-                    else None
+                    else (
+                        candidate.score_report.aggregate_score
+                        if candidate.score_report is not None
+                        and candidate.score_report.process_passed
+                        else None
+                    )
                 ),
                 "process_passed": (
                     True
                     if best is not None
-                    else candidate.score_report.process_passed
-                    if candidate.score_report is not None
-                    else None
+                    else (
+                        candidate.score_report.process_passed
+                        if candidate.score_report is not None
+                        else None
+                    )
                 ),
                 "best_iteration": best.iteration if best is not None else None,
                 "best_score": best.score if best is not None else None,
@@ -1236,27 +1452,12 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
                     else None
                 ),
                 "iterations": [
-                    {
-                        "iteration": iteration.iteration,
-                        "agent_session_id": iteration.agent_session_id,
-                        "selected_model": iteration.selected_model,
-                        "exact_model_ref": iteration.exact_model_ref,
-                        "adapter_version": iteration.adapter_version,
-                        "score": iteration.score,
-                        "process_passed": iteration.process_passed,
-                        "hypothesis": iteration.hypothesis,
-                        "summary": iteration.summary,
-                        "failure_class": iteration.failure_class,
-                        "git_head": iteration.git_head,
-                        "disposition": iteration.disposition,
-                        "restored_to_iteration": iteration.restored_to_iteration,
-                        "restored_to_git_head": iteration.restored_to_git_head,
-                        "workspace_git_head_after_settlement": (
-                            iteration.workspace_git_head_after_settlement
-                        ),
-                        "created_at": iteration.created_at,
-                        "changed_files": iteration.changed_files,
-                    }
+                    _report_iteration_payload(
+                        run_dir,
+                        run_id,
+                        candidate.candidate_id,
+                        iteration,
+                    )
                     for iteration in candidate.iterations
                 ],
             }
@@ -1324,9 +1525,7 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
             )
             continue
 
-        candidate_iterations = candidate_iterations_by_id.get(
-            session.candidate_id, []
-        )
+        candidate_iterations = candidate_iterations_by_id.get(session.candidate_id, [])
         for index, raw_dispatch in enumerate(dispatches, start=1):
             dispatch = raw_dispatch if isinstance(raw_dispatch, dict) else {}
             start_at = dispatch.get("started_at")
@@ -1375,9 +1574,7 @@ def _task_details(root: Path, task_summary: dict[str, Any], report_run_id: str) 
             timed_out = bool(dispatch.get("timed_out"))
             runner_failed = bool(dispatch.get("runner_failed"))
             terminal_state = (
-                "failed"
-                if runner_failed
-                else "timed_out" if timed_out else "completed"
+                "failed" if runner_failed else "timed_out" if timed_out else "completed"
             )
             session_payloads.append(
                 {
@@ -1465,7 +1662,9 @@ def _goal_event_label(event: dict[str, Any]) -> str:
     payload = event.get("payload")
     payload = payload if isinstance(payload, dict) else {}
     base = _GOAL_EVENT_LABELS.get(event_type, event_type.replace("_", " ").title())
-    if event_type in {"search_linked", "search_result_recorded"} and payload.get("run_id"):
+    if event_type in {"search_linked", "search_result_recorded"} and payload.get(
+        "run_id"
+    ):
         return f"{base}: {payload['run_id']}"
     if event_type == "status_changed" and payload.get("status"):
         return f"{base}: {payload['status']}"
@@ -1549,13 +1748,15 @@ def _build_timeline(
             if duration_seconds is None:
                 start_epoch = _epoch(start_at)
                 end_epoch = _epoch(end_at)
-                if start_epoch is not None and end_epoch is not None and end_epoch >= start_epoch:
+                if (
+                    start_epoch is not None
+                    and end_epoch is not None
+                    and end_epoch >= start_epoch
+                ):
                     duration_seconds = end_epoch - start_epoch
             terminal = session.get("terminal_state") or "unknown"
             session_id = str(session["agent_session_id"])
-            timeline_session_id = str(
-                session.get("timeline_session_id") or session_id
-            )
+            timeline_session_id = str(session.get("timeline_session_id") or session_id)
             candidate_id = str(session.get("candidate_id") or "unknown")
             candidate_sessions = sessions_by_candidate.get(
                 candidate_id, [timeline_session_id]
@@ -1592,9 +1793,15 @@ def _build_timeline(
                     "cost_usd": session.get("cost_usd"),
                     "tool_calls": session.get("tool_calls"),
                     "verifier_runs": session.get("verifier_runs"),
-                    "tokens_per_minute": _per_minute(session.get("processed_tokens"), duration_seconds),
-                    "cost_per_minute": _per_minute(session.get("cost_usd"), duration_seconds),
-                    "verifier_density": _per_minute(session.get("verifier_runs"), duration_seconds),
+                    "tokens_per_minute": _per_minute(
+                        session.get("processed_tokens"), duration_seconds
+                    ),
+                    "cost_per_minute": _per_minute(
+                        session.get("cost_usd"), duration_seconds
+                    ),
+                    "verifier_density": _per_minute(
+                        session.get("verifier_runs"), duration_seconds
+                    ),
                     "score": score,
                     "score_raw": score,
                     "score_gain": score_improvement,
@@ -1608,7 +1815,9 @@ def _build_timeline(
                 task_events.append(
                     {
                         "lane": "verifier",
-                        "kind": "parent_verifier" if parent_owned else "worker_verifier",
+                        "kind": (
+                            "parent_verifier" if parent_owned else "worker_verifier"
+                        ),
                         "label": (
                             f"Parent verifier {candidate['candidate_id']} #{iteration['iteration']}"
                             if parent_owned
@@ -1963,9 +2172,7 @@ def _activity_window_counts(
             else None
         ),
         "context_percent_max": (
-            max(value for _, value in context_samples)
-            if context_samples
-            else None
+            max(value for _, value in context_samples) if context_samples else None
         ),
     }
 
@@ -2077,27 +2284,20 @@ def _build_loop_agent_statistics(
             subagent_hook_streams.add(run_id)
         agent_session_id = event.get("agent_session_id")
         host_agent_id = event.get("host_agent_id")
-        if (
-            not isinstance(agent_session_id, str)
-            and isinstance(host_agent_id, str)
-        ):
+        if not isinstance(agent_session_id, str) and isinstance(host_agent_id, str):
             agent_session_id = host_agent_sessions.get(host_agent_id)
         if (
             not isinstance(agent_session_id, str)
             and isinstance(run_id, str)
             and isinstance(candidate_id, str)
         ):
-            candidates_for_event = candidate_sessions.get(
-                (run_id, candidate_id), set()
-            )
+            candidates_for_event = candidate_sessions.get((run_id, candidate_id), set())
             if len(candidates_for_event) == 1:
                 agent_session_id = next(iter(candidates_for_event))
         if not isinstance(run_id, str) or not isinstance(agent_session_id, str):
             continue
         event["resolved_agent_session_id"] = agent_session_id
-        events_by_session.setdefault((run_id, agent_session_id), []).append(
-            event
-        )
+        events_by_session.setdefault((run_id, agent_session_id), []).append(event)
     for events in events_by_session.values():
         events.sort(
             key=lambda event: (
@@ -2122,12 +2322,9 @@ def _build_loop_agent_statistics(
             else []
         )
         direction = str(
-            (task.get("frozen_spec") or {}).get("metric_direction")
-            or "maximize"
+            (task.get("frozen_spec") or {}).get("metric_direction") or "maximize"
         )
-        candidate_session_ids = candidate_sessions.get(
-            (run_id, candidate_id), set()
-        )
+        candidate_session_ids = candidate_sessions.get((run_id, candidate_id), set())
         candidate_iterations = candidate.get("iterations") or []
         has_session_attribution = any(
             isinstance(iteration, dict)
@@ -2152,9 +2349,7 @@ def _build_loop_agent_statistics(
             item = dict(iteration)
             git_head = item.get("git_head")
             item["_revision_changed"] = bool(
-                isinstance(git_head, str)
-                and git_head
-                and git_head != previous_git_head
+                isinstance(git_head, str) and git_head and git_head != previous_git_head
             )
             if isinstance(git_head, str) and git_head:
                 previous_git_head = git_head
@@ -2192,9 +2387,7 @@ def _build_loop_agent_statistics(
             start_at = event.get("finished_at") or event.get("started_at")
             start_epoch = _epoch(start_at)
             next_event = (
-                session_events[index + 1]
-                if index + 1 < len(session_events)
-                else None
+                session_events[index + 1] if index + 1 < len(session_events) else None
             )
             end_at = next_event.get("started_at") if next_event is not None else None
             end_epoch = _epoch(end_at)
@@ -2206,8 +2399,7 @@ def _build_loop_agent_statistics(
             window_iterations = [
                 iteration
                 for iteration in iteration_rows
-                if (iteration_epoch := _epoch(iteration.get("created_at")))
-                is not None
+                if (iteration_epoch := _epoch(iteration.get("created_at"))) is not None
                 and (start_epoch is None or iteration_epoch >= start_epoch)
                 and (end_epoch is None or iteration_epoch < end_epoch)
             ]
@@ -2216,8 +2408,7 @@ def _build_loop_agent_statistics(
                 for iteration in window_iterations
             )
             improvements = sum(
-                iteration.get("_improved") is True
-                for iteration in window_iterations
+                iteration.get("_improved") is True for iteration in window_iterations
             )
             if event.get("decision") != "block":
                 outcome = "terminal-allow"
@@ -2272,9 +2463,7 @@ def _build_loop_agent_statistics(
             and window["decision"] == "block"
         ]
         first_block_epoch = (
-            _epoch(blocked_events[0].get("started_at"))
-            if blocked_events
-            else None
+            _epoch(blocked_events[0].get("started_at")) if blocked_events else None
         )
         context_at_first_block = _nearest_context_percent(
             activity_events, first_block_epoch
@@ -2299,14 +2488,10 @@ def _build_loop_agent_statistics(
                 "hook_stream_available": hook_stream_available,
                 "stop_calls": len(session_events) if hook_stream_available else None,
                 "blocked_stops": (
-                    decision_counts.get("block", 0)
-                    if hook_stream_available
-                    else None
+                    decision_counts.get("block", 0) if hook_stream_available else None
                 ),
                 "allowed_stops": (
-                    decision_counts.get("allow", 0)
-                    if hook_stream_available
-                    else None
+                    decision_counts.get("allow", 0) if hook_stream_available else None
                 ),
                 "productive_blocked_stops": (
                     sum(window["outcome"] == "productive" for window in blocked_windows)
@@ -2434,7 +2619,10 @@ _METRIC_GAP_INFO = {
         "Not configured",
         "No score threshold was declared. This does not mean the Goal Plus task failed.",
     ),
-    "baseline_score": ("Not configured", "No baseline score was supplied for improvement analysis."),
+    "baseline_score": (
+        "Not configured",
+        "No baseline score was supplied for improvement analysis.",
+    ),
     "orchestrator_cost_usd": (
         "Not collected",
         "The attached main-agent evidence does not expose a reliable orchestrator cost.",
@@ -2455,12 +2643,18 @@ _METRIC_GAP_INFO = {
         "Not collected",
         "The worker host did not publish time-to-first-token for every session.",
     ),
-    "worker_processed_tokens": ("Partial coverage", "Processed-token usage is missing for one or more worker sessions."),
+    "worker_processed_tokens": (
+        "Partial coverage",
+        "Processed-token usage is missing for one or more worker sessions.",
+    ),
     "worker_cost_usd": (
         "Partial coverage",
         "A model-rate cost estimate is missing for one or more worker sessions.",
     ),
-    "worker_duration": ("Partial coverage", "Observed duration is missing for one or more worker sessions."),
+    "worker_duration": (
+        "Partial coverage",
+        "Observed duration is missing for one or more worker sessions.",
+    ),
     "semantic_candidate_coverage": (
         "Not computed",
         "Candidate semantic diversity is not currently scored.",
@@ -2491,25 +2685,28 @@ _METRIC_GAP_INFO = {
 def _render_metric_availability(items: list[Any]) -> str:
     names = list(dict.fromkeys(str(item) for item in items if item))
     if not names:
-        return '<p>No known metric availability gaps.</p>'
+        return "<p>No known metric availability gaps.</p>"
     rows = []
     for name in names:
         kind, reason = _METRIC_GAP_INFO.get(
             name,
-            ("Not observed", "This value was not present in the durable report evidence."),
+            (
+                "Not observed",
+                "This value was not present in the durable report evidence.",
+            ),
         )
         rows.append(
-            '<li>'
-            f'<code>{escape(name)}</code>'
+            "<li>"
+            f"<code>{escape(name)}</code>"
             f'<span class="metric-gap-kind">{escape(kind)}</span>'
             f'<span class="metric-gap-reason">{escape(reason)}</span>'
-            '</li>'
+            "</li>"
         )
     return (
         '<details class="summary-block">'
-        f'<summary>Metric availability ({len(names)} gaps)</summary>'
+        f"<summary>Metric availability ({len(names)} gaps)</summary>"
         f'<div><ul class="metric-gap-list">{"".join(rows)}</ul></div>'
-        '</details>'
+        "</details>"
     )
 
 
@@ -2527,7 +2724,9 @@ def _stat_rows(values: dict[str, Any], formatters: dict[str, Any] | None = None)
     return "".join(rows)
 
 
-def _timeline_position(event: dict[str, Any], start_epoch: float, duration: float) -> tuple[float, float]:
+def _timeline_position(
+    event: dict[str, Any], start_epoch: float, duration: float
+) -> tuple[float, float]:
     event_start = _epoch(event.get("start_at")) or start_epoch
     event_end = _epoch(event.get("end_at"))
     left = max(0.0, min(99.0, (event_start - start_epoch) / duration * 100))
@@ -2580,7 +2779,8 @@ def _render_score_chart(
     points = [
         point
         for point in score_data.get("points", [])
-        if _finite_float(point.get("score")) is not None and _epoch(point.get("at")) is not None
+        if _finite_float(point.get("score")) is not None
+        and _epoch(point.get("at")) is not None
     ]
     values = [value for value in (baseline, selected) if value is not None]
     values.extend(float(point["score"]) for point in points)
@@ -2613,7 +2813,7 @@ def _render_score_chart(
         )
         point_marks.append(
             f'<circle class="score-point" cx="{x:.2f}" cy="{y:.2f}" r="3" '
-            f'<title>{escape(tooltip)}</title></circle>'
+            f"<title>{escape(tooltip)}</title></circle>"
         )
     path_parts.append("H 1000")
     reference_lines = []
@@ -2628,7 +2828,7 @@ def _render_score_chart(
         label_top = min(51.0, max(1.0, y - 11.0))
         reference_labels.append(
             f'<span class="score-ref-label" style="top:{label_top:.2f}px">'
-            f'{escape(label)} {_html(_number(value, digits=4))}</span>'
+            f"{escape(label)} {_html(_number(value, digits=4))}</span>"
         )
     metric_name = str(performance.get("metric_name") or "score")
     baseline_summary = (
@@ -2638,9 +2838,9 @@ def _render_score_chart(
     return (
         '<div class="score-row">'
         '<div class="score-label">'
-        '<strong>Best score</strong>'
-        f'<span>{escape(metric_name)} / {escape(summary)}</span>'
-        '</div>'
+        "<strong>Best score</strong>"
+        f"<span>{escape(metric_name)} / {escape(summary)}</span>"
+        "</div>"
         f'<div class="score-track" role="img" aria-label="Best score progression: {escape(summary, quote=True)}">'
         '<svg viewBox="0 0 1000 64" preserveAspectRatio="none" aria-hidden="true">'
         f'{"".join(reference_lines)}'
@@ -2720,13 +2920,17 @@ def _search_trajectory_payload(task: dict[str, Any]) -> dict[str, Any] | None:
     frozen = task.get("frozen_spec") or {}
     metric_name = str(scores.get("metric_name") or frozen.get("metric_name") or "score")
     metric_name = metric_name.replace("<", "").replace(">", "")
-    direction = str(scores.get("direction") or frozen.get("metric_direction") or "maximize")
+    direction = str(
+        scores.get("direction") or frozen.get("metric_direction") or "maximize"
+    )
     baseline = _finite_float(scores.get("baseline"))
     selected_score = _finite_float(scores.get("selected"))
     evaluations: list[dict[str, Any]] = []
     candidates = task.get("candidates") or []
     for candidate_index, candidate in enumerate(candidates):
-        candidate_id = str(candidate.get("candidate_id") or f"candidate-{candidate_index + 1}")
+        candidate_id = str(
+            candidate.get("candidate_id") or f"candidate-{candidate_index + 1}"
+        )
         for iteration_index, iteration in enumerate(candidate.get("iterations") or []):
             score = _finite_float(iteration.get("score"))
             if score is None:
@@ -2744,7 +2948,11 @@ def _search_trajectory_payload(task: dict[str, Any]) -> dict[str, Any] | None:
                     "process_passed": iteration.get("process_passed") is True,
                     "created_at": created_at,
                     "created_epoch": created_epoch,
-                    "source": "worker verifier" if session_id is not None else "parent verifier",
+                    "source": (
+                        "worker verifier"
+                        if session_id is not None
+                        else "parent verifier"
+                    ),
                     "fallback_order": iteration_index,
                 }
             )
@@ -2764,7 +2972,9 @@ def _search_trajectory_payload(task: dict[str, Any]) -> dict[str, Any] | None:
 
     trajectories: list[dict[str, Any]] = []
     for candidate_index, candidate in enumerate(candidates):
-        candidate_id = str(candidate.get("candidate_id") or f"candidate-{candidate_index + 1}")
+        candidate_id = str(
+            candidate.get("candidate_id") or f"candidate-{candidate_index + 1}"
+        )
         points = [
             evaluation
             for evaluation in evaluations
@@ -2885,9 +3095,9 @@ def _render_search_trajectory(payload: dict[str, Any]) -> str:
     return (
         '<div class="trajectory-shell">'
         f'<div class="trajectory-head"><h3>{escape(title)}</h3>'
-        f'<span>{evaluations} {escape(unit_label)} / {trajectories} {escape(group_label)} · '
-        f'{passing} scored / {failed} failed · '
-        f'{axis_type} score axis</span></div>'
+        f"<span>{evaluations} {escape(unit_label)} / {trajectories} {escape(group_label)} · "
+        f"{passing} scored / {failed} failed · "
+        f"{axis_type} score axis</span></div>"
         f'<div class="trajectory-plot" role="img" aria-label="{escape(aria_label, quote=True)}" '
         f'data-search-trajectory="{encoded}"></div></div>'
     )
@@ -2922,12 +3132,12 @@ def _render_metric_toolbar(performance: dict[str, Any], default_metric: str) -> 
     return (
         '<div class="metric-lens-toolbar no-print">'
         '<div class="metric-scale" aria-label="Selected metric range">'
-        f'<span data-metric-low>{escape(low)}</span>'
+        f"<span data-metric-low>{escape(low)}</span>"
         '<span class="metric-scale-bar" aria-hidden="true"><i></i><i></i><i></i><i></i></span>'
-        f'<span data-metric-high>{escape(high)}</span>'
-        '</div>'
+        f"<span data-metric-high>{escape(high)}</span>"
+        "</div>"
         f'<div class="metric-control" role="group" aria-label="Worker session color metric">{buttons}</div>'
-        '</div>'
+        "</div>"
     )
 
 
@@ -2959,19 +3169,21 @@ def _render_timeline(
     score_gain_has_baseline = (
         _finite_float((performance.get("score") or {}).get("baseline")) is not None
     )
-    default_metric = "score_gain" if (
-        "score_gain" in metric_ranges or "score_raw" in metric_ranges
-    ) else (
-        "tokens_per_minute" if "tokens_per_minute" in metric_ranges else next(iter(metric_ranges), "status")
+    default_metric = (
+        "score_gain"
+        if ("score_gain" in metric_ranges or "score_raw" in metric_ranges)
+        else (
+            "tokens_per_minute"
+            if "tokens_per_minute" in metric_ranges
+            else next(iter(metric_ranges), "status")
+        )
     )
     tracks: list[tuple[str, str, list[dict[str, Any]]]] = [
         ("Main Agent", "main", main_events),
     ]
     for event in worker_events:
         label = str(
-            event.get("track_label")
-            or event.get("session_id")
-            or "Worker session"
+            event.get("track_label") or event.get("session_id") or "Worker session"
         )
         tracks.append((label, "worker", [event]))
     if verifier_events:
@@ -2988,13 +3200,11 @@ def _render_timeline(
                 left, width = _timeline_position(idle, start_epoch, float(duration))
                 idle_label = ""
                 if worker_track_index == 0:
-                    idle_label = (
-                        f'<span class="timeline-idle-label">Idle {_html(_duration(idle.get("duration_seconds")))}</span>'
-                    )
+                    idle_label = f'<span class="timeline-idle-label">Idle {_html(_duration(idle.get("duration_seconds")))}</span>'
                 marks.append(
                     f'<span class="timeline-idle" style="left:{left:.3f}%;width:{width:.3f}%;" '
                     f'title="No active worker sessions for {escape(_duration(idle.get("duration_seconds")), quote=True)}">'
-                    f'{idle_label}</span>'
+                    f"{idle_label}</span>"
                 )
         for event in track_events:
             left, width = _timeline_position(event, start_epoch, float(duration))
@@ -3005,7 +3215,10 @@ def _render_timeline(
                 css_class = "worker"
             elif kind == "promotion":
                 css_class = "success"
-            elif kind != "worker_session" and str(event.get("terminal_state")) in {"timed_out", "failed"}:
+            elif kind != "worker_session" and str(event.get("terminal_state")) in {
+                "timed_out",
+                "failed",
+            }:
                 css_class = "failure"
             tooltip = str(event.get("label") or "event")
             if event.get("inferred_end"):
@@ -3016,7 +3229,9 @@ def _render_timeline(
             if kind == "worker_session":
                 terminal_state = str(event.get("terminal_state") or "unknown")
                 failed = terminal_state in {"timed_out", "failed"}
-                level = _metric_level(event.get(default_metric), metric_ranges.get(default_metric) or {})
+                level = _metric_level(
+                    event.get(default_metric), metric_ranges.get(default_metric) or {}
+                )
                 css_class = "worker worker-session"
                 if level is not None:
                     css_class += f" metric-level-{level}"
@@ -3052,9 +3267,8 @@ def _render_timeline(
                     else _metric_readout("score_gain", event.get("score_gain"))
                 )
                 label_html = (
-                    (_SESSION_ALERT_ICON if failed else "")
-                    + f'<span class="metric-readout">{escape(default_readout)}</span>'
-                )
+                    _SESSION_ALERT_ICON if failed else ""
+                ) + f'<span class="metric-readout">{escape(default_readout)}</span>'
                 details = [
                     f"candidate {event.get('candidate_id')}",
                     f"duration {_duration(event.get('duration_seconds'))}",
@@ -3086,10 +3300,12 @@ def _render_timeline(
                 if attempt_count > 1
                 else ""
             )
-            score_text = f" / score {_number(score, digits=4)}" if score is not None else ""
+            score_text = (
+                f" / score {_number(score, digits=4)}" if score is not None else ""
+            )
             label_html = (
                 f'<strong title="{escape(session_id, quote=True)}">agent_{escape(suffix)}{retry}</strong>'
-                f'<small>{escape(candidate_id)}{escape(score_text)}</small>'
+                f"<small>{escape(candidate_id)}{escape(score_text)}</small>"
             )
             if attempt_count > 1:
                 row_class += " redispatched"
@@ -3124,17 +3340,17 @@ def _render_timeline(
         f' data-score-gain-baseline="{str(score_gain_has_baseline).lower()}"'
         f'{" data-metric-lens" if metric_lens else ""}>'
         '<div class="timeline-head">'
-        f'<h2>{escape(title)}</h2>'
+        f"<h2>{escape(title)}</h2>"
         f'<span class="mono">{escape(span_label)}: {escape(_duration(duration))}</span>'
         "</div>"
-        f'{toolbar}'
+        f"{toolbar}"
         f'<div class="timeline-scroll" tabindex="0" aria-label="{escape(title, quote=True)} scroll area">'
         f'<div class="timeline" style="--timeline-width:{timeline_width}px">'
-        f'{score_chart}'
+        f"{score_chart}"
         f'<div class="timeline-rows" data-track-count="{len(tracks)}">{"".join(rows)}</div>'
         '<div class="timeline-axis">'
         f'<span>{escape(_timestamp(start_epoch) or "")}</span>'
-        f'<span>+{escape(_duration(float(duration) / 2))}</span>'
+        f"<span>+{escape(_duration(float(duration) / 2))}</span>"
         f'<span>{escape(_timestamp(end_epoch) or "")}</span>'
         "</div></div></div>"
         '<div class="timeline-key">'
@@ -3145,6 +3361,146 @@ def _render_timeline(
         "</div></div>"
         '<details class="summary-block event-log"><summary>Chronological event evidence</summary>'
         f'<div><ul class="event-list">{"".join(event_items)}</ul></div></details>'
+    )
+
+
+def _render_shared_evidence_view(task: dict[str, Any]) -> str:
+    rows_payload = [
+        {
+            **iteration,
+            "candidate_id": candidate.get("candidate_id"),
+            "candidate_selected": bool(candidate.get("selected")),
+        }
+        for candidate in task.get("candidates") or []
+        for iteration in candidate.get("iterations") or []
+        if iteration.get("agent_session_id")
+    ]
+    if not rows_payload:
+        return "<p>No worker Evidence was persisted for this Search task.</p>"
+
+    rows_payload.sort(
+        key=lambda item: (
+            _epoch(item.get("created_at")) or float("inf"),
+            str(item.get("candidate_id") or ""),
+            int(item.get("iteration") or 0),
+        )
+    )
+    candidates = sorted(
+        {
+            str(item.get("candidate_id"))
+            for item in rows_payload
+            if item.get("candidate_id")
+        }
+    )
+    dispositions = sorted(
+        {str(item.get("disposition") or "unsettled") for item in rows_payload}
+    )
+    view_states = sorted(
+        {str(item.get("view_state") or "not_requested") for item in rows_payload}
+    )
+    published = sum(bool(item.get("view")) for item in rows_payload)
+    state_counts = Counter(
+        str(item.get("view_state") or "not_requested") for item in rows_payload
+    )
+
+    def options(values: list[str]) -> str:
+        return "".join(
+            f'<option value="{escape(value, quote=True)}">{escape(value.replace("_", " "))}</option>'
+            for value in values
+        )
+
+    rows = []
+    for item in rows_payload:
+        candidate_id = str(item.get("candidate_id") or "")
+        disposition = str(item.get("disposition") or "unsettled")
+        view_state = str(item.get("view_state") or "not_requested")
+        commit = str(item.get("git_head") or "")
+        view = item.get("view")
+        view_copy = (
+            f'<div class="evidence-view-copy">{_html(view)}</div>'
+            if view
+            else '<div class="evidence-view-empty">Not published</div>'
+        )
+        view_error = (
+            f'<div class="evidence-view-error">{_html(item.get("view_error"))}</div>'
+            if item.get("view_error")
+            else ""
+        )
+        monitor = item.get("annotation_monitor")
+        monitor_copy = ""
+        if isinstance(monitor, dict):
+            last_events = monitor.get("last_events")
+            last_event = (
+                last_events[-1].get("type")
+                if isinstance(last_events, list)
+                and last_events
+                and isinstance(last_events[-1], dict)
+                else None
+            )
+            monitor_parts = [
+                f"Annotator {monitor.get('state') or 'unknown'}",
+                _duration(_finite_float(monitor.get("elapsed_seconds"))),
+                f"{_number(monitor.get('json_lines'))} JSON events",
+                f"last {last_event}" if last_event else None,
+                (
+                    f"stdout {_number(monitor.get('stdout_bytes'))} B"
+                    if monitor.get("stdout_bytes") is not None
+                    else None
+                ),
+            ]
+            monitor_copy = (
+                '<div class="evidence-view-monitor">'
+                + _html(" | ".join(str(part) for part in monitor_parts if part))
+                + "</div>"
+            )
+        attempt = item.get("hypothesis") or item.get("summary")
+        rows.append(
+            f'<tr class="{"selected-row" if item.get("candidate_selected") else ""}"'
+            " data-evidence-row"
+            f' data-candidate="{escape(candidate_id, quote=True)}"'
+            f' data-disposition="{escape(disposition, quote=True)}"'
+            f' data-view-state="{escape(view_state, quote=True)}">'
+            f'<td class="mono">{_html(item.get("created_at"))}</td>'
+            f'<td class="mono"><strong>{_html(candidate_id)}</strong></td>'
+            f'<td class="mono">{_html(item.get("iteration"))}</td>'
+            f'<td class="mono">{_html(_number(item.get("score")))}</td>'
+            f"<td>{_status(disposition)}</td>"
+            f'<td><div class="evidence-copy">{_html(attempt)}</div></td>'
+            f'<td>{view_copy}{view_error}{monitor_copy}<div class="evidence-view-meta">{_status(view_state)}</div></td>'
+            f'<td><code class="revision" title="{escape(commit, quote=True)}">'
+            f"{_html(commit[:12] if commit else None)}</code></td>"
+            "</tr>"
+        )
+
+    return (
+        "<div data-evidence-view>"
+        '<div class="evidence-view-toolbar no-print">'
+        '<div class="evidence-view-summary">'
+        f"<span><strong>{_html(len(rows_payload))}</strong>Settled iterations</span>"
+        f"<span><strong>{_html(published)}</strong>Views published</span>"
+        f'<span><strong>{_html(state_counts.get("pending", 0))}</strong>Pending</span>'
+        f'<span><strong>{_html(state_counts.get("terminal_error", 0))}</strong>Terminal errors</span>'
+        "</div>"
+        '<div class="evidence-view-filters">'
+        '<label class="evidence-view-filter"><span>Candidate</span>'
+        f'<select data-evidence-filter="candidate"><option value="">All</option>{options(candidates)}</select></label>'
+        '<label class="evidence-view-filter"><span>Settlement</span>'
+        f'<select data-evidence-filter="disposition"><option value="">All</option>{options(dispositions)}</select></label>'
+        '<label class="evidence-view-filter"><span>View state</span>'
+        f'<select data-evidence-filter="view-state"><option value="">All</option>{options(view_states)}</select></label>'
+        '<label class="evidence-view-filter"><span>Text</span>'
+        '<input type="search" data-evidence-filter="text" aria-label="Filter Evidence text"></label>'
+        f'<div class="evidence-view-count" data-evidence-count aria-live="polite">{len(rows_payload)} of {len(rows_payload)} rows</div>'
+        "</div></div>"
+        '<div class="table-scroll evidence-view-scroll">'
+        '<table class="evidence-view-table"><thead><tr>'
+        "<th>Time</th><th>Candidate</th><th>Iteration</th><th>Score</th>"
+        "<th>Settlement</th><th>Worker attempt</th><th>Objective View</th><th>Revision</th>"
+        f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+        '<p class="footnote">Worker attempt is the candidate-authored settled hypothesis. '
+        "Objective View is the immutable best-effort annotation bound to the exact candidate, "
+        "iteration, and revision; missing Views are not inferred from worker text.</p>"
+        "</div>"
     )
 
 
@@ -3195,7 +3551,7 @@ def _render_sessions(task: dict[str, Any]) -> str:
             f'<td>{_html(session.get("host"))}</td>'
             f'<td>{_html(session.get("provider"))}</td>'
             f'<td>{_html(session.get("model"))}</td>'
-            f'<td>{_status(terminal)}</td>'
+            f"<td>{_status(terminal)}</td>"
             f'<td class="mono">{_html(_duration(session.get("duration_seconds")))}</td>'
             f'<td class="mono">{_html(_number(session.get("processed_tokens")))}</td>'
             f'<td class="mono">{_html(_cost(session.get("cost_usd")))}</td>'
@@ -3222,11 +3578,29 @@ def _render_statistics(task: dict[str, Any]) -> str:
     lineage = statistics.get("lineage") or {}
     tables = [
         ("Timing", timing, {key: _duration for key in timing if "_seconds" in key}),
-        ("Workers", workers, {key: _percent for key in workers if key.endswith("_rate")}),
-        ("Verifiers", verifiers, {key: _percent for key in verifiers if key.endswith("_rate")}),
+        (
+            "Workers",
+            workers,
+            {key: _percent for key in workers if key.endswith("_rate")},
+        ),
+        (
+            "Verifiers",
+            verifiers,
+            {key: _percent for key in verifiers if key.endswith("_rate")},
+        ),
         (
             "Usage",
-            {key: usage.get(key) for key in ("processed_tokens", "input_tokens", "cached_input_tokens", "output_tokens", "cost_usd", "tool_calls")},
+            {
+                key: usage.get(key)
+                for key in (
+                    "processed_tokens",
+                    "input_tokens",
+                    "cached_input_tokens",
+                    "output_tokens",
+                    "cost_usd",
+                    "tool_calls",
+                )
+            },
             {"cost_usd": _cost},
         ),
         (
@@ -3236,12 +3610,16 @@ def _render_statistics(task: dict[str, Any]) -> str:
         ),
         ("Lineage", lineage, {}),
     ]
-    return '<div class="stats-grid">' + "".join(
-        '<div class="stats-table">'
-        f'<h3>{escape(title)}</h3>{_stat_rows(values, formatters)}'
-        "</div>"
-        for title, values, formatters in tables
-    ) + "</div>"
+    return (
+        '<div class="stats-grid">'
+        + "".join(
+            '<div class="stats-table">'
+            f"<h3>{escape(title)}</h3>{_stat_rows(values, formatters)}"
+            "</div>"
+            for title, values, formatters in tables
+        )
+        + "</div>"
+    )
 
 
 def _render_stop_hook_statistics(statistics: dict[str, Any]) -> str:
@@ -3274,9 +3652,7 @@ def _render_stop_hook_statistics(statistics: dict[str, Any]) -> str:
     overview = {
         "calls": statistics.get("events_total", 0) if source_available else None,
         "hook_time": (
-            statistics.get("duration_ms_total", 0.0)
-            if source_available
-            else None
+            statistics.get("duration_ms_total", 0.0) if source_available else None
         ),
         "captured_through": statistics.get("captured_through"),
     }
@@ -3344,7 +3720,7 @@ def _render_stop_hook_statistics(statistics: dict[str, Any]) -> str:
             f'<td class="mono">{_html(event.get("candidate_id"))}</td>'
             f'<td class="mono">{_html(_milliseconds(event.get("duration_ms")))}</td>'
             f'<td>{_html(event.get("stop_reason"))}</td>'
-            f'<td>{_html(reason)}</td>'
+            f"<td>{_html(reason)}</td>"
             "</tr>"
         )
     event_evidence = (
@@ -3388,15 +3764,10 @@ def _render_loop_agent_statistics(statistics: dict[str, Any]) -> str:
 
         def percent(value: float | None) -> str:
             return (
-                f"{_number(value, digits=1)}%"
-                if value is not None
-                else "Not observed"
+                f"{_number(value, digits=1)}%" if value is not None else "Not observed"
             )
 
-        return (
-            f"{percent(first)} → {percent(final)} "
-            f"(max {percent(maximum)})"
-        )
+        return f"{percent(first)} → {percent(final)} " f"(max {percent(maximum)})"
 
     summary_rows = []
     for row in rows:
@@ -3510,9 +3881,7 @@ def _render_candidate_loop_statistics(
     subagent_blocks = (hook_by_event.get("SubagentStop") or {}).get("decisions") or {}
     requested = {
         "candidate_submissions": activity.get("candidates_submitted", 0),
-        "completed_with_result": activity.get(
-            "candidates_completed_with_result", 0
-        ),
+        "completed_with_result": activity.get("candidates_completed_with_result", 0),
         "rejected_results": activity.get("results_rejected", 0),
         "agent_resumes": activity.get("agent_resumes", 0),
         "stop_hook_continue_triggers": hook_decisions.get("block", 0),
@@ -3583,18 +3952,20 @@ def _render_task(
         f'<div class="task-metric"><span class="kpi-label">First improvement</span><strong class="mono">{_html(_duration(timing.get("time_to_first_improvement_seconds")))}</strong></div>'
         "</div>"
         '<section class="subsection">'
-        f'{trajectory}'
+        f"{trajectory}"
         f'{_render_timeline(task.get("timeline") or {}, title="Search Execution Timeline", include_score_chart=not bool(trajectory))}'
         '<p class="footnote">This axis is scoped to this Search run. Worker bars show actual host execution, not the configured maximum or an aspirational exploration window.</p>'
         "</section>"
+        '<section class="subsection"><h3>Shared Evidence View</h3>'
+        f"{_render_shared_evidence_view(task)}</section>"
         '<section class="subsection"><h3>Candidate Evidence</h3>'
-        f'{_render_candidates(task)}</section>'
+        f"{_render_candidates(task)}</section>"
         '<section class="subsection"><h3>Worker Sessions</h3>'
-        f'{_render_sessions(task)}</section>'
+        f"{_render_sessions(task)}</section>"
         '<section class="subsection"><h3>Complete Statistical View</h3>'
-        f'{_render_statistics(task)}'
+        f"{_render_statistics(task)}"
         '<details class="summary-block"><summary>Raw normalized Search statistics</summary>'
-        f'<pre>{escape(json.dumps(stats, indent=2, ensure_ascii=False, sort_keys=True))}</pre></details>'
+        f"<pre>{escape(json.dumps(stats, indent=2, ensure_ascii=False, sort_keys=True))}</pre></details>"
         "</section></article>"
     )
 
@@ -3628,7 +3999,9 @@ def render_html_report(data: dict[str, Any]) -> str:
     title_id = str(goal_id or report_run_id)
     state = goal.get("status") or (selected_task.get("run") or {}).get("state")
     search_count = aggregate.get("search_tasks_total", len(tasks))
-    run_state = (selected_task.get("run") or {}).get("state") or selected_task.get("state")
+    run_state = (selected_task.get("run") or {}).get("state") or selected_task.get(
+        "state"
+    )
     score_target = selected_scores.get("target")
     score_gain = selected_scores.get("selected_improvement_from_baseline")
     score_baseline = _finite_float(selected_scores.get("baseline"))
@@ -3652,9 +4025,7 @@ def render_html_report(data: dict[str, Any]) -> str:
         target_result = (
             "reached"
             if target_reached is True
-            else "not reached"
-            if target_reached is False
-            else "not evaluated"
+            else "not reached" if target_reached is False else "not evaluated"
         )
         completion_detail += f" / target {target_result}"
         completion_semantics = (
@@ -3665,14 +4036,44 @@ def render_html_report(data: dict[str, Any]) -> str:
 
     kpis = "".join(
         [
-            _metric_card("Goal status", _text(state).title(), completion_detail, _status_class(state)),
+            _metric_card(
+                "Goal status",
+                _text(state).title(),
+                completion_detail,
+                _status_class(state),
+            ),
             _metric_card("Search tasks", _number(search_count), "GP-level tasks"),
-            _metric_card("Selected score", _number(selected_scores.get("selected"), digits=4), score_detail, "success"),
-            _metric_card("Candidates", _number(aggregate.get("candidates_total")), f"{_number(aggregate.get('candidates_evaluated'))} evaluated"),
-            _metric_card("Worker sessions", _number(aggregate.get("worker_sessions_total")), f"{_number((aggregate_stats.get('workers') or {}).get('timed_out'))} timed out"),
-            _metric_card("Verifier runs", _number(aggregate.get("verifier_runs_total")), f"{_number((aggregate_stats.get('verifiers') or {}).get('parent_process_runs'))} parent-owned"),
-            _metric_card("Processed tokens", _number(aggregate_usage.get("processed_tokens")), "worker sessions"),
-            _metric_card("Estimated worker cost", _cost(aggregate_usage.get("cost_usd")), "coverage-aware"),
+            _metric_card(
+                "Selected score",
+                _number(selected_scores.get("selected"), digits=4),
+                score_detail,
+                "success",
+            ),
+            _metric_card(
+                "Candidates",
+                _number(aggregate.get("candidates_total")),
+                f"{_number(aggregate.get('candidates_evaluated'))} evaluated",
+            ),
+            _metric_card(
+                "Worker sessions",
+                _number(aggregate.get("worker_sessions_total")),
+                f"{_number((aggregate_stats.get('workers') or {}).get('timed_out'))} timed out",
+            ),
+            _metric_card(
+                "Verifier runs",
+                _number(aggregate.get("verifier_runs_total")),
+                f"{_number((aggregate_stats.get('verifiers') or {}).get('parent_process_runs'))} parent-owned",
+            ),
+            _metric_card(
+                "Processed tokens",
+                _number(aggregate_usage.get("processed_tokens")),
+                "worker sessions",
+            ),
+            _metric_card(
+                "Estimated worker cost",
+                _cost(aggregate_usage.get("cost_usd")),
+                "coverage-aware",
+            ),
         ]
     )
 
@@ -3681,12 +4082,8 @@ def render_html_report(data: dict[str, Any]) -> str:
         for task in tasks
         if (payload := _search_trajectory_payload(task)) is not None
     }
-    plotly_javascript = (
-        _load_plotly_javascript() if trajectory_payloads else None
-    )
-    plotly_script = (
-        f"<script>{plotly_javascript}</script>" if plotly_javascript else ""
-    )
+    plotly_javascript = _load_plotly_javascript() if trajectory_payloads else None
+    plotly_script = f"<script>{plotly_javascript}</script>" if plotly_javascript else ""
 
     task_tabs = "".join(
         f'<button class="task-tab" type="button" data-task-target="{escape(str(task.get("run_id")), quote=True)}" '
@@ -3707,16 +4104,23 @@ def render_html_report(data: dict[str, Any]) -> str:
         )
         for index, task in enumerate(tasks, start=1)
     )
-    warning_items = "".join(
-        f'<li><span class="mono">{_html(item.get("kind") if isinstance(item, dict) else "warning")}</span>: '
-        f'{_html(json.dumps(item, ensure_ascii=False, sort_keys=True) if isinstance(item, dict) else item)}</li>'
-        for item in warnings
-    ) or "<li>No monitor warnings.</li>"
+    warning_items = (
+        "".join(
+            f'<li><span class="mono">{_html(item.get("kind") if isinstance(item, dict) else "warning")}</span>: '
+            f"{_html(json.dumps(item, ensure_ascii=False, sort_keys=True) if isinstance(item, dict) else item)}</li>"
+            for item in warnings
+        )
+        or "<li>No monitor warnings.</li>"
+    )
     metric_availability = _render_metric_availability(unavailable + missing)
 
     worker_sources = int(aggregate_usage.get("sources_total") or 0)
-    worker_coverage = (aggregate_usage.get("coverage") or {}).get("processed_tokens") or 0
-    coverage_percent = min(100.0, worker_coverage / worker_sources * 100) if worker_sources else 0.0
+    worker_coverage = (aggregate_usage.get("coverage") or {}).get(
+        "processed_tokens"
+    ) or 0
+    coverage_percent = (
+        min(100.0, worker_coverage / worker_sources * 100) if worker_sources else 0.0
+    )
     raw_payload = {
         "schema_version": data.get("schema_version"),
         "generated_at": data.get("generated_at"),
@@ -3988,9 +4392,7 @@ def _codex_trajectory_payload(observation: dict[str, Any]) -> dict[str, Any] | N
         if selected_entry is not None
         else None
     )
-    passing_scores = [
-        float(entry["score"]) for entry in normalized if entry["valid"]
-    ]
+    passing_scores = [float(entry["score"]) for entry in normalized if entry["valid"]]
     passing_count = sum(entry["valid"] for entry in normalized)
     return {
         "title": "Submission Score Trajectory",
@@ -4057,8 +4459,8 @@ def _render_stop_progress_chart(observation: dict[str, Any]) -> str:
         + f'<text x="4" y="12" fill="var(--muted)" font-size="10">max bin {maximum}</text>'
         "</svg>"
         '<div class="stop-progress-axis"><span>0% output</span>'
-        '<span>Execution-output progress, not wall-clock time</span>'
-        '<span>100% output</span></div></div>'
+        "<span>Execution-output progress, not wall-clock time</span>"
+        "<span>100% output</span></div></div>"
     )
 
 
@@ -4075,11 +4477,7 @@ def _render_codex_execution_timeline(observation: dict[str, Any]) -> str:
     ended_at = run_log.get("last_timestamp") or run.get("ended_at")
     start_epoch = _epoch(started_at)
     end_epoch = _epoch(ended_at)
-    if (
-        start_epoch is None
-        or end_epoch is None
-        or end_epoch <= start_epoch
-    ):
+    if start_epoch is None or end_epoch is None or end_epoch <= start_epoch:
         return (
             '<div class="panel panel-body"><p>Execution start/end timestamps were not '
             "available for a wall-clock timeline.</p></div>"
@@ -4124,7 +4522,7 @@ def _render_codex_execution_timeline(observation: dict[str, Any]) -> str:
         f"<span>{escape(str(ended_at))}</span></div></div></div>"
         '<div class="timeline-key"><span><i class="key-dot"></i>Codex process</span>'
         '<span><i class="key-dot parent"></i>Timestamped auto evaluation</span>'
-        '<span>Agent submissions without persisted timestamps remain in submission order only.</span>'
+        "<span>Agent submissions without persisted timestamps remain in submission order only.</span>"
         "</div></div>"
     )
 
@@ -4191,11 +4589,14 @@ def _render_codex_goal_plus_finalization(observation: dict[str, Any]) -> str:
             continue
         search_tasks = record.get("search_tasks")
         search_tasks = search_tasks if isinstance(search_tasks, list) else []
-        search_state = ", ".join(
-            f"{task.get('run_id')}={task.get('state') or 'unknown'}"
-            for task in search_tasks
-            if isinstance(task, dict)
-        ) or "None"
+        search_state = (
+            ", ".join(
+                f"{task.get('run_id')}={task.get('state') or 'unknown'}"
+                for task in search_tasks
+                if isinstance(task, dict)
+            )
+            or "None"
+        )
         rows.append(
             "<tr>"
             f"<td class=\"mono\"><strong>{_html(record.get('goal_plus_id'))}</strong></td>"
@@ -4204,7 +4605,7 @@ def _render_codex_goal_plus_finalization(observation: dict[str, Any]) -> str:
             f"<td>{_html(record.get('next_action'))}</td>"
             f"<td>{_html(record.get('result_recorded_at'))}</td>"
             f"<td class=\"mono\">{_html(record.get('selected_candidate_id'))}</td>"
-            f"<td class=\"mono\">{_html(search_state)}</td>"
+            f'<td class="mono">{_html(search_state)}</td>'
             "</tr>"
         )
     overall = str(goal_plus.get("overall_status") or "unknown")
@@ -4213,7 +4614,11 @@ def _render_codex_goal_plus_finalization(observation: dict[str, Any]) -> str:
         "incomplete": "Incomplete",
         "unavailable": "Not observed",
     }.get(overall, overall.replace("_", " ").title())
-    tone = "success" if overall == "complete" else "failure" if overall == "incomplete" else "warning"
+    tone = (
+        "success"
+        if overall == "complete"
+        else "failure" if overall == "incomplete" else "warning"
+    )
     table = (
         '<div class="table-scroll"><table><thead><tr>'
         "<th>Goal</th><th>Status</th><th>Phase</th><th>Next action</th>"
@@ -4256,7 +4661,7 @@ def render_codex_observability_report(observation: dict[str, Any]) -> str:
     warnings = observation.get("warnings")
     warnings = warnings if isinstance(warnings, list) else []
     hook_statistics = _codex_report_hook_statistics(observation)
-    stop = ((observation.get("hooks") or {}).get("stop") or {})
+    stop = (observation.get("hooks") or {}).get("stop") or {}
     stop_observed = availability.get("stop_hook_events")
     if not isinstance(stop_observed, bool):
         stop_observed = bool(hook_statistics.get("events_total"))
@@ -4286,16 +4691,13 @@ def render_codex_observability_report(observation: dict[str, Any]) -> str:
             else '<div class="panel panel-body"><p>No scored submission trajectory was found.</p></div>'
         )
     )
-    plotly_script = (
-        f"<script>{plotly_javascript}</script>" if plotly_javascript else ""
-    )
+    plotly_script = f"<script>{plotly_javascript}</script>" if plotly_javascript else ""
 
     run_id = str(run.get("run_id") or "unknown")
     task_id = str(run.get("task_id") or "unknown")
     timed_out = bool(run.get("timed_out"))
     termination_reason = str(
-        run.get("termination_reason")
-        or ("timeout" if timed_out else "completed")
+        run.get("termination_reason") or ("timeout" if timed_out else "completed")
     )
     outcome_status = str(result.get("outcome_status") or "unknown")
     observed_terminal_state = run.get("terminal_state")
@@ -4328,7 +4730,9 @@ def render_codex_observability_report(observation: dict[str, Any]) -> str:
         if terminal_state == "budget_reached" and outcome_status == "success"
         else _status_class(terminal_state)
     )
-    total_submissions = int(result.get("total_rounds") or len(evaluations.get("entries") or []))
+    total_submissions = int(
+        result.get("total_rounds") or len(evaluations.get("entries") or [])
+    )
     goal_plus = observation.get("goal_plus")
     goal_plus = goal_plus if isinstance(goal_plus, dict) else {}
     kpi_cards = [
@@ -4396,8 +4800,7 @@ def render_codex_observability_report(observation: dict[str, Any]) -> str:
                 _metric_card(
                     "Codex sessions",
                     _number(len(run.get("session_ids") or [])),
-                    ", ".join(run.get("codex_versions") or [])
-                    or "version unavailable",
+                    ", ".join(run.get("codex_versions") or []) or "version unavailable",
                 ),
             ]
         )
@@ -4422,15 +4825,15 @@ def render_codex_observability_report(observation: dict[str, Any]) -> str:
                 _metric_card(
                     "Codex sessions",
                     _number(len(run.get("session_ids") or [])),
-                    ", ".join(run.get("codex_versions") or [])
-                    or "version unavailable",
+                    ", ".join(run.get("codex_versions") or []) or "version unavailable",
                 ),
             ]
         )
     kpis = "".join(kpi_cards)
-    warning_items = "".join(
-        f"<li>{_html(item)}</li>" for item in warnings
-    ) or "<li>No evidence warnings.</li>"
+    warning_items = (
+        "".join(f"<li>{_html(item)}</li>" for item in warnings)
+        or "<li>No evidence warnings.</li>"
+    )
     artifact_rows = "".join(
         "<tr>"
         f"<th>{_html(key.replace('_', ' ').title())}</th>"
@@ -4446,9 +4849,7 @@ def render_codex_observability_report(observation: dict[str, Any]) -> str:
     )
     goal_plus_section = _render_codex_goal_plus_finalization(observation)
     goal_plus_nav = (
-        '<a href="#goal-plus-finalization">Goal Plus</a>'
-        if goal_plus_section
-        else ""
+        '<a href="#goal-plus-finalization">Goal Plus</a>' if goal_plus_section else ""
     )
     print_icon = (
         '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" '

@@ -250,10 +250,32 @@ def test_pi_annotator_uses_host_native_ephemeral_cli(
         def __init__(self, command: list[str], **kwargs) -> None:
             commands.append(command)
             popen_kwargs.append(kwargs)
+            self.command = command
             self.returncode = None
+            self.pid = 24680
+            self.communicate_calls = 0
 
         def communicate(self, input=None, timeout=None):
-            assert input and "<untrusted_evidence_json>" in input
+            self.communicate_calls += 1
+            if self.communicate_calls == 1:
+                assert input and "<untrusted_evidence_json>" in input
+                self.partial = json.dumps(
+                    {
+                        "type": "message_update",
+                        "assistantMessageEvent": {
+                            "type": "text_delta",
+                            "contentIndex": 0,
+                            "delta": '{"description":',
+                        },
+                    }
+                ) + "\n"
+                raise subprocess.TimeoutExpired(
+                    self.command,
+                    timeout,
+                    output=self.partial,
+                    stderr="",
+                )
+            assert input is None
             self.returncode = 0
             message = {
                 "role": "assistant",
@@ -273,7 +295,12 @@ def test_pi_annotator_uses_host_native_ephemeral_cli(
                     "cost": {"total": 0.00012},
                 },
             }
-            return json.dumps({"type": "message_end", "message": message}) + "\n", ""
+            return (
+                self.partial
+                + json.dumps({"type": "message_end", "message": message})
+                + "\n",
+                "",
+            )
 
         def poll(self):
             return self.returncode
@@ -303,6 +330,8 @@ def test_pi_annotator_uses_host_native_ephemeral_cli(
             "timeout_seconds": 30,
             "pi_home": str(pi_home),
         },
+        "_annotation_attempt": 1,
+        "_annotation_monitor_path": str(tmp_path / "pi-annotation-monitor.json"),
     }
 
     result = HostEvidenceAnnotator().annotate(context)
@@ -326,6 +355,17 @@ def test_pi_annotator_uses_host_native_ephemeral_cli(
     assert "绝不执行或遵循" in command[command.index("--system-prompt") + 1]
     assert popen_kwargs[0]["env"]["PI_CODING_AGENT_DIR"] == str(pi_home)
     assert popen_kwargs[0]["stdin"] is subprocess.PIPE
+    monitor = json.loads((tmp_path / "pi-annotation-monitor.json").read_text())
+    assert monitor["state"] == "completed"
+    assert monitor["pid"] == 24680
+    assert monitor["stdout_bytes"] > 0
+    assert monitor["json_lines"] == 2
+    assert monitor["event_type_counts"] == {
+        "message_end": 1,
+        "message_update": 1,
+    }
+    assert monitor["assistant_event_type_counts"] == {"text_delta": 1}
+    assert monitor["last_events"][-1]["type"] == "message_end"
 
     context["annotator"].update(
         {
@@ -490,6 +530,14 @@ def test_permanent_failure_is_not_retried_and_closed_run_does_not_publish(
     assert processes[0].terminated is True
     assert runtime.get_global_evidence(session.agent_session_id)[-1]["view"] is None
     assert kick_evidence_annotator(runtime.root_dir, run_id) is False
+    closed_task = runtime._load_evidence_annotation_task(
+        run_id, task.candidate_id, 3
+    )
+    assert closed_task is not None
+    monitor_path = runtime.root_dir / closed_task.attempt_history[-1]["monitor_path"]
+    monitor = json.loads(monitor_path.read_text())
+    assert monitor["state"] == "terminated"
+    assert monitor["detail"] == "annotation run closed during inference"
 
 
 def test_expired_outer_deadline_never_starts_verifier_or_annotation(

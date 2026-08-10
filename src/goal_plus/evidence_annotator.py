@@ -34,6 +34,10 @@ EVIDENCE_ANNOTATOR_DISABLED_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_DISABLED"
 MAX_ANNOTATION_DIFF_BYTES = MAX_EVIDENCE_ANNOTATION_DIFF_BYTES
 MAX_ANNOTATION_ATTEMPTS = 3
 ANNOTATION_RETRY_BACKOFF_SECONDS = (30, 120)
+ANNOTATION_MONITOR_SCHEMA_VERSION = 1
+ANNOTATION_MONITOR_UPDATE_SECONDS = 5.0
+ANNOTATION_MONITOR_TAIL_CHARS = 2_000
+ANNOTATION_MONITOR_LAST_EVENTS = 12
 
 
 class AnnotationError(RuntimeError):
@@ -148,6 +152,27 @@ def _log_path(root_dir: Path | str, run_id: str) -> Path:
     return _annotator_dir(root_dir, run_id) / "annotator.log"
 
 
+def _attempt_monitor_path(
+    root_dir: Path | str,
+    run_id: str,
+    candidate_id: str,
+    iteration: int,
+    attempt: int,
+) -> Path:
+    safe_candidate = "".join(
+        character if character.isalnum() or character in {"-", "_", "."} else "_"
+        for character in candidate_id
+    )
+    return (
+        _annotator_dir(root_dir, run_id)
+        / "attempts"
+        / (
+            f"{safe_candidate}-iteration-{iteration:04d}-"
+            f"attempt-{attempt:02d}.json"
+        )
+    )
+
+
 def _append_log(root_dir: Path | str, run_id: str, message: str) -> None:
     path = _log_path(root_dir, run_id)
     with exclusive_file_lock(path.with_suffix(".lock")):
@@ -163,6 +188,247 @@ def _disabled() -> bool:
         "yes",
         "on",
     }
+
+
+def _output_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _prefer_complete_output(current: str, observed: Any) -> str:
+    candidate = _output_text(observed)
+    return candidate if len(candidate.encode("utf-8")) >= len(current.encode("utf-8")) else current
+
+
+def _json_event_snapshot(stdout: str) -> dict[str, Any]:
+    event_type_counts: dict[str, int] = {}
+    assistant_event_type_counts: dict[str, int] = {}
+    last_events: list[dict[str, Any]] = []
+    json_lines = 0
+    non_json_lines = 0
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            non_json_lines += 1
+            continue
+        if not isinstance(event, dict):
+            non_json_lines += 1
+            continue
+        json_lines += 1
+        event_type = str(event.get("type") or "unknown")
+        event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
+        summary: dict[str, Any] = {"type": event_type}
+        timestamp = event.get("timestamp")
+        if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+            summary["timestamp"] = timestamp
+        assistant_event = event.get("assistantMessageEvent")
+        if isinstance(assistant_event, dict):
+            assistant_type = str(assistant_event.get("type") or "unknown")
+            assistant_event_type_counts[assistant_type] = (
+                assistant_event_type_counts.get(assistant_type, 0) + 1
+            )
+            summary["assistant_event_type"] = assistant_type
+            content_index = assistant_event.get("contentIndex")
+            if isinstance(content_index, int) and not isinstance(content_index, bool):
+                summary["content_index"] = content_index
+            delta = assistant_event.get("delta")
+            if isinstance(delta, str):
+                summary["delta_bytes"] = len(delta.encode("utf-8"))
+        message = event.get("message")
+        if isinstance(message, dict):
+            for source, target in (
+                ("role", "message_role"),
+                ("stopReason", "stop_reason"),
+                ("responseId", "response_id"),
+            ):
+                value = message.get(source)
+                if isinstance(value, str) and value:
+                    summary[target] = value
+        last_events.append(summary)
+        if len(last_events) > ANNOTATION_MONITOR_LAST_EVENTS:
+            last_events.pop(0)
+    return {
+        "json_lines": json_lines,
+        "non_json_lines": non_json_lines,
+        "event_type_counts": dict(sorted(event_type_counts.items())),
+        "assistant_event_type_counts": dict(
+            sorted(assistant_event_type_counts.items())
+        ),
+        "last_events": last_events,
+    }
+
+
+class _AnnotationProcessMonitor:
+    def __init__(self, context: dict[str, Any]) -> None:
+        raw_path = context.get("_annotation_monitor_path")
+        self.path = Path(raw_path) if isinstance(raw_path, str) and raw_path else None
+        self.started_monotonic = time.monotonic()
+        self.last_write_monotonic = 0.0
+        profile = context.get("annotator")
+        profile = profile if isinstance(profile, dict) else {}
+        self.payload: dict[str, Any] = {
+            "schema_version": ANNOTATION_MONITOR_SCHEMA_VERSION,
+            "run_id": context.get("run_id"),
+            "candidate_id": context.get("candidate_id"),
+            "iteration": context.get("iteration"),
+            "attempt": context.get("_annotation_attempt"),
+            "host": profile.get("host") or "codex",
+            "model": profile.get("model"),
+            "reasoning_effort": profile.get("reasoning_effort"),
+            "timeout_seconds": profile.get("timeout_seconds"),
+            "state": "starting",
+            "started_at": utc_timestamp(),
+            "updated_at": utc_timestamp(),
+            "elapsed_seconds": 0.0,
+            "pid": None,
+            "process_returncode": None,
+            "stdout_bytes": 0,
+            "stderr_bytes": 0,
+            "json_lines": 0,
+            "non_json_lines": 0,
+            "event_type_counts": {},
+            "assistant_event_type_counts": {},
+            "last_events": [],
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "detail": None,
+        }
+
+    def observe(
+        self,
+        state: str,
+        *,
+        process: subprocess.Popen[str],
+        stdout: str = "",
+        stderr: str = "",
+        detail: str | None = None,
+        force: bool = False,
+    ) -> None:
+        if self.path is None:
+            return
+        now = time.monotonic()
+        if (
+            not force
+            and self.last_write_monotonic
+            and now - self.last_write_monotonic < ANNOTATION_MONITOR_UPDATE_SECONDS
+        ):
+            return
+        event_snapshot = _json_event_snapshot(stdout)
+        self.payload.update(
+            {
+                "state": state,
+                "updated_at": utc_timestamp(),
+                "elapsed_seconds": round(now - self.started_monotonic, 3),
+                "pid": getattr(process, "pid", None),
+                "process_returncode": getattr(process, "returncode", None),
+                "stdout_bytes": len(stdout.encode("utf-8")),
+                "stderr_bytes": len(stderr.encode("utf-8")),
+                "stdout_tail": stdout[-ANNOTATION_MONITOR_TAIL_CHARS:],
+                "stderr_tail": stderr[-ANNOTATION_MONITOR_TAIL_CHARS:],
+                "detail": detail[:ANNOTATION_MONITOR_TAIL_CHARS] if detail else None,
+                **event_snapshot,
+            }
+        )
+        try:
+            write_json(self.path, self.payload)
+            self.last_write_monotonic = now
+        except OSError:
+            # Annotation remains best-effort even if its diagnostic path is unwritable.
+            return
+
+
+def _timeout_output(exc: subprocess.TimeoutExpired, name: str) -> str:
+    return _output_text(getattr(exc, name, None))
+
+
+def _collect_after_termination(
+    process: subprocess.Popen[str],
+    stdout: str,
+    stderr: str,
+) -> tuple[str, str]:
+    try:
+        final_stdout, final_stderr = process.communicate(input=None, timeout=1)
+        stdout = _prefer_complete_output(stdout, final_stdout)
+        stderr = _prefer_complete_output(stderr, final_stderr)
+    except subprocess.TimeoutExpired as exc:
+        stdout = _prefer_complete_output(stdout, _timeout_output(exc, "output"))
+        stderr = _prefer_complete_output(stderr, _timeout_output(exc, "stderr"))
+    return stdout, stderr
+
+
+def _communicate_with_monitor(
+    process: subprocess.Popen[str],
+    prompt: str,
+    timeout: float,
+    context: dict[str, Any],
+    terminate: Any,
+) -> tuple[str, str, _AnnotationProcessMonitor]:
+    monitor = _AnnotationProcessMonitor(context)
+    stdout = ""
+    stderr = ""
+    first_communicate = True
+    started = time.monotonic()
+    monitor.observe("running", process=process, force=True)
+    while True:
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 0:
+            terminate()
+            stdout, stderr = _collect_after_termination(process, stdout, stderr)
+            detail = f"annotation process timed out after {timeout:.3f} seconds"
+            monitor.observe(
+                "timed_out",
+                process=process,
+                stdout=stdout,
+                stderr=stderr,
+                detail=detail,
+                force=True,
+            )
+            raise TransientAnnotationError(detail)
+        try:
+            observed_stdout, observed_stderr = process.communicate(
+                input=prompt if first_communicate else None,
+                timeout=min(0.5, remaining),
+            )
+            stdout = _prefer_complete_output(stdout, observed_stdout)
+            stderr = _prefer_complete_output(stderr, observed_stderr)
+            monitor.observe(
+                "process_exited",
+                process=process,
+                stdout=stdout,
+                stderr=stderr,
+                force=True,
+            )
+            return stdout, stderr, monitor
+        except subprocess.TimeoutExpired as exc:
+            first_communicate = False
+            stdout = _prefer_complete_output(stdout, _timeout_output(exc, "output"))
+            stderr = _prefer_complete_output(stderr, _timeout_output(exc, "stderr"))
+            monitor.observe(
+                "running",
+                process=process,
+                stdout=stdout,
+                stderr=stderr,
+            )
+            if not CodexEvidenceAnnotator._still_active(context):
+                terminate()
+                stdout, stderr = _collect_after_termination(process, stdout, stderr)
+                detail = "annotation run closed during inference"
+                monitor.observe(
+                    "terminated",
+                    process=process,
+                    stdout=stdout,
+                    stderr=stderr,
+                    detail=detail,
+                    force=True,
+                )
+                raise PermanentAnnotationError(detail)
 
 
 def _process_matches_worker(pid: int, run_id: str, generation: str) -> bool:
@@ -488,40 +754,41 @@ class CodexEvidenceAnnotator:
                 env=environment,
             )
             self._active_process = process
-            started = time.monotonic()
             prompt = self._prompt(context)
-            first_communicate = True
             try:
-                while True:
-                    remaining = timeout - (time.monotonic() - started)
-                    if remaining <= 0:
-                        self.terminate()
-                        raise TransientAnnotationError(
-                            f"codex exec timed out after {timeout:.3f} seconds"
-                        )
-                    try:
-                        stdout, stderr = process.communicate(
-                            input=prompt if first_communicate else None,
-                            timeout=min(0.5, remaining),
-                        )
-                        break
-                    except subprocess.TimeoutExpired:
-                        first_communicate = False
-                        if not self._still_active(context):
-                            self.terminate()
-                            raise PermanentAnnotationError(
-                                "annotation run closed during inference"
-                            )
+                stdout, stderr, monitor = _communicate_with_monitor(
+                    process,
+                    prompt,
+                    timeout,
+                    context,
+                    self.terminate,
+                )
             finally:
                 self._active_process = None
             if process.returncode != 0:
                 detail = (stderr or stdout).strip()[-2000:]
                 error = f"codex exec exited {process.returncode}: {detail}"
                 usage = self._usage(stdout, str(model) if model else None)
+                monitor.observe(
+                    "failed",
+                    process=process,
+                    stdout=stdout,
+                    stderr=stderr,
+                    detail=error,
+                    force=True,
+                )
                 if self._transient_process_failure(detail):
                     raise TransientAnnotationError(error, usage=usage)
                 raise PermanentAnnotationError(error, usage=usage)
             if not output_path.exists():
+                monitor.observe(
+                    "failed",
+                    process=process,
+                    stdout=stdout,
+                    stderr=stderr,
+                    detail="codex exec did not write an annotation",
+                    force=True,
+                )
                 raise AnnotationOutputError(
                     "codex exec did not write an annotation",
                     usage=self._usage(stdout, str(model) if model else None),
@@ -531,10 +798,25 @@ class CodexEvidenceAnnotator:
                     output_path.read_text(encoding="utf-8")
                 )
             except (OSError, ValueError) as exc:
+                monitor.observe(
+                    "failed",
+                    process=process,
+                    stdout=stdout,
+                    stderr=stderr,
+                    detail=f"codex exec wrote invalid annotation output: {exc}",
+                    force=True,
+                )
                 raise AnnotationOutputError(
                     f"codex exec wrote invalid annotation output: {exc}",
                     usage=self._usage(stdout, str(model) if model else None),
                 ) from exc
+            monitor.observe(
+                "completed",
+                process=process,
+                stdout=stdout,
+                stderr=stderr,
+                force=True,
+            )
             return EvidenceAnnotationResult(
                 description=output.description,
                 usage=self._usage(stdout, str(model) if model else None),
@@ -709,39 +991,50 @@ class PiEvidenceAnnotator:
                 env=environment,
             )
             self._active_process = process
-            started = time.monotonic()
             prompt = _annotation_prompt(context)
-            first_communicate = True
             try:
-                while True:
-                    remaining = timeout - (time.monotonic() - started)
-                    if remaining <= 0:
-                        self.terminate()
-                        raise TransientAnnotationError(
-                            f"pi timed out after {timeout:.3f} seconds"
-                        )
-                    try:
-                        stdout, stderr = process.communicate(
-                            input=prompt if first_communicate else None,
-                            timeout=min(0.5, remaining),
-                        )
-                        break
-                    except subprocess.TimeoutExpired:
-                        first_communicate = False
-                        if not CodexEvidenceAnnotator._still_active(context):
-                            self.terminate()
-                            raise PermanentAnnotationError(
-                                "annotation run closed during inference"
-                            )
+                stdout, stderr, monitor = _communicate_with_monitor(
+                    process,
+                    prompt,
+                    timeout,
+                    context,
+                    self.terminate,
+                )
             finally:
                 self._active_process = None
             if process.returncode != 0:
                 detail = (stderr or stdout).strip()[-2000:]
                 error = f"pi exited {process.returncode}: {detail}"
+                monitor.observe(
+                    "failed",
+                    process=process,
+                    stdout=stdout,
+                    stderr=stderr,
+                    detail=error,
+                    force=True,
+                )
                 if CodexEvidenceAnnotator._transient_process_failure(detail):
                     raise TransientAnnotationError(error)
                 raise PermanentAnnotationError(error)
-            output, usage = self._output(stdout)
+            try:
+                output, usage = self._output(stdout)
+            except AnnotationError as exc:
+                monitor.observe(
+                    "failed",
+                    process=process,
+                    stdout=stdout,
+                    stderr=stderr,
+                    detail=f"{type(exc).__name__}: {exc}",
+                    force=True,
+                )
+                raise
+            monitor.observe(
+                "completed",
+                process=process,
+                stdout=stdout,
+                stderr=stderr,
+                force=True,
+            )
             return EvidenceAnnotationResult(
                 description=output.description,
                 usage=usage,
@@ -848,6 +1141,15 @@ def _claim_annotation_task(
             {
                 "attempt": attempt_number,
                 "started_at": utc_timestamp(),
+                "monitor_path": str(
+                    _attempt_monitor_path(
+                        runtime.root_dir,
+                        run_id,
+                        candidate_id,
+                        iteration,
+                        attempt_number,
+                    ).relative_to(runtime.root_dir)
+                ),
             },
         ]
         claimed = task.model_copy(
@@ -1020,6 +1322,13 @@ def drain_evidence_annotations(
                         context = runtime._evidence_annotation_context(
                             run_id, candidate_id, iteration
                         )
+                        latest_attempt = task.attempt_history[-1]
+                        monitor_path = latest_attempt.get("monitor_path")
+                        if isinstance(monitor_path, str) and monitor_path:
+                            context["_annotation_monitor_path"] = str(
+                                runtime.root_dir / monitor_path
+                            )
+                        context["_annotation_attempt"] = task.attempts
                         result = _annotation_result(
                             selected_annotator.annotate(context)
                         )

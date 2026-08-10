@@ -6,7 +6,7 @@ from pathlib import Path
 from goal_plus.goal_plus import FileGoalPlusRuntime
 from goal_plus.monitor import goal_plus_monitor_snapshot
 from goal_plus.pi_tool import call_pi_tool
-from goal_plus.runtime import FileSearchRuntime
+from goal_plus.runtime import FileSearchRuntime, write_json
 from goal_plus.server import create_mcp
 
 from tests._runtime_helpers import make_project, spec_with_strategy
@@ -106,6 +106,32 @@ def test_goal_plus_monitor_snapshot_summarizes_run_subagents_and_pi_metrics(
         agent_session_id=session.agent_session_id,
         hypothesis="Monitor worker evidence",
     )
+    write_json(
+        runtime_root
+        / "runs"
+        / run_id
+        / "evidence-annotator"
+        / "attempts"
+        / "c001-iteration-0001-attempt-01.json",
+        {
+            "schema_version": 1,
+            "run_id": run_id,
+            "candidate_id": first.candidate_id,
+            "iteration": 1,
+            "attempt": 1,
+            "host": "pi-rpc",
+            "model": "gpt-5.6-sol",
+            "state": "running",
+            "started_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:05Z",
+            "elapsed_seconds": 5.0,
+            "stdout_bytes": 123,
+            "stderr_bytes": 0,
+            "json_lines": 3,
+            "event_type_counts": {"message_update": 3},
+            "last_events": [{"type": "message_update"}],
+        },
+    )
 
     snapshot = goal_plus_monitor_snapshot(
         root_dir=runtime_root,
@@ -117,6 +143,12 @@ def test_goal_plus_monitor_snapshot_summarizes_run_subagents_and_pi_metrics(
     assert snapshot["run"]["state"] == "waiting_for_workers"
     assert snapshot["run"]["candidates_total"] == 2
     assert snapshot["run"]["candidates_evaluated"] == 1
+    annotation = snapshot["run"]["evidence_annotations"]
+    assert annotation["tasks"] == 1
+    assert annotation["views_published"] == 0
+    assert annotation["monitor_files"] == 1
+    assert annotation["active_attempts"][0]["state"] == "running"
+    assert annotation["active_attempts"][0]["json_lines"] == 3
     assert snapshot["strategy"] == {
         "name": "random",
         "orchestration_mode": "parallel_loops",
