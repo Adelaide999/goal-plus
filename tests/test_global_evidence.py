@@ -13,7 +13,7 @@ from goal_plus.models import (
     SupplementalEvaluation,
 )
 from goal_plus.runtime import (
-    EXTERNAL_EVIDENCE_FILE_ENV,
+    EXTERNAL_EVIDENCE_DIR_ENV,
     FileSearchRuntime,
     SUPPLEMENTAL_EVALUATION_ENABLED_ENV,
 )
@@ -170,8 +170,9 @@ def test_external_evaluation_attaches_only_to_its_exact_evidence(
         agent_session_id=session_id,
         hypothesis="Raise the candidate value",
     )
-    feedback_path = tmp_path / "latest-auto-eval.json"
-    monkeypatch.setenv(EXTERNAL_EVIDENCE_FILE_ENV, str(feedback_path))
+    feedback_path = tmp_path / "evaluations" / "auto-1.json"
+    feedback_path.parent.mkdir()
+    monkeypatch.setenv(EXTERNAL_EVIDENCE_DIR_ENV, str(feedback_path.parent))
     payload = {
         "source": "edgebench",
         "artifact": {
@@ -194,15 +195,14 @@ def test_external_evaluation_attaches_only_to_its_exact_evidence(
     feedback_path.write_text(json.dumps(payload), encoding="utf-8")
 
     [entry] = runtime.get_global_evidence(session_id)
-    assert entry["external_evaluation"] == {
-        **payload["evaluation"],
-        "source": "edgebench",
-    }
+    assert entry["external_evaluations"] == [
+        {**payload["evaluation"], "source": "edgebench"}
+    ]
 
     payload["artifact"]["commit"] = "stale-commit"
     feedback_path.write_text(json.dumps(payload), encoding="utf-8")
     [entry] = runtime.get_global_evidence(session_id)
-    assert "external_evaluation" not in entry
+    assert "external_evaluations" not in entry
 
 
 def test_independent_mode_does_not_leak_external_evaluation_to_peers(
@@ -228,8 +228,9 @@ def test_independent_mode_does_not_leak_external_evaluation_to_peers(
             )
         )
 
-    feedback_path = tmp_path / "latest-auto-eval.json"
-    monkeypatch.setenv(EXTERNAL_EVIDENCE_FILE_ENV, str(feedback_path))
+    feedback_path = tmp_path / "evaluations" / "auto-1.json"
+    feedback_path.parent.mkdir()
+    monkeypatch.setenv(EXTERNAL_EVIDENCE_DIR_ENV, str(feedback_path.parent))
     feedback_path.write_text(
         json.dumps(
             {
@@ -249,8 +250,8 @@ def test_independent_mode_does_not_leak_external_evaluation_to_peers(
 
     first_view = runtime.get_global_evidence(candidates[0][1])
     second_view = runtime.get_global_evidence(candidates[1][1])
-    assert all("external_evaluation" not in entry for entry in first_view)
-    assert second_view[0]["external_evaluation"]["score"] == 42
+    assert all("external_evaluations" not in entry for entry in first_view)
+    assert second_view[0]["external_evaluations"][0]["score"] == 42
 
 
 @pytest.mark.parametrize("mode", ["auto", "independent"])

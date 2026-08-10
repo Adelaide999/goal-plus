@@ -144,7 +144,7 @@ def supplemental_evaluation_required(
         default=False,
         environment=environment,
     )
-EXTERNAL_EVIDENCE_FILE_ENV = "GOAL_PLUS_EXTERNAL_EVIDENCE_FILE"
+EXTERNAL_EVIDENCE_DIR_ENV = "GOAL_PLUS_EXTERNAL_EVIDENCE_DIR"
 MAX_EXTERNAL_EVIDENCE_BYTES = 256 * 1024
 
 
@@ -1760,7 +1760,7 @@ class FileSearchRuntime:
             )
             run = self._load_run(session.run_id)
             view = self._global_evidence_view(session.run_id)
-            self._attach_external_evaluation(session.run_id, view)
+            self.attach_external_evaluations(session.run_id, view)
             frozen = self._load_frozen_spec(run.frozen_spec_id)
             mode = self._global_evidence_mode(frozen.spec.strategy.config)
             if mode == "independent":
@@ -5800,42 +5800,62 @@ class FileSearchRuntime:
         return result
 
     @staticmethod
-    def _attach_external_evaluation(
+    def attach_external_evaluations(
         run_id: str,
         evidence: list[dict[str, Any]],
     ) -> None:
-        path_value = os.environ.get(EXTERNAL_EVIDENCE_FILE_ENV)
-        if not path_value:
+        directory_value = os.environ.get(EXTERNAL_EVIDENCE_DIR_ENV)
+        if not directory_value:
             return
-        path = Path(path_value)
         try:
-            if path.stat().st_size > MAX_EXTERNAL_EVIDENCE_BYTES:
-                return
-            payload = load_json(path)
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+            paths = sorted(
+                path
+                for path in Path(directory_value).glob("*.json")
+                if not path.name.startswith(".") and path.is_file()
+            )
+        except OSError:
             return
-        if not isinstance(payload, dict):
-            return
-        artifact = payload.get("artifact")
-        evaluation = payload.get("evaluation")
-        if (
-            not isinstance(artifact, dict)
-            or artifact.get("source") != "goal_plus_best"
-            or artifact.get("run_id") != run_id
-            or not isinstance(evaluation, dict)
-        ):
-            return
-        for entry in evidence:
+        for path in paths:
+            try:
+                if path.stat().st_size > MAX_EXTERNAL_EVIDENCE_BYTES:
+                    continue
+                payload = load_json(path)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            artifact = payload.get("artifact")
+            evaluation = payload.get("evaluation")
             if (
-                entry["candidate_id"] == artifact.get("candidate_id")
-                and entry["iteration"] == artifact.get("iteration")
-                and entry["commit"] == artifact.get("commit")
+                not isinstance(artifact, dict)
+                or artifact.get("source") != "goal_plus_best"
+                or artifact.get("run_id") != run_id
+                or not isinstance(evaluation, dict)
             ):
-                external = dict(evaluation)
-                source = payload.get("source")
-                external["source"] = source if isinstance(source, str) else "external"
-                entry["external_evaluation"] = external
-                return
+                continue
+            for entry in evidence:
+                if (
+                    entry.get("candidate_id") == artifact.get("candidate_id")
+                    and entry.get("iteration") == artifact.get("iteration")
+                    and (entry.get("commit") or entry.get("git_head"))
+                    == artifact.get("commit")
+                ):
+                    external = dict(evaluation)
+                    source = payload.get("source")
+                    external["source"] = (
+                        source if isinstance(source, str) else "external"
+                    )
+                    entry.setdefault("external_evaluations", []).append(external)
+                    break
+        for entry in evidence:
+            evaluations = entry.get("external_evaluations")
+            if isinstance(evaluations, list):
+                evaluations.sort(
+                    key=lambda item: (
+                        str(item.get("published_at") or ""),
+                        str(item.get("round_id") or ""),
+                    )
+                )
 
     def _pending_evidence_annotations(
         self,
