@@ -330,9 +330,10 @@ candidate-local history 由运行时拥有，不是本地 plan 文件。worker �
 也不 checkout/reset peer commit。worker verifier 用一句话 `hypothesis` 客观概括本轮实际
 尝试。运行时校验工作区根目录
 `results.tsv`，为每份返回报告追加且只追加一条记录，并提交账本。worker 绝不直接编辑它。
-process verifier 同时返回 candidate-local `disposition`：严格改善为 `keep`，同分或退化
-为 `discard`，无有效排名证据为 `failure`。runtime 保留实际被测 commit，并在
-`discard`/`failure` 后恢复 candidate best；worker 不得自行 reset verifier-backed 状态。
+process verifier 同时返回 candidate-local `disposition`：严格改善为 `keep`，同分为
+`retain` 并成为最新工作基线，退化为 `discard`，无有效排名证据为 `failure`。runtime
+保留实际被测 commit，并只在 `discard`/`failure` 后恢复 candidate best；worker 不得
+自行 reset verifier-backed 状态。
 如果 worker 提供 handoff，后续 iteration history 会包含最新结构化 `research_summary`；
 应使用其中任务特定的结果和问题，避免重复失败变体。
 

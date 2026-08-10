@@ -220,7 +220,7 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     assert "固定产物数量" in text
     assert "理论或结构限制" in text
     assert "公开指标饱和" in text
-    assert "同分或回滚的 Evidence 仍有信息价值" in text
+    assert "同分保留或回滚的 Evidence 仍有信息价值" in text
     assert "10-15 distinct verifier-recorded artifacts" not in text
     assert "verifier 是评估器，不是分析服务" in text
     assert (

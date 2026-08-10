@@ -2019,7 +2019,7 @@ class FileSearchRuntime:
             )
             iteration.disposition = disposition
 
-            if disposition == "keep":
+            if disposition in {"keep", "retain"}:
                 best_iteration = iteration
             else:
                 target = (
@@ -3132,7 +3132,7 @@ class FileSearchRuntime:
             "把 context.agent_session_id 传给 search_run_verifier，并省略 scope 以使用 process verifier；同时用一句话 hypothesis 客观概括本轮实际尝试。",
             "每次 run_verifier 调用都会记录一个 iteration。在配置的 host 预算内工作。尽早完成并验证候选，在达到限制前停止启动新的优化 iteration，并留出足够时间返回简洁摘要。",
             "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
-            "process verifier 返回 keep/discard/failure disposition；非严格改善或验证失败时，runtime 会保留被测 commit 并把候选代码恢复到 candidate-local best。下一轮直接从返回后的已结算工作区继续。",
+            "process verifier 返回 keep/retain/discard/failure disposition；严格硬分改善为 keep，同分为 retain 并成为 candidate-local 最新基线，只有退化或验证失败时 runtime 才恢复此前硬分最佳。下一轮直接从返回后的已结算工作区继续。",
             "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
             "Global Evidence 展示 peer 的 verifier commit、分数、disposition 和可能延迟的客观 View。view=null 只表示 annotator 尚未更新；可先按自己的方向探索。只有代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
         ]
@@ -4167,7 +4167,11 @@ class FileSearchRuntime:
             if metric_direction == "maximize"
             else iteration.score < prior_best.score
         )
-        return "keep" if improved else "discard"
+        if improved:
+            return "keep"
+        if iteration.score == prior_best.score:
+            return "retain"
+        return "discard"
 
     def _best_current_artifact_iteration(
         self,
@@ -4189,12 +4193,15 @@ class FileSearchRuntime:
             and iteration.artifact_hash == current_artifact_hash
             and not iteration.touched_denied_files
             and not iteration.changed_outside_allowed
+            and iteration.disposition not in {"discard", "failure"}
         ]
         if not selectable:
             return None
         reverse = metric_direction == "maximize"
         return sorted(
-            selectable, key=lambda iteration: iteration.score, reverse=reverse
+            reversed(selectable),
+            key=lambda iteration: iteration.score,
+            reverse=reverse,
         )[0]
 
     def _best_iteration_record(
@@ -4209,12 +4216,15 @@ class FileSearchRuntime:
             and iteration.score is not None
             and not iteration.touched_denied_files
             and not iteration.changed_outside_allowed
+            and iteration.disposition not in {"discard", "failure"}
         ]
         if not scored:
             return None
         reverse = metric_direction == "maximize"
         return sorted(
-            scored, key=lambda iteration: iteration.score, reverse=reverse
+            reversed(scored),
+            key=lambda iteration: iteration.score,
+            reverse=reverse,
         )[0]
 
     def _best_git_iteration_record(
@@ -4226,12 +4236,15 @@ class FileSearchRuntime:
             iteration
             for iteration in record.iterations
             if self._git_iteration_eligible(iteration)
+            and iteration.disposition not in {"discard", "failure"}
         ]
         if not scored:
             return None
         reverse = metric_direction == "maximize"
         return sorted(
-            scored, key=lambda iteration: iteration.score, reverse=reverse
+            reversed(scored),
+            key=lambda iteration: iteration.score,
+            reverse=reverse,
         )[0]
 
     def _selection_options(
@@ -4249,12 +4262,13 @@ class FileSearchRuntime:
                 record.task.workspace, current_changed
             )
             report_is_represented = False
-            for iteration in record.iterations:
+            for iteration in reversed(record.iterations):
                 if (
                     iteration.process_passed is not True
                     or iteration.score is None
                     or iteration.touched_denied_files
                     or iteration.changed_outside_allowed
+                    or iteration.disposition in {"discard", "failure"}
                 ):
                     continue
                 if iteration.git_head and iteration.git_artifact_clean is True:

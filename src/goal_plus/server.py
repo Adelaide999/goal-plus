@@ -243,7 +243,7 @@ def create_mcp(
     ) -> list[dict[str, Any]]:
         """返回当前 run 的窄 Global Evidence 视图。
 
-        每项只包含 candidate_id、iteration、score、keep/discard/failure disposition、
+        每项只包含 candidate_id、iteration、score、keep/retain/discard/failure disposition、
         verifier attempt commit 和可能延迟的客观 View。`view=null` 表示 annotator 尚未
         更新；worker 不需要等待，可先依据 Evidence 独立探索，必要时再通过 commit 做
         只读 Git 比较。
