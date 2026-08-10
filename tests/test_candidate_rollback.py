@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -109,6 +110,25 @@ def test_process_verifier_settles_workspace_to_candidate_best(
     ]
     assert all(iteration.git_head for iteration in record.iterations)
     assert record.iterations[-1].process_passed is False
+    best = json.loads(
+        (runtime.root_dir / "runs" / run_id / "best.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert best == {
+        "artifact_hash": record.iterations[3].artifact_hash,
+        "candidate_id": candidate_id,
+        "changed_files": ["initial_program.py"],
+        "commit": record.iterations[3].git_head,
+        "iteration": 4,
+        "metric_direction": direction,
+        "metric_name": "combined_score",
+        "run_id": run_id,
+        "schema_version": 1,
+        "score": scores["equal"],
+        "updated_at": record.iterations[3].created_at,
+        "workspace": f"workspace/{candidate_id}",
+    }
     history = runtime.list_history(run_id, top_n=1)["candidates"][0]
     assert history["best_iteration"] == 4
     assert history["latest_disposition"] == "failure"
@@ -147,6 +167,59 @@ def test_process_verifier_settles_workspace_to_candidate_best(
     )
     messages = _git(workspace, "log", "--format=%s").splitlines()
     assert sum(message.startswith("goal-plus restore") for message in messages) == 2
+
+
+def test_latest_run_level_equal_score_becomes_best(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = make_project(tmp_path)
+    spec = spec_for(project, max_parallel=2)
+    runtime = FileSearchRuntime(tmp_path / ".gp")
+    frozen = runtime.freeze_spec(spec, [project / "evaluator.py"])
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    plan = runtime.plan_next(run_id, requested_k=2)
+    tasks = runtime.start_batch(run_id, plan.plan_id)
+    monkeypatch.setattr(
+        runtime,
+        "_execute_verifier_process",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, '{"combined_score": 1}\n', ""
+        ),
+    )
+
+    reports = []
+    for task in tasks:
+        session = runtime.start_agent_session(run_id, task.candidate_id)
+        (task.workspace / "initial_program.py").write_text(
+            f"VALUE = {task.candidate_id!r}\n",
+            encoding="utf-8",
+        )
+        reports.append(
+            runtime.run_verifier(
+                run_id,
+                task.candidate_id,
+                agent_session_id=session.agent_session_id,
+                hypothesis=f"try {task.candidate_id}",
+            )
+        )
+
+    best = json.loads(
+        (runtime.root_dir / "runs" / run_id / "best.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert best["candidate_id"] == tasks[1].candidate_id
+    assert best["commit"] == reports[1].best_git_head
+    assert runtime.status(run_id).best_candidate_id == tasks[1].candidate_id
+    assert runtime.select(run_id)["selected_candidate_id"] == tasks[1].candidate_id
+    selected_best = json.loads(
+        (runtime.root_dir / "runs" / run_id / "best.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert selected_best["candidate_id"] == tasks[1].candidate_id
+    assert selected_best["commit"] == reports[1].best_git_head
 
 
 def test_first_failed_iteration_restores_pre_attempt_workspace(
@@ -208,6 +281,13 @@ def test_select_and_promote_keep_all_iteration_commits_reachable(
     assert selected["selected_iteration"] == 3
     assert selected["selected_score"] == 2.0
     assert program.read_text(encoding="utf-8") == "VALUE = 'equal'\n"
+    selected_best = json.loads(
+        (runtime.root_dir / "runs" / run_id / "best.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert selected_best["iteration"] == selected["selected_iteration"]
+    assert selected_best["commit"] == selected["selected_git_head"]
     runtime.promote(run_id, candidate_id)
 
     record = runtime._load_candidate_record(run_id, candidate_id)

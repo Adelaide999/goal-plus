@@ -13,6 +13,7 @@ from goal_plus.models import (
     SupplementalEvaluation,
 )
 from goal_plus.runtime import (
+    EXTERNAL_EVIDENCE_DIR_ENV,
     FileSearchRuntime,
     SUPPLEMENTAL_EVALUATION_ENABLED_ENV,
 )
@@ -154,6 +155,103 @@ def test_global_evidence_is_immediate_and_view_is_late_bound(tmp_path: Path) -> 
         check=True,
     )
     assert _git(first[2], "show", f"{peer_commit}:initial_program.py") == "VALUE = 2"
+
+
+def test_external_evaluation_attaches_only_to_its_exact_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, run_id, [candidate] = _search_with_candidates(tmp_path, 1)
+    candidate_id, session_id, workspace = candidate
+    (workspace / "initial_program.py").write_text("VALUE = 3\n", encoding="utf-8")
+    report = runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Raise the candidate value",
+    )
+    feedback_path = tmp_path / "evaluations" / "auto-1.json"
+    feedback_path.parent.mkdir()
+    monkeypatch.setenv(EXTERNAL_EVIDENCE_DIR_ENV, str(feedback_path.parent))
+    payload = {
+        "source": "edgebench",
+        "artifact": {
+            "source": "goal_plus_best",
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "iteration": report.best_iteration,
+            "commit": report.best_git_head,
+            "local_score": 3.0,
+        },
+        "evaluation": {
+            "round_id": "auto-1",
+            "status": "completed",
+            "valid": True,
+            "score": 42,
+            "score_0_100": 73.5,
+            "summary": "Official evaluation completed",
+        },
+    }
+    feedback_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    [entry] = runtime.get_global_evidence(session_id)
+    assert entry["external_evaluations"] == [
+        {**payload["evaluation"], "source": "edgebench"}
+    ]
+
+    payload["artifact"]["commit"] = "stale-commit"
+    feedback_path.write_text(json.dumps(payload), encoding="utf-8")
+    [entry] = runtime.get_global_evidence(session_id)
+    assert "external_evaluations" not in entry
+
+
+def test_independent_mode_does_not_leak_external_evaluation_to_peers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, run_id, candidates = _search_with_candidates(
+        tmp_path,
+        2,
+        strategy_updates={"config": {"global_evidence_mode": "independent"}},
+    )
+    reports = []
+    for candidate_id, session_id, workspace in candidates:
+        (workspace / "initial_program.py").write_text(
+            "VALUE = 1\n", encoding="utf-8"
+        )
+        reports.append(
+            runtime.run_verifier(
+                run_id,
+                candidate_id,
+                agent_session_id=session_id,
+                hypothesis="Set the candidate value",
+            )
+        )
+
+    feedback_path = tmp_path / "evaluations" / "auto-1.json"
+    feedback_path.parent.mkdir()
+    monkeypatch.setenv(EXTERNAL_EVIDENCE_DIR_ENV, str(feedback_path.parent))
+    feedback_path.write_text(
+        json.dumps(
+            {
+                "source": "edgebench",
+                "artifact": {
+                    "source": "goal_plus_best",
+                    "run_id": run_id,
+                    "candidate_id": candidates[1][0],
+                    "iteration": reports[1].best_iteration,
+                    "commit": reports[1].best_git_head,
+                },
+                "evaluation": {"round_id": "auto-1", "score": 42},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    first_view = runtime.get_global_evidence(candidates[0][1])
+    second_view = runtime.get_global_evidence(candidates[1][1])
+    assert all("external_evaluations" not in entry for entry in first_view)
+    assert second_view[0]["external_evaluations"][0]["score"] == 42
 
 
 @pytest.mark.parametrize("mode", ["auto", "independent"])

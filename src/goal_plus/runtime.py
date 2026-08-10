@@ -36,6 +36,7 @@ from goal_plus.agent_hosts import (
 from goal_plus.models import (
     AgentHostHandle,
     AgentSessionRecord,
+    BestArtifactRecord,
     CandidateRecord,
     CandidateProposal,
     CandidateTask,
@@ -144,6 +145,8 @@ def supplemental_evaluation_required(
         default=False,
         environment=environment,
     )
+EXTERNAL_EVIDENCE_DIR_ENV = "GOAL_PLUS_EXTERNAL_EVIDENCE_DIR"
+MAX_EXTERNAL_EVIDENCE_BYTES = 256 * 1024
 
 
 @dataclass(frozen=True)
@@ -1758,6 +1761,7 @@ class FileSearchRuntime:
             )
             run = self._load_run(session.run_id)
             view = self._global_evidence_view(session.run_id)
+            self.attach_external_evaluations(session.run_id, view)
             frozen = self._load_frozen_spec(run.frozen_spec_id)
             mode = self._global_evidence_mode(frozen.spec.strategy.config)
             if mode == "independent":
@@ -2209,7 +2213,10 @@ class FileSearchRuntime:
                     # Explanatory Views never invalidate settled verifier Evidence.
                     pass
 
-            self._update_best_seen(run, frozen.spec, report)
+            if self._update_best_seen(run, frozen.spec, report):
+                if best_iteration is None:
+                    raise RuntimeError("run best has no verifier-backed iteration")
+                self._write_best_artifact(run, frozen.spec, record, best_iteration)
             run.candidates_evaluated = len(
                 [
                     item
@@ -2261,8 +2268,15 @@ class FileSearchRuntime:
             )
             raise RuntimeError("no verified candidates available for selection")
 
-        reverse = frozen.spec.metric_direction == "maximize"
-        ranked = sorted(options, key=lambda item: item[0], reverse=reverse)
+        maximize = frozen.spec.metric_direction == "maximize"
+        ranked = sorted(
+            options,
+            key=lambda item: (
+                item[0] if maximize else -item[0],
+                item[1].candidate_id == run.best_candidate_id,
+            ),
+            reverse=True,
+        )
         selected_score: float | None = None
         selected_record: CandidateRecord | None = None
         selected_iteration: int | None = None
@@ -2342,13 +2356,26 @@ class FileSearchRuntime:
             run.selected_git_head = selected_git_head
             run.selected_artifact_hash = selected_artifact_hash
             run.budget_used.pop("selection_blocked_reason", None)
-            self._write_run(run)
             selected_record = self._load_candidate_record(
                 run_id, selected_record.candidate_id
             )
+            selected_best = next(
+                (
+                    iteration
+                    for iteration in selected_record.iterations
+                    if iteration.iteration == selected_iteration
+                    and iteration.git_head == selected_git_head
+                    and self._git_iteration_eligible(iteration)
+                ),
+                None,
+            )
+            if selected_best is None:
+                raise RuntimeError("selected candidate has no exact best iteration")
+            self._write_best_artifact(run, frozen.spec, selected_record, selected_best)
             selected_record.promotion_report = None
             selected_record.promotion_evidence = None
             self._write_candidate_record(run_id, selected_record)
+            self._write_run(run)
         return {
             "selected_candidate_id": selected_record.candidate_id,
             "selected_score": selected_score,
@@ -4224,21 +4251,57 @@ class FileSearchRuntime:
                 return score
         return None
 
-    def _update_best_seen(self, run: RunRecord, spec: SearchSpec, report: ScoreReport) -> None:
-        if not report.process_passed or report.aggregate_score is None:
-            return
-        if run.best_score is None:
-            run.best_score = report.aggregate_score
-            run.best_candidate_id = report.candidate_id
-            return
-        is_better = (
-            report.aggregate_score > run.best_score
+    def _update_best_seen(
+        self,
+        run: RunRecord,
+        spec: SearchSpec,
+        report: ScoreReport,
+    ) -> bool:
+        if (
+            report.disposition not in {"keep", "retain"}
+            or report.aggregate_score is None
+        ):
+            return False
+        is_best = run.best_score is None or (
+            report.aggregate_score >= run.best_score
             if spec.metric_direction == "maximize"
-            else report.aggregate_score < run.best_score
+            else report.aggregate_score <= run.best_score
         )
-        if is_better:
-            run.best_score = report.aggregate_score
-            run.best_candidate_id = report.candidate_id
+        if not is_best:
+            return False
+        run.best_score = report.aggregate_score
+        run.best_candidate_id = report.candidate_id
+        return True
+
+    def _write_best_artifact(
+        self,
+        run: RunRecord,
+        spec: SearchSpec,
+        record: CandidateRecord,
+        iteration: IterationRecord,
+    ) -> None:
+        if not self._git_iteration_eligible(iteration) or not iteration.artifact_hash:
+            raise RuntimeError("run best iteration is not Git-backed")
+        workspace = record.task.workspace.resolve().relative_to(
+            self._run_dir(run.run_id).resolve()
+        )
+        best = BestArtifactRecord(
+            run_id=run.run_id,
+            candidate_id=record.candidate_id,
+            iteration=iteration.iteration,
+            commit=str(iteration.git_head),
+            score=float(iteration.score),
+            metric_name=spec.metric_name,
+            metric_direction=spec.metric_direction,
+            artifact_hash=str(iteration.artifact_hash),
+            workspace=workspace.as_posix(),
+            changed_files=iteration.changed_files,
+            updated_at=iteration.created_at,
+        )
+        write_json(
+            self._run_dir(run.run_id) / "best.json",
+            best.model_dump(mode="json"),
+        )
 
     @staticmethod
     def _git_iteration_eligible(iteration: IterationRecord) -> bool:
@@ -5795,6 +5858,64 @@ class FileSearchRuntime:
                 self._global_evidence_entry(candidate_id, iteration, view)
             )
         return result
+
+    @staticmethod
+    def attach_external_evaluations(
+        run_id: str,
+        evidence: list[dict[str, Any]],
+    ) -> None:
+        directory_value = os.environ.get(EXTERNAL_EVIDENCE_DIR_ENV)
+        if not directory_value:
+            return
+        try:
+            paths = sorted(
+                path
+                for path in Path(directory_value).glob("*.json")
+                if not path.name.startswith(".") and path.is_file()
+            )
+        except OSError:
+            return
+        for path in paths:
+            try:
+                if path.stat().st_size > MAX_EXTERNAL_EVIDENCE_BYTES:
+                    continue
+                payload = load_json(path)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            artifact = payload.get("artifact")
+            evaluation = payload.get("evaluation")
+            if (
+                not isinstance(artifact, dict)
+                or artifact.get("source") != "goal_plus_best"
+                or artifact.get("run_id") != run_id
+                or not isinstance(evaluation, dict)
+            ):
+                continue
+            for entry in evidence:
+                if (
+                    entry.get("candidate_id") == artifact.get("candidate_id")
+                    and entry.get("iteration") == artifact.get("iteration")
+                    and (entry.get("commit") or entry.get("git_head"))
+                    == artifact.get("commit")
+                ):
+                    external = dict(evaluation)
+                    source = payload.get("source")
+                    external["source"] = (
+                        source if isinstance(source, str) else "external"
+                    )
+                    entry.setdefault("external_evaluations", []).append(external)
+                    break
+        for entry in evidence:
+            evaluations = entry.get("external_evaluations")
+            if isinstance(evaluations, list):
+                evaluations.sort(
+                    key=lambda item: (
+                        str(item.get("published_at") or ""),
+                        str(item.get("round_id") or ""),
+                    )
+                )
 
     def _pending_evidence_annotations(
         self,

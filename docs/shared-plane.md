@@ -175,6 +175,14 @@ Global Evidence 只包含 worker 的 process-verifier 尝试。parent fallback v
 与 promotion verification 不会成为 peer Evidence。视图也不会暴露 peer transcript、
 私有推理、annotation 内部任务状态或 peer 工作区路径。
 
+EdgeBench 的 Goal Plus 模式默认通过 `GOAL_PLUS_EXTERNAL_EVIDENCE_DIR` 提供按轮保存
+的外部评测附件；将该变量显式设为空字符串可关闭。Runtime 仅在其中的 `run_id`、
+`candidate_id`、`iteration` 和 `commit` 与既有
+process-verifier Evidence 完全一致时，将记录附加到该条目的 `external_evaluations`；
+它不创建 iteration、不参与本地排名，也不成为第二份历史账本。未配置、记录不完整或
+身份不匹配时，Global Evidence 行为不变。附件仍服从 `manual`、`auto` 和 `independent`
+三种可见性模式。
+
 ## 客观 View 与开放式补充评价
 
 `view` 是绑定到准确 Evidence identity 的异步、不可变、best-effort annotation。后台
@@ -288,6 +296,7 @@ run。可以继承有界研究上下文，但不能继承旧分数或把旧 Evid
   specs/<frozen_spec_id>/
   runs/<run_id>/
     run.json
+    best.json
     plans/<initial-plan-id>.json
     candidates/<candidate_id>/
       candidate.json
@@ -302,6 +311,8 @@ run。可以继承有界研究上下文，但不能继承旧分数或把旧 Evid
 
 `candidate.json` 中的 iteration record 是 Evidence 的事实来源。Annotation task 保存
 可选 View 及其执行状态。Global Evidence 在读取时即时投影，不是第二份可写共享账本。
+`best.json` 是当前 run 最优 verifier commit 的权威原子指针；严格改善或同分时更新，
+退化和失败不会覆盖它。同分 candidate 按最后完成结算的有效 commit 决定。
 
 ## 核心不变量
 

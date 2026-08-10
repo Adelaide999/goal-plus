@@ -30,7 +30,11 @@ from goal_plus.reporting import (
     render_report_document,
     write_html_report,
 )
-from goal_plus.runtime import FileSearchRuntime, write_json
+from goal_plus.runtime import (
+    EXTERNAL_EVIDENCE_DIR_ENV,
+    FileSearchRuntime,
+    write_json,
+)
 
 from tests._runtime_helpers import make_project, spec_for
 
@@ -365,6 +369,55 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
         created_at="2026-01-01T00:00:01Z",
     )
     search._write_evidence_annotation_task(annotation)
+    external_evidence = tmp_path / "evaluations" / "auto-1.json"
+    external_evidence.parent.mkdir()
+    write_json(
+        external_evidence,
+        {
+            "source": "edgebench",
+            "artifact": {
+                "source": "goal_plus_best",
+                "run_id": second_run,
+                "candidate_id": candidate.candidate_id,
+                "iteration": 1,
+                "commit": annotation.attempt_commit,
+            },
+            "evaluation": {
+                "authority": "edgebench_official_hidden_judge",
+                "round_id": "auto-1",
+                "status": "completed",
+                "valid": True,
+                "score": 42,
+                "score_0_100": 73.5,
+                "published_at": "2026-01-01T00:02:00Z",
+                "summary": "Official <hidden> result.",
+            },
+        },
+    )
+    write_json(
+        external_evidence.with_name("auto-2.json"),
+        {
+            "source": "edgebench",
+            "artifact": {
+                "source": "goal_plus_best",
+                "run_id": second_run,
+                "candidate_id": candidate.candidate_id,
+                "iteration": 1,
+                "commit": annotation.attempt_commit,
+            },
+            "evaluation": {
+                "authority": "edgebench_official_hidden_judge",
+                "round_id": "auto-2",
+                "status": "completed",
+                "valid": True,
+                "score": 43,
+                "score_0_100": 74.5,
+                "published_at": "2026-01-01T00:03:00Z",
+                "summary": "Second official result.",
+            },
+        },
+    )
+    monkeypatch.setenv(EXTERNAL_EVIDENCE_DIR_ENV, str(external_evidence.parent))
     write_json(
         root / monitor_relative,
         {
@@ -479,6 +532,14 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
     assert "Shared Evidence View" in html
     assert "Settled iterations" in html
     assert "Views published" in html
+    assert "Official evaluations" in html
+    assert "<strong>2</strong>Official evaluations" in html
+    assert "Official Judge evaluation" in html
+    assert "73.5" in html
+    assert "74.5" in html
+    assert "official / 100" in html
+    assert "Official &lt;hidden&gt; result." in html
+    assert "Official <hidden> result." not in html
     assert "Worker attempt" in html
     assert "Objective View" in html
     assert "Exercise the durable timeline" in html
@@ -516,6 +577,12 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
     assert reported_iteration["view_state"] == "completed"
     assert reported_iteration["annotation_monitor"]["state"] == "completed"
     assert reported_iteration["annotation_monitor"]["json_lines"] == 4
+    assert len(reported_iteration["external_evaluations"]) == 2
+    assert reported_iteration["external_evaluations"][0]["authority"] == (
+        "edgebench_official_hidden_judge"
+    )
+    assert reported_iteration["external_evaluations"][0]["score_0_100"] == 73.5
+    assert reported_iteration["external_evaluations"][1]["score_0_100"] == 74.5
     hook_stats = report_data["stop_hook_statistics"]
     assert hook_stats["events_total"] == 4
     assert hook_stats["by_event"]["Stop"]["events_total"] == 1

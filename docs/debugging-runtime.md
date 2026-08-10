@@ -281,6 +281,7 @@ guard events, stop continuation messages, and `.gp/goal-plus/...`.
 │   └── verifier_artifacts/<path>                 # frozen verifier files (hash-pinned)
 └── runs/<run_id>/
     ├── run.json                                  # RunRecord: state, candidates_total/evaluated, best
+    ├── best.json                                 # exact current best candidate/iteration/commit pointer
     ├── plans/<plan_id>.json                      # one initial SearchPlan allocation
     ├── candidates/<candidate_id>/
     │   ├── candidate.json                        # CandidateRecord: status, score_report, iterations[], results_ledger[]
