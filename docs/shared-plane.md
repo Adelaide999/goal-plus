@@ -167,7 +167,8 @@ verifier 会同步发布 `candidate_id`、`iteration`、`commit`、`score` 和
 `disposition`。`disposition` 取值为：
 
 - `keep`：尝试有效，并且严格改善该 candidate 的历史最佳；
-- `discard`：尝试有效但没有严格改善；
+- `retain`：尝试有效、硬分同分，并成为该 candidate 的最新工作基线；
+- `discard`：尝试有效，但分数更差；
 - `failure`：尝试未产生可用于排名的 verifier Evidence。
 
 Global Evidence 只包含 worker 的 process-verifier 尝试。parent fallback verification
@@ -237,12 +238,14 @@ Runtime 会在验证前提交所有 candidate-controlled 修改，并要求 arti
 干净。candidate 可以包含多个手工 commit；annotation 使用完整
 `settled-base..attempt` 范围，而不是只查看最后一个 commit。
 
-每次 process-verifier 尝试都会永久保留。只有严格改善才更新 candidate-local best。
-`discard` 或 `failure` 时，Runtime 会先把代码恢复到此前最佳版本，再追加不可变的
+每次 process-verifier 尝试都会永久保留。严格改善和同分分别以 `keep`、`retain` 更新
+candidate-local 最新最佳。只有 `discard` 或 `failure` 时，Runtime 才把代码恢复到此前
+最佳版本，再追加不可变的
 `results.tsv` ledger：
 
 ```text
 keep:     settled -> attempt -> ledger
+retain:   settled -> equal-score attempt -> ledger
 discard:  settled -> attempt -> restore-best -> ledger
 ```
 
@@ -304,7 +307,7 @@ run。可以继承有界研究上下文，但不能继承旧分数或把旧 Evid
 
 - 并行工作开始前，先冻结 verifier 与编辑策略。
 - 隔离可写 candidate 工作区，只共享持久化事实和 Git object。
-- 只有 verifier-backed 严格改善才能成为新 run 的 candidate-local 工作基线。
+- verifier-backed 严格改善或同分最新版本才能成为 candidate-local best。
 - 回滚、选择和 promotion 后，所有精确 attempt 仍可审计。
 - 客观 View 和开放式补充评价都可以延迟，但不能阻塞优化或改变最终硬验收。
 - worker 生命周期和原生 transcript 不进入 Search runtime 状态。

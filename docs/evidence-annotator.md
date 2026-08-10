@@ -32,7 +32,7 @@ Evidence，也不会创建 View。
 ```text
 candidate 调用 search_run_verifier
   -> runtime 提交并验证准确 attempt Git tree
-  -> runtime 结算 keep / discard / failure 和 candidate-local rollback
+  -> runtime 结算 keep / retain / discard / failure 和 candidate-local rollback
   -> runtime 固化 EvidenceAnnotationTask
   -> run-scoped single-flight drainer 串行领取 task
   -> 从 settled base..attempt commit 构造完整实际 diff

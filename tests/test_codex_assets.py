@@ -236,6 +236,8 @@ def test_codex_worker_records_progress_handoff_before_returning() -> None:
     assert "立即返回" in text
     assert "不要自行 reset" in text
     assert "disposition" in text
+    assert "同分为 `retain`" in text
+    assert "candidate-local\n最新基线" in text
     assert "verifier_assessment" in text
     assert "code_surface" in text
     assert "measured_effect" in text
