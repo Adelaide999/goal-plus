@@ -175,6 +175,13 @@ Global Evidence 只包含 worker 的 process-verifier 尝试。parent fallback v
 与 promotion verification 不会成为 peer Evidence。视图也不会暴露 peer transcript、
 私有推理、annotation 内部任务状态或 peer 工作区路径。
 
+宿主可以通过 `GOAL_PLUS_EXTERNAL_EVIDENCE_FILE` 提供最新一次外部评测附件。
+Runtime 仅在其中的 `run_id`、`candidate_id`、`iteration` 和 `commit` 与既有
+process-verifier Evidence 完全一致时，将 `external_evaluation` 附加到该条目；它不
+创建 iteration、不参与本地排名，也不成为第二份历史账本。未配置、文件不完整或身份
+不匹配时，Global Evidence 行为不变。附件仍服从 `manual`、`auto` 和 `independent`
+三种可见性模式。
+
 ## 客观 View 与开放式补充评价
 
 `view` 是绑定到准确 Evidence identity 的异步、不可变、best-effort annotation。后台
