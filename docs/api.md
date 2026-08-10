@@ -121,6 +121,13 @@ Snapshot failures add `global_evidence_warning` without changing the successful
 verifier result. `GOAL_PLUS_GLOBAL_EVIDENCE_MODE` can supply the mode before
 freeze; the effective value is persisted in the frozen spec, and a conflicting
 explicit `strategy.config.global_evidence_mode` is rejected.
+
+Every call persists a `global_evidence_reads` entry on the calling agent
+session. The entry records the read timestamp and exact completed
+candidate/iteration/commit View references visible at that moment, so reports
+can distinguish a View published after the last verifier from one available
+before a later attempt. These receipts are observational and never affect
+settlement, selection, promotion, or hard PASS/FAIL.
 Each worker settlement snapshots the exact attempt base/head, worker host, and
 resolved annotator model/provider into an internal task. Codex runs annotations
 through ephemeral `codex exec`; Pi runs them through ephemeral, tool-free
@@ -173,7 +180,7 @@ and `confidence`. Missing scope defaults to candidate-local. A worker's
 
 | Tool | Purpose |
 |---|---|
-| `search_run_verifier` | commit and verify the exact attempt, return candidate-local `keep`/`discard`/`failure`, restore best code after non-improvements, then append exactly one inherited `workspace/results.tsv` row; worker calls pass the exact `run_id`, `candidate_id`, `agent_session_id`, and an objective `hypothesis`, while parent fallback verification omits the session id and does not require a hypothesis |
+| `search_run_verifier` | commit and verify the exact attempt, return candidate-local `keep`/`retain`/`discard`/`failure`, keep the latest equal-score attempt, restore best code after regressions or verifier failures, then append exactly one inherited `workspace/results.tsv` row; worker calls pass the exact `run_id`, `candidate_id`, `agent_session_id`, and an objective `hypothesis`, while parent fallback verification omits the session id and does not require a hypothesis |
 | `search_select` | restore ranked commits and select the first final-verifier passing state |
 | `search_report` | generate final `report.md` and self-contained `report.html`; linked Goal Plus records must already be terminal |
 | `search_promote` | export the selected commit as a patch; normal Goal Plus flow has no report to refresh yet |
