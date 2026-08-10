@@ -74,8 +74,8 @@ def test_process_verifier_settles_workspace_to_candidate_best(
         "seed": "seed",
         "improved": "improved",
         "worse": "improved",
-        "equal": "improved",
-        "broken": "improved",
+        "equal": "equal",
+        "broken": "equal",
     }
     for value in ("seed", "improved", "worse", "equal", "broken"):
         program.write_text(f"VALUE = {value!r}\n", encoding="utf-8")
@@ -94,23 +94,23 @@ def test_process_verifier_settles_workspace_to_candidate_best(
         "keep",
         "keep",
         "discard",
-        "discard",
+        "retain",
         "failure",
     ]
-    assert [report.best_iteration for report in reports] == [1, 2, 2, 2, 2]
+    assert [report.best_iteration for report in reports] == [1, 2, 2, 4, 4]
 
     record = runtime._load_candidate_record(run_id, candidate_id)
     assert [iteration.disposition for iteration in record.iterations] == [
         "keep",
         "keep",
         "discard",
-        "discard",
+        "retain",
         "failure",
     ]
     assert all(iteration.git_head for iteration in record.iterations)
     assert record.iterations[-1].process_passed is False
     history = runtime.list_history(run_id, top_n=1)["candidates"][0]
-    assert history["best_iteration"] == 2
+    assert history["best_iteration"] == 4
     assert history["latest_disposition"] == "failure"
     assert (
         history["workspace_git_head_after_settlement"] == record.results_ledger_git_head
@@ -146,7 +146,7 @@ def test_process_verifier_settles_workspace_to_candidate_best(
         == ""
     )
     messages = _git(workspace, "log", "--format=%s").splitlines()
-    assert sum(message.startswith("goal-plus restore") for message in messages) == 3
+    assert sum(message.startswith("goal-plus restore") for message in messages) == 2
 
 
 def test_first_failed_iteration_restores_pre_attempt_workspace(
@@ -204,10 +204,19 @@ def test_select_and_promote_keep_all_iteration_commits_reachable(
         program.write_text(f"VALUE = {value!r}\n", encoding="utf-8")
         runtime.run_verifier(run_id, candidate_id, hypothesis=f"try {value}")
 
-    runtime.select(run_id)
+    selected = runtime.select(run_id)
+    assert selected["selected_iteration"] == 3
+    assert selected["selected_score"] == 2.0
+    assert program.read_text(encoding="utf-8") == "VALUE = 'equal'\n"
     runtime.promote(run_id, candidate_id)
 
     record = runtime._load_candidate_record(run_id, candidate_id)
+    assert [iteration.disposition for iteration in record.iterations] == [
+        "keep",
+        "keep",
+        "retain",
+        "retain",
+    ]
     revisions = {
         revision
         for iteration in record.iterations

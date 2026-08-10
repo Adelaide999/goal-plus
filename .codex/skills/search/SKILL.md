@@ -152,9 +152,10 @@ strategy:
 `run.best_score` 和 `run.best_candidate_id`。父 agent 必须在每次完成验证后观察它，
 但不能把比较结果变为是否继续的决策。
 
-每个 process verifier 结果还包含 candidate-local `disposition`。只有严格改善为
-`keep`；同分或退化为 `discard`，无有效排名证据为 `failure`。runtime 保留本轮实际
-被测 commit，并在 `discard`/`failure` 后自动恢复该 candidate 的 best 代码。worker
+每个 process verifier 结果还包含 candidate-local `disposition`。严格改善为
+`keep`；同分为 `retain` 并成为最新工作基线；退化为 `discard`，无有效排名证据为
+`failure`。runtime 保留本轮实际被测 commit，并只在 `discard`/`failure` 后自动恢复
+该 candidate 的 best 代码。worker
 不得自行 reset verifier-backed 状态；下一轮直接使用返回后的 settled workspace。
 
 - 更好结果：将其保留为最新 verifier 支持的答案；全局停止 policy 为 false 时，

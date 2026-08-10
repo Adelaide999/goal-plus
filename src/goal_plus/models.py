@@ -58,7 +58,7 @@ class Budget(SearchModel):
 
 
 WorkspaceBackend = Literal["copy", "git_worktree"]
-IterationDisposition = Literal["keep", "discard", "failure"]
+IterationDisposition = Literal["keep", "retain", "discard", "failure"]
 VerifierInvalidationReason = Literal[
     "verifier_contract_invalid",
     "verifier_coverage_inadequate",
