@@ -22,7 +22,7 @@ from goal_plus.models import (
     SearchPlan,
 )
 from goal_plus.monitor import goal_plus_monitor_snapshot
-from goal_plus.runtime import load_json
+from goal_plus.runtime import FileSearchRuntime, load_json
 
 
 REPORT_SCHEMA_VERSION = 1
@@ -136,6 +136,7 @@ h3 { margin-bottom: 12px; font-size: 14px; line-height: 20px; }
 .status.success { color: var(--success); border-color: #b8dfca; background: var(--success-soft); }
 .status.warning { color: var(--warning); border-color: #ead298; background: var(--warning-soft); }
 .status.failure { color: var(--failure); border-color: #efbbb6; background: var(--failure-soft); }
+.status.official { color: var(--accent); border-color: #a9d2dc; background: var(--accent-soft); }
 .section-nav {
   position: sticky;
   top: 0;
@@ -389,7 +390,10 @@ tbody tr:last-child td { border-bottom: 0; }
 .evidence-view-table th:nth-child(7) { width: 390px; }
 .evidence-view-table th:nth-child(8) { width: 150px; }
 .evidence-view-table tbody tr:hover td { background: var(--accent-soft); }
+.evidence-view-table .official-evidence-row td { background: #f2f8fa; }
+.evidence-view-table .official-evidence-row:hover td { background: #e2f0f3; }
 .evidence-copy { color: var(--text); line-height: 18px; }
+.evidence-score-kind { margin-top: 4px; color: var(--accent); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .evidence-view-copy { color: var(--text); font-weight: 600; line-height: 18px; }
 .evidence-view-meta { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
 .evidence-view-empty { color: var(--muted); font-style: italic; }
@@ -997,6 +1001,7 @@ def _status_class(value: Any) -> str:
         "completed",
         "promoted",
         "passed",
+        "valid",
         "keep",
         "evaluated",
         "productive",
@@ -1021,6 +1026,7 @@ def _status_class(value: Any) -> str:
         "empty-output",
         "cannot-continue",
         "terminal_error",
+        "invalid",
     }:
         return "failure"
     if normalized in {
@@ -1041,6 +1047,8 @@ def _status_class(value: Any) -> str:
         "verified-no-revision",
     }:
         return "warning"
+    if normalized == "official":
+        return "official"
     return ""
 
 
@@ -1325,6 +1333,7 @@ def _report_iteration_payload(
                 annotation_monitor = monitor
 
     return {
+        "candidate_id": candidate_id,
         "iteration": iteration.iteration,
         "agent_session_id": iteration.agent_session_id,
         "selected_model": iteration.selected_model,
@@ -1462,6 +1471,15 @@ def _task_details(
                 ],
             }
         )
+
+    FileSearchRuntime.attach_external_evaluations(
+        run_id,
+        [
+            iteration
+            for candidate in candidate_payloads
+            for iteration in candidate["iterations"]
+        ],
+    )
 
     candidate_iterations_by_id = {
         candidate.candidate_id: list(candidate.iterations) for candidate in candidates
@@ -3365,7 +3383,7 @@ def _render_timeline(
 
 
 def _render_shared_evidence_view(task: dict[str, Any]) -> str:
-    rows_payload = [
+    local_rows = [
         {
             **iteration,
             "candidate_id": candidate.get("candidate_id"),
@@ -3375,9 +3393,59 @@ def _render_shared_evidence_view(task: dict[str, Any]) -> str:
         for iteration in candidate.get("iterations") or []
         if iteration.get("agent_session_id")
     ]
-    if not rows_payload:
+    if not local_rows:
         return "<p>No worker Evidence was persisted for this Search task.</p>"
 
+    official_rows = []
+    for item in local_rows:
+        for evaluation in item.get("external_evaluations") or []:
+            if not isinstance(evaluation, dict):
+                continue
+            is_official = (
+                evaluation.get("authority") == "edgebench_official_hidden_judge"
+                or evaluation.get("source") == "edgebench"
+            )
+            score_100 = _finite_float(evaluation.get("score_0_100"))
+            valid = evaluation.get("valid")
+            evidence_source = "official" if is_official else "external"
+            official_rows.append(
+                {
+                    **item,
+                    "created_at": evaluation.get("published_at")
+                    or item.get("created_at"),
+                    "score": (
+                        score_100
+                        if score_100 is not None
+                        else evaluation.get("score")
+                    ),
+                    "score_kind": (
+                        f"{evidence_source} / 100"
+                        if score_100 is not None
+                        else f"{evidence_source} raw score"
+                    ),
+                    "disposition": (
+                        "valid"
+                        if valid is True
+                        else "invalid"
+                        if valid is False
+                        else evaluation.get("status") or evidence_source
+                    ),
+                    "hypothesis": (
+                        "Official Judge evaluation"
+                        if is_official
+                        else "External evaluation"
+                    ),
+                    "view": evaluation.get("summary")
+                    or evaluation.get("error")
+                    or f"{evidence_source.title()} evaluation {evaluation.get('status') or 'recorded'}.",
+                    "view_state": evidence_source,
+                    "view_error": None,
+                    "annotation_monitor": None,
+                    "evidence_source": evidence_source,
+                }
+            )
+
+    rows_payload = [*local_rows, *official_rows]
     rows_payload.sort(
         key=lambda item: (
             _epoch(item.get("created_at")) or float("inf"),
@@ -3398,9 +3466,9 @@ def _render_shared_evidence_view(task: dict[str, Any]) -> str:
     view_states = sorted(
         {str(item.get("view_state") or "not_requested") for item in rows_payload}
     )
-    published = sum(bool(item.get("view")) for item in rows_payload)
+    published = sum(bool(item.get("view")) for item in local_rows)
     state_counts = Counter(
-        str(item.get("view_state") or "not_requested") for item in rows_payload
+        str(item.get("view_state") or "not_requested") for item in local_rows
     )
 
     def options(values: list[str]) -> str:
@@ -3415,6 +3483,7 @@ def _render_shared_evidence_view(task: dict[str, Any]) -> str:
         disposition = str(item.get("disposition") or "unsettled")
         view_state = str(item.get("view_state") or "not_requested")
         commit = str(item.get("git_head") or "")
+        evidence_source = item.get("evidence_source")
         view = item.get("view")
         view_copy = (
             f'<div class="evidence-view-copy">{_html(view)}</div>'
@@ -3454,8 +3523,20 @@ def _render_shared_evidence_view(task: dict[str, Any]) -> str:
                 + "</div>"
             )
         attempt = item.get("hypothesis") or item.get("summary")
+        row_classes = []
+        if item.get("candidate_selected"):
+            row_classes.append("selected-row")
+        if evidence_source:
+            row_classes.append("official-evidence-row")
+        score = _number(item.get("score"), digits=3 if evidence_source else 2)
+        score_copy = _html(score)
+        if item.get("score_kind"):
+            score_copy = (
+                f"<strong>{_html(score)}</strong>"
+                f'<div class="evidence-score-kind">{_html(item.get("score_kind"))}</div>'
+            )
         rows.append(
-            f'<tr class="{"selected-row" if item.get("candidate_selected") else ""}"'
+            f'<tr class="{escape(" ".join(row_classes), quote=True)}"'
             " data-evidence-row"
             f' data-candidate="{escape(candidate_id, quote=True)}"'
             f' data-disposition="{escape(disposition, quote=True)}"'
@@ -3463,7 +3544,7 @@ def _render_shared_evidence_view(task: dict[str, Any]) -> str:
             f'<td class="mono">{_html(item.get("created_at"))}</td>'
             f'<td class="mono"><strong>{_html(candidate_id)}</strong></td>'
             f'<td class="mono">{_html(item.get("iteration"))}</td>'
-            f'<td class="mono">{_html(_number(item.get("score")))}</td>'
+            f'<td class="mono">{score_copy}</td>'
             f"<td>{_status(disposition)}</td>"
             f'<td><div class="evidence-copy">{_html(attempt)}</div></td>'
             f'<td>{view_copy}{view_error}{monitor_copy}<div class="evidence-view-meta">{_status(view_state)}</div></td>'
@@ -3476,8 +3557,9 @@ def _render_shared_evidence_view(task: dict[str, Any]) -> str:
         "<div data-evidence-view>"
         '<div class="evidence-view-toolbar no-print">'
         '<div class="evidence-view-summary">'
-        f"<span><strong>{_html(len(rows_payload))}</strong>Settled iterations</span>"
+        f"<span><strong>{_html(len(local_rows))}</strong>Settled iterations</span>"
         f"<span><strong>{_html(published)}</strong>Views published</span>"
+        f"<span><strong>{_html(len(official_rows))}</strong>Official evaluations</span>"
         f'<span><strong>{_html(state_counts.get("pending", 0))}</strong>Pending</span>'
         f'<span><strong>{_html(state_counts.get("terminal_error", 0))}</strong>Terminal errors</span>'
         "</div>"
@@ -3499,7 +3581,9 @@ def _render_shared_evidence_view(task: dict[str, Any]) -> str:
         f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
         '<p class="footnote">Worker attempt is the candidate-authored settled hypothesis. '
         "Objective View is the immutable best-effort annotation bound to the exact candidate, "
-        "iteration, and revision; missing Views are not inferred from worker text.</p>"
+        "iteration, and revision; missing Views are not inferred from worker text. Official "
+        "evaluation rows are external Judge observations bound to that same exact identity; "
+        "they do not change local settlement or ranking.</p>"
         "</div>"
     )
 
