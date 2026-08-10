@@ -199,7 +199,11 @@ candidate-local history 由运行时拥有，不是 `plan.md` 文件。worker �
 `context.results_tsv`、工作区 Git 状态和有界 handoff metadata。其他 candidate 的尝试
 只通过窄 `search_get_global_evidence` 视图披露。每轮修改前读取一次；`view=null` 只表示
 annotator 尚未更新，worker 可先依据 commit、score、disposition 和自己的推理独立探索，
-不等待或轮询。只有代码级证据确有必要时，才在当前 workspace 使用
+不等待或轮询。启用开放式补充评价时，每行还包含 ViewAgent 根据当前累计 diff 和 annotation
+task 创建时其他已结算候选快照生成的 `supplemental_evaluation`。其中维度由 ViewAgent
+根据实际 Evidence 后验提出，不来自 FrozenSpec；动态比较、置信度与 limitations 只是第三方
+观察，不是分数、推荐或 promotion gate；它不改变硬分结算规则。worker 可以据此
+形成自己的下一轮假设，但应独立核对。只有代码级证据确有必要时，才在当前 workspace 使用
 `git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace，
 也不 checkout/reset peer commit。修改完成后，worker 在 `search_run_verifier` 中用一句话
 `hypothesis` 客观概括实际尝试。

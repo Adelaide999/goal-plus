@@ -61,6 +61,13 @@ Annotation 模型，`workers=C,D` 分配 Candidate Worker。只解析用户实�
 并切换 Main，并把规范化后的完整 `provider/model` Main/Annotator 路由注入启动上下文。
 冻结 SearchSpec 时把显式 Annotator 写入 `strategy.evidence_annotator.model`。
 
+不要在 SearchSpec 中生成软 rubric 或预设评价维度。Spec Discovery 只能冻结硬 metric、
+verifier、编辑范围、预算和 promotion 合同。开放式补充评价发生在每次 Evidence 结算之后：
+独立 ViewAgent 根据当前候选累计 diff 和当时其他已结算候选的快照，自行提出与任务实际
+相关的观察维度并动态比较。它不读取 hidden 数据，不产生总分或最终推荐，也不改变硬
+PASS/FAIL、数值排名、candidate-local 结算、selection 或 promotion。MainAgent
+不负责定义这些维度，也不要根据 benchmark 类型向 ViewAgent 预埋固定清单。
+
 如果原始命令包含 `workers=...` 或兼容别名 `models=...`，先调用
 `goal_plus_list_models(host="pi-rpc")`，将用户
 填写的名称解析为唯一可用模型并冻结到 `strategy.models`；不存在或不唯一时，在创建
@@ -325,14 +332,18 @@ candidate-local history 由运行时拥有，不是本地 plan 文件。worker �
 `context.results` 和继承的 `context.results_tsv` 作为恢复来源。每轮修改前读取
 `search_get_global_evidence`。其他 candidate 的尝试只通过这个窄视图披露；`view=null`
 只表示 annotator 尚未更新，worker 不等待或轮询，先依据 commit、score、disposition 和
-自己的推理独立探索。仅在 worker 独立判断确有必要时，才在当前 workspace 使用
+自己的推理独立探索。启用开放式补充评价时，每行包含 ViewAgent 根据实际 Evidence 后验
+提出的观察维度，以及 annotation task 创建时对其他已结算候选的动态比较。它不来自
+FrozenSpec，不作为硬分、推荐或 promotion gate；worker 可据此形成假设，但应独立核对。仅在
+worker 独立判断确有必要时，才在当前 workspace 使用
 `git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace，
 也不 checkout/reset peer commit。worker verifier 用一句话 `hypothesis` 客观概括本轮实际
 尝试。运行时校验工作区根目录
 `results.tsv`，为每份返回报告追加且只追加一条记录，并提交账本。worker 绝不直接编辑它。
-process verifier 同时返回 candidate-local `disposition`：严格改善为 `keep`，同分或退化
-为 `discard`，无有效排名证据为 `failure`。runtime 保留实际被测 commit，并在
-`discard`/`failure` 后恢复 candidate best；worker 不得自行 reset verifier-backed 状态。
+process verifier 同时返回 candidate-local `disposition`：严格改善为 `keep`；同分或
+退化尝试为 `discard`；无有效排名证据为 `failure`。开放式补充评价不改变结算、硬
+score 或最终 PASS/FAIL。runtime 保留实际被测 commit，并在 `discard`/`failure` 后恢复
+candidate best；worker 不得自行 reset verifier-backed 状态。
 如果 worker 提供 handoff，后续 iteration history 会包含最新结构化 `research_summary`；
 应使用其中任务特定的结果和问题，避免重复失败变体。
 

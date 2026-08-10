@@ -121,6 +121,13 @@ Snapshot failures add `global_evidence_warning` without changing the successful
 verifier result. `GOAL_PLUS_GLOBAL_EVIDENCE_MODE` can supply the mode before
 freeze; the effective value is persisted in the frozen spec, and a conflicting
 explicit `strategy.config.global_evidence_mode` is rejected.
+
+Every call persists a `global_evidence_reads` entry on the calling agent
+session. The entry records the read timestamp and exact completed
+candidate/iteration/commit View references visible at that moment, so reports
+can distinguish a View published after the last verifier from one available
+before a later attempt. These receipts are observational and never affect
+settlement, selection, promotion, or hard PASS/FAIL.
 Each worker settlement snapshots the exact attempt base/head, worker host, and
 resolved annotator model/provider into an internal task. Codex runs annotations
 through ephemeral `codex exec`; Pi runs them through ephemeral, tool-free
