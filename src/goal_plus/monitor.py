@@ -12,6 +12,7 @@ from goal_plus.host_observability import collect_codex_transcript_observability
 from goal_plus.models import (
     AgentSessionRecord,
     CandidateRecord,
+    EvidenceAnnotationTask,
     FrozenSpec,
     GoalPlusLinkedSearch,
     GoalPlusRecord,
@@ -71,6 +72,80 @@ def _number(value: Any) -> float | None:
     if isinstance(value, int | float) and not isinstance(value, bool):
         return float(value)
     return None
+
+
+def _evidence_annotation_payload(run_dir: Path) -> dict[str, Any]:
+    tasks: list[EvidenceAnnotationTask] = []
+    for path in sorted(
+        run_dir.glob("candidates/*/evidence-annotations/iteration-*.json")
+    ):
+        try:
+            tasks.append(EvidenceAnnotationTask.model_validate(load_json(path)))
+        except (OSError, ValueError):
+            continue
+    states: dict[str, int] = {}
+    for task in tasks:
+        states[task.state] = states.get(task.state, 0) + 1
+
+    attempts: list[dict[str, Any]] = []
+    for path in sorted((run_dir / "evidence-annotator" / "attempts").glob("*.json")):
+        try:
+            monitor = load_json(path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(monitor, dict):
+            continue
+        attempts.append(
+            {
+                key: monitor.get(key)
+                for key in (
+                    "candidate_id",
+                    "iteration",
+                    "attempt",
+                    "host",
+                    "model",
+                    "reasoning_effort",
+                    "timeout_seconds",
+                    "state",
+                    "started_at",
+                    "updated_at",
+                    "elapsed_seconds",
+                    "pid",
+                    "process_returncode",
+                    "stdout_bytes",
+                    "stderr_bytes",
+                    "json_lines",
+                    "non_json_lines",
+                    "event_type_counts",
+                    "assistant_event_type_counts",
+                    "last_events",
+                    "detail",
+                )
+                if monitor.get(key) is not None
+            }
+            | {"monitor_path": str(path)}
+        )
+    attempts.sort(
+        key=lambda item: (
+            str(item.get("updated_at") or ""),
+            str(item.get("candidate_id") or ""),
+            int(item.get("iteration") or 0),
+            int(item.get("attempt") or 0),
+        )
+    )
+    active_states = {"starting", "running", "process_exited"}
+    active = [item for item in attempts if item.get("state") in active_states]
+    recent = attempts[-8:]
+    visible = active + [item for item in recent if item not in active]
+    return {
+        "tasks": len(tasks),
+        "attempts": sum(task.attempts for task in tasks),
+        "views_published": sum(task.view is not None for task in tasks),
+        "states": dict(sorted(states.items())),
+        "active_attempts": active,
+        "recent_attempts": visible,
+        "monitor_files": len(attempts),
+    }
 
 
 def _goal_metric_contexts(
@@ -439,6 +514,7 @@ def _search_task_payload(
             "candidates_evaluated": 0,
             "worker_sessions_total": 0,
             "verifier_runs_total": 0,
+            "evidence_annotations": None,
             "estimated_cost_total": 0.0,
             "statistics": None,
         }
@@ -504,6 +580,7 @@ def _search_task_payload(
             ),
             "worker_sessions_total": len(sessions),
             "verifier_runs_total": sum(len(candidate.iterations) for candidate in candidates),
+            "evidence_annotations": _evidence_annotation_payload(run_dir),
             "estimated_cost_total": estimated_cost_total,
             "statistics": statistics,
         }
@@ -746,6 +823,7 @@ def goal_plus_monitor_snapshot(
             "selected_iteration": run.selected_iteration,
             "selected_git_head": run.selected_git_head,
             "budget_used": run.budget_used,
+            "evidence_annotations": _evidence_annotation_payload(run_path),
         }
 
         for candidate in candidates:

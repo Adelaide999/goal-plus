@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from goal_plus.goal_plus import FileGoalPlusRuntime
-from goal_plus.models import GoalPlusRecord, IterationRecord, ScoreReport, SearchSpec
+from goal_plus.models import (
+    EvidenceViewRecord,
+    GoalPlusRecord,
+    IterationRecord,
+    ScoreReport,
+    SearchSpec,
+)
 from goal_plus.reporting import (
     _build_loop_agent_statistics,
     _build_stop_hook_statistics,
@@ -14,6 +20,7 @@ from goal_plus.reporting import (
     _duration,
     _epoch,
     _render_loop_agent_statistics,
+    _render_shared_evidence_view,
     _render_stop_hook_statistics,
     _render_timeline,
     _render_statistics,
@@ -23,7 +30,7 @@ from goal_plus.reporting import (
     render_report_document,
     write_html_report,
 )
-from goal_plus.runtime import FileSearchRuntime
+from goal_plus.runtime import FileSearchRuntime, write_json
 
 from tests._runtime_helpers import make_project, spec_for
 
@@ -98,8 +105,7 @@ def test_stop_hook_statistics_tolerate_corrupt_files_and_invalid_durations(
     assert statistics["events_total"] == 3
     assert statistics["duration_ms_total"] == 2.5
     assert {
-        event["invocation_id"]: event["duration_ms"]
-        for event in statistics["events"]
+        event["invocation_id"]: event["duration_ms"] for event in statistics["events"]
     } == {
         "hook_infinite": None,
         "hook_negative": None,
@@ -332,6 +338,54 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
         agent_session_id=session.agent_session_id,
         hypothesis="Exercise the durable timeline",
     )
+    annotation = search._load_evidence_annotation_task(
+        second_run, candidate.candidate_id, 1
+    )
+    assert annotation is not None
+    annotation.state = "completed"
+    annotation.attempts = 1
+    monitor_relative = (
+        f"runs/{second_run}/evidence-annotator/attempts/"
+        f"{candidate.candidate_id}-iteration-0001-attempt-01.json"
+    )
+    annotation.attempt_history = [
+        {
+            "attempt": 1,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": "2026-01-01T00:00:01Z",
+            "monitor_path": monitor_relative,
+        }
+    ]
+    annotation.view = EvidenceViewRecord(
+        run_id=second_run,
+        candidate_id=candidate.candidate_id,
+        iteration=1,
+        attempt_commit=annotation.attempt_commit,
+        description="Moved dependency scheduling into the durable shared View.",
+        created_at="2026-01-01T00:00:01Z",
+    )
+    search._write_evidence_annotation_task(annotation)
+    write_json(
+        root / monitor_relative,
+        {
+            "schema_version": 1,
+            "run_id": second_run,
+            "candidate_id": candidate.candidate_id,
+            "iteration": 1,
+            "attempt": 1,
+            "host": "pi-rpc",
+            "model": "gpt-5.6-sol",
+            "state": "completed",
+            "started_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:01Z",
+            "elapsed_seconds": 1.0,
+            "stdout_bytes": 321,
+            "stderr_bytes": 0,
+            "json_lines": 4,
+            "event_type_counts": {"message_end": 1, "message_update": 3},
+            "last_events": [{"type": "message_end"}],
+        },
+    )
 
     goals = FileGoalPlusRuntime(root)
     goal = goals.create_goal("Optimize <script>alert('unsafe')</script> safely")
@@ -422,6 +476,17 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
     assert "Final GP Aggregate" not in html
     assert "Unavailable Metrics Audit" not in html
     assert "Verifier activity" in html
+    assert "Shared Evidence View" in html
+    assert "Settled iterations" in html
+    assert "Views published" in html
+    assert "Worker attempt" in html
+    assert "Objective View" in html
+    assert "Exercise the durable timeline" in html
+    assert "Moved dependency scheduling into the durable shared View." in html
+    assert "Annotator completed | 1.0s | 4 JSON events | last message_end" in html
+    assert 'data-evidence-filter="candidate"' in html
+    assert 'data-evidence-filter="view-state"' in html
+    assert "data-evidence-row" in html
     assert "Complete normalized report data" in html
     assert "Stop Hook Activity" in html
     assert "Loop Agent Stop Outcomes" in html
@@ -444,6 +509,13 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
 
     monkeypatch.setattr("goal_plus.reporting._load_plotly_javascript", lambda: None)
     report_data = build_html_report_data(root, second_run)
+    [reported_iteration] = report_data["search_tasks"][1]["candidates"][0]["iterations"]
+    assert reported_iteration["view"] == (
+        "Moved dependency scheduling into the durable shared View."
+    )
+    assert reported_iteration["view_state"] == "completed"
+    assert reported_iteration["annotation_monitor"]["state"] == "completed"
+    assert reported_iteration["annotation_monitor"]["json_lines"] == 4
     hook_stats = report_data["stop_hook_statistics"]
     assert hook_stats["events_total"] == 4
     assert hook_stats["by_event"]["Stop"]["events_total"] == 1
@@ -459,6 +531,57 @@ def test_search_report_generates_self_contained_html_with_multi_search_timeline(
     fallback_html = render_html_report(report_data)
     assert "data-search-trajectory=" not in fallback_html
     assert 'class="score-step"' in fallback_html
+
+
+def test_shared_evidence_view_does_not_substitute_worker_text_for_missing_view() -> (
+    None
+):
+    html = _render_shared_evidence_view(
+        {
+            "candidates": [
+                {
+                    "candidate_id": "c001",
+                    "selected": True,
+                    "iterations": [
+                        {
+                            "iteration": 1,
+                            "agent_session_id": "agent_001",
+                            "score": 12,
+                            "disposition": "keep",
+                            "hypothesis": "Worker attempt <strong>is not a View</strong>.",
+                            "git_head": "a" * 40,
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "view": None,
+                            "view_state": "terminal_error",
+                            "view_error": "Annotation <failed> safely.",
+                        },
+                        {
+                            "iteration": 2,
+                            "agent_session_id": "agent_001",
+                            "score": 10,
+                            "disposition": "keep",
+                            "hypothesis": "Second worker attempt.",
+                            "git_head": "b" * 40,
+                            "created_at": "2026-01-01T00:01:00Z",
+                            "view": "Objective View <script>is escaped</script>.",
+                            "view_state": "completed",
+                            "view_error": None,
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert "Not published" in html
+    assert "Worker attempt &lt;strong&gt;is not a View&lt;/strong&gt;." in html
+    assert "Annotation &lt;failed&gt; safely." in html
+    assert "Objective View &lt;script&gt;is escaped&lt;/script&gt;." in html
+    assert "<strong>is not a View</strong>" not in html
+    assert "<script>is escaped</script>" not in html
+    assert html.count("data-evidence-row") == 2
+    assert 'data-view-state="terminal_error"' in html
+    assert 'data-view-state="completed"' in html
 
 
 def test_loop_agent_statistics_distinguish_productive_and_stalled_tails() -> None:
@@ -496,8 +619,7 @@ def test_loop_agent_statistics_distinguish_productive_and_stalled_tails() -> Non
             "activity": {
                 "available": True,
                 "events": (
-                    message_events("empty", 37)
-                    + message_events("substantive", 4)
+                    message_events("empty", 37) + message_events("substantive", 4)
                 ),
             },
         },
@@ -514,8 +636,7 @@ def test_loop_agent_statistics_distinguish_productive_and_stalled_tails() -> Non
             "activity": {
                 "available": True,
                 "events": (
-                    tool_events("context", 137)
-                    + tool_events("global_evidence", 143)
+                    tool_events("context", 137) + tool_events("global_evidence", 143)
                 ),
             },
         },
@@ -526,8 +647,7 @@ def test_loop_agent_statistics_distinguish_productive_and_stalled_tails() -> Non
             "activity": {
                 "available": True,
                 "events": (
-                    tool_events("context", 1)
-                    + message_events("best_remains", 4)
+                    tool_events("context", 1) + message_events("best_remains", 4)
                 ),
             },
         },
@@ -576,11 +696,9 @@ def test_loop_agent_statistics_distinguish_productive_and_stalled_tails() -> Non
             ("c004", 2588.0),
         )
     ]
-    next(
-        candidate
-        for candidate in candidates
-        if candidate["candidate_id"] == "c003"
-    )["iterations"].append(
+    next(candidate for candidate in candidates if candidate["candidate_id"] == "c003")[
+        "iterations"
+    ].append(
         {
             "iteration": 2,
             "agent_session_id": None,
@@ -789,8 +907,7 @@ def test_ineligible_iterations_do_not_enter_report_best_score_paths() -> None:
     ]
     assert worker["score"] == 90.0
     assert [
-        point["score"]
-        for point in task["timeline"]["performance"]["score"]["points"]
+        point["score"] for point in task["timeline"]["performance"]["score"]["points"]
     ] == [90.0]
 
     payload = _search_trajectory_payload(task)
@@ -857,7 +974,9 @@ def test_search_trajectory_payload_adapts_axes_and_excludes_failed_scores() -> N
     }
 
 
-def test_html_report_data_keeps_search_tasks_and_rounds_separate(tmp_path: Path) -> None:
+def test_html_report_data_keeps_search_tasks_and_rounds_separate(
+    tmp_path: Path,
+) -> None:
     project = make_project(tmp_path)
     root = tmp_path / ".search"
     search = FileSearchRuntime(root)
@@ -1136,7 +1255,9 @@ def test_report_candidate_final_score_uses_settled_best_after_failure(
     project = make_project(tmp_path)
     root = tmp_path / ".search"
     search = FileSearchRuntime(root)
-    frozen = search.freeze_spec(spec_for(project, max_parallel=1), [project / "evaluator.py"])
+    frozen = search.freeze_spec(
+        spec_for(project, max_parallel=1), [project / "evaluator.py"]
+    )
     run_id = search.create_run(frozen.frozen_spec_id)
     plan = search.plan_next(run_id, requested_k=1)
     candidate = search.start_batch(run_id, plan.plan_id)[0]
@@ -1243,7 +1364,9 @@ def test_metric_lens_combines_score_progression_and_session_efficiency() -> None
 
     _build_timeline(None, [], tasks)
     timeline = tasks[0]["timeline"]
-    workers = [event for event in timeline["events"] if event["kind"] == "worker_session"]
+    workers = [
+        event for event in timeline["events"] if event["kind"] == "worker_session"
+    ]
     performance = timeline["performance"]
 
     assert [event["tokens_per_minute"] for event in workers] == [600.0, 1200.0]
