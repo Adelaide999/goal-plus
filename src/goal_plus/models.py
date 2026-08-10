@@ -850,6 +850,21 @@ class RunSummary(SearchModel):
     replacement_run_id: str | None = None
 
 
+class BestArtifactRecord(SearchModel):
+    schema_version: Literal[1] = 1
+    run_id: str
+    candidate_id: str
+    iteration: int = Field(ge=1)
+    commit: str = Field(min_length=1)
+    score: float
+    metric_name: str = Field(min_length=1)
+    metric_direction: Literal["minimize", "maximize"]
+    artifact_hash: str = Field(min_length=1)
+    workspace: str = Field(min_length=1)
+    changed_files: list[str] = Field(default_factory=list)
+    updated_at: str
+
+
 class RunRecord(SearchModel):
     run_id: str
     state: RunState

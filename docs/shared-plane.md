@@ -296,6 +296,7 @@ run。可以继承有界研究上下文，但不能继承旧分数或把旧 Evid
   specs/<frozen_spec_id>/
   runs/<run_id>/
     run.json
+    best.json
     plans/<initial-plan-id>.json
     candidates/<candidate_id>/
       candidate.json
@@ -310,6 +311,8 @@ run。可以继承有界研究上下文，但不能继承旧分数或把旧 Evid
 
 `candidate.json` 中的 iteration record 是 Evidence 的事实来源。Annotation task 保存
 可选 View 及其执行状态。Global Evidence 在读取时即时投影，不是第二份可写共享账本。
+`best.json` 是当前 run 最优 verifier commit 的权威原子指针；严格改善或同分时更新，
+退化和失败不会覆盖它。同分 candidate 按最后完成结算的有效 commit 决定。
 
 ## 核心不变量
 
