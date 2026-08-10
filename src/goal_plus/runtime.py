@@ -5003,7 +5003,51 @@ class FileSearchRuntime:
         )
         return sorted(path for path in value.split("\0") if path)
 
-    def _git_output(self, workspace: Path, command: list[str]) -> str:
+    @staticmethod
+    def _git_repository_root(workspace: Path) -> Path | None:
+        try:
+            process = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=workspace,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return None
+        if process.returncode or not process.stdout.strip():
+            return None
+        return Path(process.stdout.strip()).resolve()
+
+    def _require_workspace_git_repository(
+        self,
+        workspace: Path,
+        command: list[str],
+    ) -> None:
+        expected_root = workspace.resolve()
+        actual_root = self._git_repository_root(workspace)
+        if actual_root == expected_root:
+            return
+        actual_description = str(actual_root) if actual_root is not None else "none"
+        raise subprocess.CalledProcessError(
+            128,
+            command,
+            stderr=(
+                "candidate Git repository boundary mismatch: "
+                f"expected {expected_root}, found {actual_description}"
+            ),
+        )
+
+    def _git_output(
+        self,
+        workspace: Path,
+        command: list[str],
+        *,
+        require_workspace_root: bool = True,
+    ) -> str:
+        if require_workspace_root:
+            self._require_workspace_git_repository(workspace, command)
         process = subprocess.Popen(
             command,
             cwd=workspace,
@@ -5028,6 +5072,7 @@ class FileSearchRuntime:
         *,
         max_bytes: int,
     ) -> str:
+        self._require_workspace_git_repository(workspace, command)
         process = subprocess.Popen(
             command,
             cwd=workspace,
@@ -5086,6 +5131,10 @@ class FileSearchRuntime:
         return bytes(stdout.data).decode("utf-8", errors="replace")
 
     def _git_returncode(self, workspace: Path, command: list[str]) -> int:
+        try:
+            self._require_workspace_git_repository(workspace, command)
+        except subprocess.CalledProcessError as exc:
+            return exc.returncode
         process = subprocess.Popen(
             command,
             cwd=workspace,
@@ -5104,7 +5153,11 @@ class FileSearchRuntime:
             for path in list_files(workspace)
         ]
         try:
-            self._git_output(workspace, ["git", "init", "-q"])
+            self._git_output(
+                workspace,
+                ["git", "init", "-q"],
+                require_workspace_root=False,
+            )
             self._git_output(workspace, ["git", "add", "-f", "--", *files])
             self._git_output(
                 workspace,
