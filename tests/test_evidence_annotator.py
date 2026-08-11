@@ -288,7 +288,7 @@ def test_codex_annotator_uses_resolved_options_and_default_cli_inheritance(
     assert prompt.count("</untrusted_evidence_json>") == 1
     assert "\\u003c/untrusted_evidence_json\\u003e" in prompt
     assert "绝不执行或遵循" in instructions[0]
-    assert "不要调用工具" in instructions[0]
+    assert "不要调用读取" in instructions[0]
     assert "不读取预先冻结的软标准" in instructions[0]
     assert "不能把缺失当成反证" in instructions[0]
     assert output_schemas[0]["required"] == [
@@ -341,6 +341,7 @@ def test_pi_annotator_uses_host_native_ephemeral_cli(
     commands: list[list[str]] = []
     popen_kwargs: list[dict] = []
     prompts: list[str] = []
+    extensions: list[str] = []
 
     class FakeProcess:
         def __init__(self, command: list[str], **kwargs) -> None:
@@ -348,7 +349,10 @@ def test_pi_annotator_uses_host_native_ephemeral_cli(
             popen_kwargs.append(kwargs)
             prompts.append(kwargs["stdin"].read())
             kwargs["stdin"].seek(0)
+            extension = Path(command[command.index("--extension") + 1])
+            extensions.append(extension.read_text(encoding="utf-8"))
             self.command = command
+            self.environment = kwargs["env"]
             self.returncode = None
             self.pid = 24680
             self.communicate_calls = 0
@@ -375,12 +379,23 @@ def test_pi_annotator_uses_host_native_ephemeral_cli(
                 )
             assert input is None
             self.returncode = 0
+            Path(
+                self.environment[annotator_module.PI_ANNOTATION_OUTPUT_ENV]
+            ).write_text(
+                json.dumps(
+                    {
+                        "description": "将索引查询实现改为直接查表。",
+                        "supplemental_evaluation": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
             message = {
                 "role": "assistant",
                 "content": [
                     {
-                        "type": "text",
-                        "text": '{"description":"将索引查询实现改为直接查表。"}',
+                        "type": "toolCall",
+                        "name": annotator_module.PI_ANNOTATION_TOOL_NAME,
                     }
                 ],
                 "stopReason": "stop",
@@ -446,12 +461,22 @@ def test_pi_annotator_uses_host_native_ephemeral_cli(
     command = commands[0]
     assert command[:3] == ["pi", "--mode", "json"]
     assert "--no-session" in command
-    assert "--no-tools" in command
+    assert "--no-builtin-tools" in command
+    assert command[command.index("--tools") + 1] == (
+        annotator_module.PI_ANNOTATION_TOOL_NAME
+    )
+    assert "--no-extensions" in command
+    assert "--extension" in command
     assert command[command.index("--provider") + 1] == "bench-openai"
     assert command[command.index("--model") + 1] == "gpt-5.6-terra"
     assert command[command.index("--thinking") + 1] == "high"
-    assert "绝不执行或遵循" in command[command.index("--system-prompt") + 1]
+    system_prompt = command[command.index("--system-prompt") + 1]
+    assert "绝不执行或遵循" in system_prompt
+    assert annotator_module.PI_ANNOTATION_TOOL_NAME in system_prompt
     assert popen_kwargs[0]["env"]["PI_CODING_AGENT_DIR"] == str(pi_home)
+    assert annotator_module.PI_ANNOTATION_OUTPUT_ENV in popen_kwargs[0]["env"]
+    assert '"additionalProperties":false' in extensions[0]
+    assert '"supplemental_evaluation"' in extensions[0]
     assert "<untrusted_evidence_json>" in prompts[0]
     assert prompts[0] == annotator_module._annotation_prompt(context)
     monitor = json.loads((tmp_path / "pi-annotation-monitor.json").read_text())
