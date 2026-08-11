@@ -159,6 +159,8 @@ def test_pi_goal_plus_skill_documents_parallel_loop_policy() -> None:
     assert "有效最低 lease 和 closeout 边界只由 supervisor 判定" in normalized
     assert "等待准确 snapshot 的 `active_count=0`" in normalized
     assert "pi_search_pool_continue" in text
+    assert "global_evidence_injected=true" in text
+    assert "global_evidence_snapshot" in text
     assert "pi_search_pool_submit" not in text
     assert "pi_search_pool_close" in text
     assert "worker_budgets" in text
@@ -192,6 +194,9 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
 
     assert "search_get_agent_context" in text
     assert "search_get_global_evidence" in text
+    assert "global_evidence_injected=true" in text
+    assert "global_evidence_snapshot" in text
+    assert "read receipt" in text
     assert "search_submit_iteration_plan" not in text
     assert "search_run_verifier" in text
     assert "不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`" in text
@@ -284,6 +289,8 @@ def test_pi_extension_registers_role_tools_gate_and_workspace_guard() -> None:
     assert "goal_plus_create" in text
     assert "search_get_agent_context" in text
     assert "search_run_verifier" in text
+    assert "global_evidence_injected=true" in text
+    assert "global_evidence_snapshot" in text
     assert "workspace/results.tsv" in text
     assert "且只追加一条已验证记录" in text
     assert "VerifierWorkspaceSideEffect" in text

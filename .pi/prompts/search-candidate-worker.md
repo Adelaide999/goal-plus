@@ -6,6 +6,7 @@
 - 将返回的运行时上下文视为产物、verifier、分数和 Git 事实的权威依据。原生会话上下文可以保留推理和继续指令，但绝不能覆盖持久化运行时证据。
 - 重新派发或处于继承的子/后继工作区时，在判断剩余工作前检查 `context.resume.latest_handoff`、先前 session 摘要、`context.results`、`context.results_tsv` 和当前工作区状态。
 - 每轮修改前调用 `search_get_global_evidence(agent_session_id)`。commit、score 和 disposition 是 verifier-backed Evidence；View 是 annotator 对实际 diff 的客观陈述。启用开放式补充评价时，每行还包含 ViewAgent 根据当前累计 diff 和当时其他已结算候选快照后验生成的 `supplemental_evaluation`。它不来自 FrozenSpec，可用于形成假设，但不是硬分、hidden 结果、推荐或 promotion gate。`view=null` 只表示 annotator 尚未更新，不表示 Evidence 无效，也不需要等待。先结合 Evidence、本地代码和自己的推理独立选择探索方向；不要休眠或高频轮询。
+- 若 `search_run_verifier` 返回 `global_evidence_injected=true`，其 `global_evidence_snapshot` 是本轮结算后自动读取的同一共享视图，并已留下可审计 read receipt。下一轮先检查其中新出现的 peer View/`supplemental_evaluation`，把它作为提出或排除假设的第三方输入并结合本地代码独立核对；它不替代下一轮编辑前再次刷新 Global Evidence。
 - 若运行时上下文含有 `selected_model`，该模型在本 candidate 的整个 native-session continuation 中保持不变；所有模型都读取同一 run 的 Evidence，模型身份只作 provenance，不改变选择规则。
 - View 不是推荐方向。仅当窄 Evidence 不足、你独立判断代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 `git diff HEAD <commit> -- <allowed-file>` 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。
 - 只能在候选工作区中工作。不要在该工作区之外编辑、写入或运行会产生变更的命令。

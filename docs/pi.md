@@ -180,6 +180,14 @@ returned workspace, runs the verifier with a one-line hypothesis describing the
 realized attempt, and updates a bounded `.tmp/handoff.json`. A `null` View means
 the annotator has not published yet and never requires waiting.
 
+When the frozen strategy uses `global_evidence_mode="auto"`, a worker process
+verifier result with `global_evidence_injected=true` includes the post-settlement
+`global_evidence_snapshot`. Pi treats that snapshot as third-party input to the
+next hypothesis and checks new peer supplemental evaluations against local code.
+The runtime records the automatic read receipt. The worker still refreshes Global
+Evidence before its next edit because Views are asynchronous and may have arrived
+after the injected snapshot.
+
 The persisted native session is the normal continuation surface. The handoff,
 candidate Git state, and `.gp` verifier history remain the durable recovery
 surface when native session loading is unavailable.

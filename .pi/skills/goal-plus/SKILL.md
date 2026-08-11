@@ -338,7 +338,10 @@ FrozenSpec，不作为硬分、推荐或 promotion gate；worker 可据此形成
 worker 独立判断确有必要时，才在当前 workspace 使用
 `git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace，
 也不 checkout/reset peer commit。worker verifier 用一句话 `hypothesis` 客观概括本轮实际
-尝试。运行时校验工作区根目录
+尝试。若 verifier 报告包含 `global_evidence_injected=true`，Pi worker 必须把同一报告里的
+`global_evidence_snapshot` 作为本轮结算后的共享 Evidence/View 快照读取，关注新出现的 peer
+`supplemental_evaluation` 并在下一轮独立核对；这会留下 read receipt，但不替代下一轮编辑前的
+显式刷新。运行时校验工作区根目录
 `results.tsv`，为每份返回报告追加且只追加一条记录，并提交账本。worker 绝不直接编辑它。
 process verifier 同时返回 candidate-local `disposition`：严格改善为 `keep`，同分为
 `retain` 并成为最新工作基线，退化为 `discard`，无有效排名证据为 `failure`。runtime
