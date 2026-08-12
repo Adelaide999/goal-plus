@@ -108,7 +108,7 @@ def test_global_evidence_is_immediate_and_view_is_late_bound(tmp_path: Path) -> 
         "discard",
     ]
     assert all(entry["commit"] and entry["view"] is None for entry in view)
-    assert all(entry["supplemental_evaluation"] is None for entry in view)
+    assert all("supplemental_available" not in entry for entry in view)
 
     discarded_commit = view[-1]["commit"]
     annotation_task = runtime._load_evidence_annotation_task(run_id, second[0], 2)
@@ -416,12 +416,54 @@ def test_global_evidence_presents_open_evaluation_with_dynamic_peer_basis(
     assert "task_context" not in entry
     assert "task_context_source" not in entry
     assert entry["score"] == 2.0
-    assert entry["supplemental_evaluation"]["dimensions"][0]["name"] == (
+    assert entry["supplemental_available"] is True
+    assert "supplemental_evaluation" not in entry
+
+    detail = runtime.get_evidence_detail(first[1], second[0], 1)
+    assert detail["commit"] == task.attempt_commit
+    assert detail["supplemental_evaluation"]["dimensions"][0]["name"] == (
         "Cache coherence"
     )
-    assert entry["supplemental_evaluation"]["comparisons"][0][
+    assert detail["supplemental_evaluation"]["comparisons"][0][
         "candidate_id"
     ] == first[0]
+
+    completed_task = runtime._load_evidence_annotation_task(run_id, second[0], 1)
+    assert completed_task is not None and completed_task.view is not None
+    runtime._write_evidence_annotation_task(
+        completed_task.model_copy(
+            update={
+                "state": "completed",
+                "view": completed_task.view.model_copy(
+                    update={"attempt_commit": "stale"}
+                ),
+            }
+        )
+    )
+    with pytest.raises(RuntimeError, match="does not match iteration"):
+        runtime.get_evidence_detail(first[1], second[0], 1)
+
+
+def test_supplemental_capability_and_detail_respect_disabled_and_independent_modes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, run_id, candidates = _search_with_candidates(
+        tmp_path,
+        2,
+        strategy_updates={"config": {"global_evidence_mode": "independent"}},
+    )
+    first, second = candidates
+    disabled = runtime.get_agent_context(first[1])
+    assert disabled["supplemental_evaluation_enabled"] is False
+    with pytest.raises(RuntimeError, match="disabled"):
+        runtime.get_evidence_detail(first[1], first[0], 1)
+
+    monkeypatch.setenv(SUPPLEMENTAL_EVALUATION_ENABLED_ENV, "1")
+    enabled = runtime.get_agent_context(first[1])
+    assert enabled["supplemental_evaluation_enabled"] is True
+    with pytest.raises(PermissionError, match="caller's candidate"):
+        runtime.get_evidence_detail(first[1], second[0], 1)
 
 
 def test_worker_hypothesis_is_required_and_parent_evidence_is_private(

@@ -35,6 +35,7 @@ def test_create_mcp_registers_search_runtime_tools(tmp_path: Path) -> None:
         "search_get_global_evidence",
         "search_stage_shared_tool",
         "search_copy_shared_tool",
+        "search_get_evidence_detail",
         "search_get_agent_observability",
         "search_run_verifier",
         "search_list_iterations",
@@ -145,6 +146,14 @@ def test_run_verifier_exposes_optional_agent_session_id(tmp_path: Path) -> None:
     assert tools["search_get_global_evidence"].parameters["required"] == [
         "agent_session_id"
     ]
+    assert tools["search_get_evidence_detail"].parameters["required"] == [
+        "agent_session_id",
+        "candidate_id",
+        "iteration",
+    ]
+    assert tools["search_get_evidence_detail"].parameters["properties"]["iteration"][
+        "minimum"
+    ] == 1
 
 
 def test_freeze_spec_exposes_complete_nested_search_spec_schema(tmp_path: Path) -> None:
@@ -345,6 +354,9 @@ def test_create_mcp_constructs_runtime_with_configured_root(
 
         def search_get_global_evidence(self, *args, **kwargs):
             return []
+
+        def search_get_evidence_detail(self, *args, **kwargs):
+            return {}
 
         def search_run_verifier(self, *args, **kwargs):
             return {}

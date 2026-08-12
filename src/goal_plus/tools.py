@@ -185,6 +185,18 @@ class SearchTools:
             candidate_relative_source_paths=candidate_relative_source_paths,
         )
 
+    def search_get_evidence_detail(
+        self,
+        agent_session_id: str,
+        candidate_id: str,
+        iteration: int,
+    ) -> dict[str, Any]:
+        return self.runtime.get_evidence_detail(
+            agent_session_id,
+            candidate_id,
+            iteration,
+        )
+
     def search_get_agent_observability(self, agent_session_id: str) -> dict[str, Any]:
         return self.runtime.get_agent_observability(agent_session_id)
 

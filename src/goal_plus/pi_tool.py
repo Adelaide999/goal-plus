@@ -37,6 +37,7 @@ SEARCH_TOOL_NAMES = {
     "search_get_global_evidence",
     "search_stage_shared_tool",
     "search_copy_shared_tool",
+    "search_get_evidence_detail",
     "search_get_agent_observability",
     "search_run_verifier",
     "search_list_iterations",

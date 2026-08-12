@@ -102,6 +102,7 @@ feature ledger, and scoped pitfalls. It marks predecessor scores non-reusable.
 | `search_get_global_evidence` | candidate worker | project settled worker attempts in the current run as score, disposition, exact attempt commit, and a possibly delayed objective View |
 | `search_stage_shared_tool` | candidate worker | copy explicit sources from the caller's `.tmp/tool-drafts/` into bounded `.tmp/share-out` staging; this does not publish them |
 | `search_copy_shared_tool` | candidate worker | copy a Tool View-bound shared-dir snapshot into the caller's local inbox for reversible verification |
+| `search_get_evidence_detail` | candidate worker | expand one available supplemental evaluation from the caller's current run; independent mode is candidate-local |
 | `search_get_agent_observability` | main/monitor | read normalized model, timing, terminal, usage, context, artifact, and handoff evidence for one session |
 
 `search_start_agent_session` does not launch or supervise a worker. The caller
@@ -109,6 +110,12 @@ must use the returned `launch` object. A `worker_budget` can be passed to initia
 launch, continuation, or redispatch without mutating the frozen spec. Pi pool
 minimum fields are cumulative across the internal native-session resumes of one
 pool job; ordinary overrides remain dispatch-scoped.
+
+`search_get_agent_context` exposes `supplemental_evaluation_enabled`. When it is
+false, workers do not wait for or request supplemental evaluation. When enabled,
+`search_get_global_evidence` adds only `supplemental_available=true`; full summary,
+dimensions, peer comparisons, and limitations are
+fetched for a selected immutable row through `search_get_evidence_detail`.
 
 Worker process verifier calls require a one-line `hypothesis` describing the
 realized attempt. With `shared_dir` enabled they may also include a

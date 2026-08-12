@@ -23,6 +23,7 @@ _CODEX_ACTIVITY_TOOL_CATEGORIES = {
     "search_get_agent_context": "context",
     "search_get_global_plan": "global_evidence",
     "search_get_global_evidence": "global_evidence",
+    "search_get_evidence_detail": "global_evidence",
     "search_submit_iteration_plan": "iteration_plan",
     "search_run_verifier": "verifier",
 }
