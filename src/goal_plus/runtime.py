@@ -1721,10 +1721,12 @@ class FileSearchRuntime:
         is_native_session_resume = (
             continuation_mode == "native_session" and dispatch_count > 0
         )
+        supplemental_enabled = supplemental_evaluation_enabled()
         return {
             "agent_session_id": session.agent_session_id,
             "run_id": session.run_id,
             "candidate_id": session.candidate_id,
+            "supplemental_evaluation_enabled": supplemental_enabled,
             "selected_model": (
                 session.selected_model.model if session.selected_model else None
             ),
@@ -1788,7 +1790,7 @@ class FileSearchRuntime:
                     commit=str(entry["commit"]),
                     view_created_at=str(entry["view_created_at"]),
                     supplemental_evaluation_present=(
-                        entry["supplemental_evaluation"] is not None
+                        bool(entry.get("supplemental_available"))
                     ),
                 )
                 for entry in view
@@ -1819,6 +1821,63 @@ class FileSearchRuntime:
             )
         self._kick_evidence_annotator(session.run_id)
         return view
+
+    def get_evidence_detail(
+        self,
+        agent_session_id: str,
+        candidate_id: str,
+        iteration: int,
+    ) -> dict[str, Any]:
+        """Return one immutable supplemental evaluation visible to a worker."""
+        session = self._load_agent_session_by_id(agent_session_id)
+        if not supplemental_evaluation_enabled():
+            raise RuntimeError("supplemental evaluation is disabled for this run")
+        run = self._load_run(session.run_id)
+        frozen = self._load_frozen_spec(run.frozen_spec_id)
+        if (
+            self._global_evidence_mode(frozen.spec.strategy.config) == "independent"
+            and candidate_id != session.candidate_id
+        ):
+            raise PermissionError(
+                "independent Global Evidence only exposes the caller's candidate"
+            )
+
+        entry = next(
+            (
+                item
+                for item in self._global_evidence_view(session.run_id)
+                if item["candidate_id"] == candidate_id
+                and item["iteration"] == iteration
+            ),
+            None,
+        )
+        if entry is None:
+            raise ValueError("settled worker Evidence iteration not found")
+
+        task = self._load_evidence_annotation_task(
+            session.run_id, candidate_id, iteration
+        )
+        view = task.view if task is not None and task.state == "completed" else None
+        if (
+            task is None
+            or view is None
+            or task.run_id != session.run_id
+            or task.candidate_id != candidate_id
+            or task.iteration != iteration
+            or task.attempt_commit != entry["commit"]
+        ):
+            raise RuntimeError("supplemental Evidence identity does not match iteration")
+        if view.supplemental_evaluation is None:
+            raise RuntimeError("supplemental evaluation is not available")
+
+        return {
+            "candidate_id": candidate_id,
+            "iteration": iteration,
+            "commit": entry["commit"],
+            "supplemental_evaluation": view.supplemental_evaluation.model_dump(
+                mode="json"
+            ),
+        }
 
     @staticmethod
     def _global_evidence_mode(config: dict[str, Any]) -> str:
@@ -3568,7 +3627,7 @@ class FileSearchRuntime:
             "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
             "process verifier 返回 keep/retain/discard/failure disposition；严格硬分改善为 keep，同分为 retain 并成为 candidate-local 最新基线，只有退化或验证失败时 runtime 才恢复此前硬分最佳。开放式补充评价和 peer 比较不改变结算、硬分或最终验收。下一轮直接从返回后的已结算工作区继续。",
             "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
-            "Global Evidence 展示 peer 的 verifier commit、硬分、disposition、可能延迟的客观 View，以及 annotator 基于实际 Evidence 生成的开放式 supplemental_evaluation。它会动态比较 annotation task 创建时其他已结算候选，但不使用 FrozenSpec 软标准、不参与结算或最终验收。将它视为第三方观察而非推荐；任一 View 为 null 都不要求等待。只有代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
+            "按 context.supplemental_evaluation_enabled 和 Evidence 的 supplemental_available 标记按需读取一次 search_get_evidence_detail；补充评价不参与结算。仅在当前 Git 能解析该 commit 且代码证据必要时用 git diff HEAD <commit> -- <allowed-file> 做只读比较；不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
         ]
         share_out_dir = None
         if frozen.spec.shared_dir.enabled:
@@ -6163,7 +6222,7 @@ class FileSearchRuntime:
             item.tool_id: item
             for item in (view.tool_views if view is not None else [])
         }
-        return {
+        entry = {
             "candidate_id": candidate_id,
             "iteration": iteration.iteration,
             "commit": iteration.git_head,
@@ -6171,11 +6230,6 @@ class FileSearchRuntime:
             "disposition": iteration.disposition,
             "view": view.description if view is not None else None,
             "view_created_at": view.created_at if view is not None else None,
-            "supplemental_evaluation": (
-                view.supplemental_evaluation.model_dump(mode="json")
-                if view is not None and view.supplemental_evaluation is not None
-                else None
-            ),
             "shared_tools": [
                 {
                     **tool.model_dump(mode="json", exclude={"read_only_path"}),
@@ -6185,6 +6239,9 @@ class FileSearchRuntime:
                 if tool.tool_id in tool_views
             ],
         }
+        if view is not None and view.supplemental_evaluation is not None:
+            entry["supplemental_available"] = True
+        return entry
 
     def _global_evidence_view(self, run_id: str) -> list[dict[str, Any]]:
         evidence = [

@@ -162,19 +162,7 @@ redispatch 只用于恢复，并继续使用同一个 candidate 工作区、Git 
   "disposition": "keep",
   "view": "将调度逻辑改为按依赖深度分组。",
   "view_created_at": "2026-08-06T12:00:00Z",
-  "supplemental_evaluation": {
-    "summary": "该版本减少了调度扫描，但资源上限仍缺少公开证据。",
-    "dimensions": [
-      {
-        "name": "调度复杂度",
-        "finding": "累计 diff 将重复扫描替换为按深度分组。",
-        "confidence": "low",
-        "evidence": ["scheduler.py cumulative diff"]
-      }
-    ],
-    "comparisons": [],
-    "limitations": ["公开 Evidence 未覆盖资源极限组合。"]
-  }
+  "supplemental_available": true
 }
 ```
 
@@ -187,6 +175,22 @@ Global Evidence 中。每项包含 runtime 绑定的 `tool_view`、`tool_id`、`
 工具化决策本身不进入 Global Evidence。完整状态流保持为：
 `ToolizationDecision -> IterationRecord`，以及独立的
 `staging -> passing verifier -> SharedToolRecord -> Tool View -> Global Evidence -> copy receipt -> adopted_tools`。
+
+完整评价不在窄视图中重复返回。worker 仅在 `search_get_agent_context` 的
+`supplemental_evaluation_enabled=true` 且目标行
+`supplemental_available=true` 时按需调用：
+
+```text
+search_get_evidence_detail(
+  agent_session_id="<current-session>",
+  candidate_id="c001",
+  iteration=3
+)
+```
+
+工具只解析调用方当前 run 的已结算 Evidence identity；`independent` 模式只允许读取自己
+candidate。返回完整 `supplemental_evaluation`，但不暴露 annotation 文件路径、peer
+workspace、transcript 或推理。
 
 verifier 会同步发布 `candidate_id`、`iteration`、`commit`、`score` 和
 `disposition`。`disposition` 取值为：
