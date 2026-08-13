@@ -3483,7 +3483,9 @@ class FileSearchRuntime:
             return prompt_path.read_text(encoding="utf-8")
         return (
             "首先调用 search_get_agent_context。只能在候选工作区中工作。"
-            "每轮编辑前读取 search_get_global_evidence，修改后带一句话 hypothesis 调用 "
+            "首次编辑前读取 search_get_global_evidence；此后每完成 3 次 verifier iteration "
+            "刷新一次，连续两轮没有提升或切换技术路线时提前刷新；verifier 已注入的 "
+            "global_evidence_snapshot 算作刷新。修改后带一句话 hypothesis 调用 "
             "search_run_verifier。不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`；"
             "所有正确性与指标反馈必须通过 `search_run_verifier`。使用运行时证据，不要依赖 "
             "transcript。"
@@ -3621,7 +3623,7 @@ class FileSearchRuntime:
             "不要删除、移动或清理文件；禁止 rm、mv、rmdir、unlink、trash 和 find -delete 等破坏性命令。",
             "使用 git status、git diff 和 git log 分析工作区；runtime 拥有 verifier-backed iteration 的提交和回滚，不要自行 reset、restore 或 checkout 已验证状态。",
             "所有评分都必须通过 goal-plus_search_run_verifier；不要通过 bash 直接运行 process_verifiers 命令，也不要自行编写评分器。",
-            "每轮修改前调用 search_get_global_evidence；结合 Evidence 和本地代码独立思考，不需要等待尚未生成的 View。",
+            "首次修改前调用 search_get_global_evidence；此后无需每轮读取，每完成 3 次 search_run_verifier iteration 刷新一次，连续两轮没有提升或准备切换技术路线时提前刷新。若 verifier 返回 global_evidence_injected=true，其中的 global_evidence_snapshot 已完成本次刷新，无需重复调用。结合 Evidence 和本地代码独立思考，不需要等待尚未生成的 View。",
             "把 context.agent_session_id 传给 search_run_verifier，并省略 scope 以使用 process verifier；同时用一句话 hypothesis 客观概括本轮实际尝试。",
             "每次 run_verifier 调用都会记录一个 iteration。在配置的 host 预算内工作。尽早完成并验证候选，在达到限制前停止启动新的优化 iteration，并留出足够时间返回简洁摘要。",
             "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",

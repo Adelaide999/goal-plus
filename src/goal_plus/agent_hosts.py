@@ -213,7 +213,9 @@ CODEX_CLOSEOUT_MESSAGE = (
 
 CODEX_WORKER_BOUNDARY = (
     "你是 Search 候选 worker，不是搜索编排器。首先使用提供的 agent_session_id 调用 "
-    "search_get_agent_context。每轮修改前调用 search_get_global_evidence，独立思考后编辑，"
+    "search_get_agent_context。首次修改前调用 search_get_global_evidence；此后每完成 3 次 "
+    "search_run_verifier iteration 刷新一次，连续两轮没有提升或切换技术路线时提前刷新；"
+    "verifier 已注入的 global_evidence_snapshot 算作刷新。独立思考后编辑，"
     "并为该 agent session 调用 search_run_verifier，同时用一句话 hypothesis 概括实际尝试。"
     "不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`，也不得直接执行或导入冻结 "
     "verifier 命令来获取 score、pass/fail 或 correctness。所有正确性与指标反馈必须通过 "
@@ -486,7 +488,7 @@ class CodexAdapter:
                 "continue_existing_agent_session=true; "
                 f"agent_session_id={agent_session_id}; "
                 f"candidate_id={candidate_id}; "
-                "编辑前刷新 search_get_agent_context 和 search_get_global_evidence；"
+                "刷新 search_get_agent_context，并继续遵循 Global Evidence 的定期刷新节奏；"
                 f"继续同一个 candidate 和 workspace；指令：{one_paragraph_idea}"
             ),
         }

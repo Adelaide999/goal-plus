@@ -499,6 +499,7 @@ def test_codex_continue_uses_followup_task_with_watchdog() -> None:
     assert payload["tool"] == "followup_task"
     assert payload["target"] == "search_agent_0001"
     assert "continue_existing_agent_session=true" in payload["message"]
+    assert "Global Evidence 的定期刷新节奏" in payload["message"]
     assert payload["budget_control"]["max_runtime_seconds"] == 900
     assert payload["budget_control"]["interrupt_target"] == "search_agent_0001"
 
