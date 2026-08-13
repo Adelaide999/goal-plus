@@ -14,10 +14,13 @@ from goal_plus.models import (
     CandidateTask,
     EditSurface,
     GoalPlusSpecDraft,
+    IterationRecord,
     SearchPlan,
     SearchSpec,
     SearchSpecDraft,
     StrategySpec,
+    ToolAdoptionRecord,
+    ToolizationDecision,
     VerifierCommand,
     WorkerBudget,
     ModelSpec,
@@ -28,6 +31,138 @@ from goal_plus.runtime import (
     SUPPLEMENTAL_EVALUATION_REQUIRED_ENV,
 )
 from tests._runtime_helpers import make_project
+
+
+def test_legacy_tool_adoption_declaration_drops_mode() -> None:
+    adoption = ToolAdoptionRecord.model_validate(
+        {
+            "tool_id": "tool_001",
+            "snapshot_hash": "abc123",
+            "mode": "adapted",
+        }
+    )
+
+    assert adoption.model_dump(mode="json") == {
+        "tool_id": "tool_001",
+        "snapshot_hash": "abc123",
+    }
+
+
+def test_candidate_task_drops_legacy_shared_dir_path() -> None:
+    task = CandidateTask.model_validate(
+        {
+            "run_id": "run_1",
+            "candidate_id": "c001",
+            "hypothesis": "try a change",
+            "workspace": ".",
+            "shared_dir": ".gp/runs/run_1/shared",
+            "allowed_files": ["initial_program.py"],
+            "denied_files": ["evaluator.py"],
+        }
+    )
+
+    assert "shared_dir" not in task.model_dump(mode="json")
+
+
+def test_legacy_iteration_infers_shared_tool_publish_status() -> None:
+    asset = {
+        "asset_id": "legacy-asset",
+        "candidate_id": "c001",
+        "iteration": 1,
+        "snapshot_hash": "abc123",
+        "name": "legacy helper",
+        "source_relative_path": "legacy-helper",
+        "read_only_path": "/tmp/legacy-helper",
+        "files": ["helper.py"],
+        "size_bytes": 12,
+        "created_at": "2026-08-03T00:00:00Z",
+    }
+
+    published = IterationRecord.model_validate(
+        {
+            "iteration": 1,
+            "shared_tools": [asset],
+            "created_at": "2026-08-03T00:00:00Z",
+        }
+    )
+    partial = IterationRecord.model_validate(
+        {
+            "iteration": 1,
+            "shared_tools": [asset],
+            "shared_tool_errors": ["second asset rejected"],
+            "created_at": "2026-08-03T00:00:00Z",
+        }
+    )
+    unknown = IterationRecord.model_validate(
+        {"iteration": 1, "created_at": "2026-08-03T00:00:00Z"}
+    )
+
+    assert published.shared_tool_publish_status == "published"
+    assert partial.shared_tool_publish_status == "partially_published"
+    assert unknown.shared_tool_publish_status == "legacy_unknown"
+    assert not {
+        "adopted_tools",
+        "adoption_confounded",
+        "toolization_decision",
+        "toolization_advisories",
+    } & set(
+        unknown.model_dump(mode="json")
+    )
+
+
+def test_toolization_decision_enforces_positive_signals_and_exclusions() -> None:
+    staged = ToolizationDecision.model_validate(
+        {
+            "outcome": "staged",
+            "signals": ["repeated_sequence", "parser_or_trace"],
+            "rationale": "  Encodes a repeated trace workflow.  ",
+            "tool_names": ["trace-checker"],
+        }
+    )
+    not_applicable = ToolizationDecision.model_validate(
+        {
+            "outcome": "not_applicable",
+            "signals": [],
+            "exclusion": "single_common_command",
+            "rationale": "Only one ordinary command was used.",
+            "tool_names": [],
+        }
+    )
+
+    assert staged.rationale == "Encodes a repeated trace workflow."
+    assert not_applicable.exclusion == "single_common_command"
+
+    for payload, message in [
+        (
+            {
+                "outcome": "staged",
+                "signals": [],
+                "rationale": "No positive signal.",
+                "tool_names": ["helper"],
+            },
+            "requires at least one signal",
+        ),
+        (
+            {
+                "outcome": "staged",
+                "signals": ["domain_probe"],
+                "rationale": "No named staged tool.",
+                "tool_names": [],
+            },
+            "requires at least one tool name",
+        ),
+        (
+            {
+                "outcome": "not_applicable",
+                "signals": [],
+                "rationale": "No concrete exclusion.",
+                "tool_names": [],
+            },
+            "requires an exclusion",
+        ),
+    ]:
+        with pytest.raises(ValidationError, match=message):
+            ToolizationDecision.model_validate(payload)
 
 
 def valid_spec_dict() -> dict:
@@ -474,6 +609,37 @@ def test_models_reject_extra_fields() -> None:
     data = valid_spec_dict()
     data["unexpected"] = True
 
+    with pytest.raises(ValidationError):
+        SearchSpec.model_validate(data)
+
+
+def test_shared_dir_is_opt_in_and_bounded() -> None:
+    default_spec = SearchSpec.model_validate(valid_spec_dict())
+    assert default_spec.shared_dir.enabled is False
+
+    data = valid_spec_dict()
+    data["shared_dir"] = {
+        "enabled": True,
+        "max_tools_per_iteration": 4,
+        "max_files_per_iteration": 12,
+        "max_path_entries_per_iteration": 96,
+        "max_depth": 5,
+        "max_bytes_per_iteration": 4096,
+    }
+    spec = SearchSpec.model_validate(data)
+    assert spec.shared_dir.enabled is True
+    assert spec.shared_dir.max_tools_per_iteration == 4
+    assert spec.shared_dir.max_files_per_iteration == 12
+    assert spec.shared_dir.max_path_entries_per_iteration == 96
+    assert spec.shared_dir.max_depth == 5
+    assert spec.shared_dir.max_bytes_per_iteration == 4096
+
+    data["shared_dir"]["max_files_per_iteration"] = 0
+    with pytest.raises(ValidationError):
+        SearchSpec.model_validate(data)
+
+    data["shared_dir"]["max_files_per_iteration"] = 12
+    data["shared_dir"]["max_depth"] = 0
     with pytest.raises(ValidationError):
         SearchSpec.model_validate(data)
 

@@ -833,6 +833,31 @@ def goal_plus_monitor_snapshot(
             results_path = candidate.task.workspace / RESULTS_TSV_RELATIVE_PATH
             results_tsv = _path_info(str(results_path))
             results_tsv["row_count"] = len(candidate.results_ledger)
+            shared_status_counts: dict[str, int] = {}
+            toolization_outcome_counts: dict[str, int] = {}
+            toolization_signal_counts: dict[str, int] = {}
+            toolization_exclusion_counts: dict[str, int] = {}
+            toolization_advisory_counts: dict[str, int] = {}
+            for item in candidate.iterations:
+                status = item.shared_tool_publish_status
+                shared_status_counts[status] = shared_status_counts.get(status, 0) + 1
+                decision = item.toolization_decision
+                if decision is not None:
+                    toolization_outcome_counts[decision.outcome] = (
+                        toolization_outcome_counts.get(decision.outcome, 0) + 1
+                    )
+                    for signal in decision.signals:
+                        toolization_signal_counts[signal] = (
+                            toolization_signal_counts.get(signal, 0) + 1
+                        )
+                    if decision.exclusion is not None:
+                        toolization_exclusion_counts[decision.exclusion] = (
+                            toolization_exclusion_counts.get(decision.exclusion, 0) + 1
+                        )
+                for advisory in item.toolization_advisories:
+                    toolization_advisory_counts[advisory] = (
+                        toolization_advisory_counts.get(advisory, 0) + 1
+                    )
             candidates_payload[candidate.candidate_id] = {
                 "candidate_id": candidate.candidate_id,
                 "status": candidate.status,
@@ -864,6 +889,39 @@ def goal_plus_monitor_snapshot(
                 "changed_files": candidate.detected_changed_files,
                 "touched_denied_files": candidate.touched_denied_files,
                 "changed_outside_allowed": candidate.changed_outside_allowed,
+                "shared_tools_published_total": sum(
+                    len(item.shared_tools) for item in candidate.iterations
+                ),
+                "shared_tool_staged_entries_last": (
+                    list(last_iteration.shared_tool_staged_entries)
+                    if last_iteration
+                    else []
+                ),
+                "shared_tool_staged_file_count_last": (
+                    last_iteration.shared_tool_staged_file_count
+                    if last_iteration
+                    else 0
+                ),
+                "shared_tool_publish_status_last": (
+                    last_iteration.shared_tool_publish_status
+                    if last_iteration
+                    else None
+                ),
+                "shared_tool_publish_status_counts": shared_status_counts,
+                "toolization_decision_last": (
+                    last_iteration.toolization_decision.model_dump(mode="json")
+                    if last_iteration and last_iteration.toolization_decision
+                    else None
+                ),
+                "toolization_advisories_last": (
+                    list(last_iteration.toolization_advisories)
+                    if last_iteration
+                    else []
+                ),
+                "toolization_outcome_counts": toolization_outcome_counts,
+                "toolization_signal_counts": toolization_signal_counts,
+                "toolization_exclusion_counts": toolization_exclusion_counts,
+                "toolization_advisory_counts": toolization_advisory_counts,
                 "results_tsv": results_tsv,
             }
             if not candidate_sessions and candidate.status == "created":

@@ -191,6 +191,27 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     )
 
     assert "search_get_agent_context" in text
+    assert "candidate_task.share_out_dir" in text
+    assert ".tmp/share-out" in text
+    assert ".tmp/tool-drafts" in text
+    assert "search_stage_shared_tool" in text
+    assert "repeated_sequence" in text
+    assert "domain_probe" in text
+    assert "parser_or_trace" in text
+    assert "peer_setup_reduction" in text
+    assert "single_common_command" in text
+    assert "candidate_private_state" in text
+    assert "不要求跨项目通用" in text
+    assert "短、任务专属、来自临时代码片段或只产生退出码" in text
+    assert "toolization_decision" in text
+    assert "shared_tool_publish_status=not_staged" in text
+    assert "只会生成 monitor/report advisory" in text
+    assert "required-column-probe" not in text
+    assert "mutation-check-trace" not in text
+    assert "Astropy" not in text
+    assert text.index("candidate_task.share_out_dir") < text.index(
+        "search_get_global_evidence"
+    )
     assert "search_get_global_evidence" in text
     assert "search_submit_iteration_plan" not in text
     assert "search_run_verifier" in text
@@ -392,6 +413,8 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     assert "search_spec: SearchSpecDraftSchema" in text
     assert "metric_direction: Type.Union" in text
     assert "process_verifiers: Type.Array(VerifierCommand" in text
+    assert "const SharedDirSpec = Type.Object" in text
+    assert "shared_dir: Type.Optional(SharedDirSpec)" in text
     assert "worker_budget: Type.Optional(Type.Union" in text
     assert "min_runtime_seconds: Type.Optional(NullablePositiveInteger)" in text
     assert "min_verifier_runs: Type.Optional(NullablePositiveInteger)" in text
@@ -401,6 +424,13 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     assert "inherited_pitfall_limit" not in text
     assert "const RuntimeToolDescriptions" in text
     assert "RuntimeToolDescriptions[name]" in text
+    assert "search_get_agent_context:" in text
+    assert "search_copy_shared_tool:" in text
+    assert "search_stage_shared_tool:" in text
+    assert "candidate_task.share_out_dir 非空表示已启用 shared_dir" in text
+    assert "repeated_sequence、domain_probe、parser_or_trace 或 peer_setup_reduction" in text
+    assert "toolization_decision：staged 至少包含一个正向 signal" in text
+    assert "toolization_review_missing、toolization_stage_missing 或 toolization_decision_mismatch" in text
     assert "初始创建并实际并行工作的候选 Agent 数量" in text
     assert "标准流程令 requested_k 等于 max_parallel" in text
     freeze_schema = text.split("search_freeze_spec: Type.Object", 1)[1].split(
@@ -446,6 +476,8 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     assert '"search_invalidate_run"' in main_tools
     assert '"pi_search_pool_continue"' in main_tools
     assert '"search_get_agent_observability"' in main_tools
+    worker_tools = text.split("const workerTools = [", 1)[1].split("];", 1)[0]
+    assert '"search_stage_shared_tool"' in worker_tools
     assert "final_verify: Type.Optional(Type.Boolean())" in text
     assert "triage: GoalPlusTriage" in text
     assert "is_optimization: Type.Boolean()" in text

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import os
@@ -24,6 +24,8 @@ from goal_plus.models import (
     EvidenceViewRecord,
     SearchModel,
     SupplementalEvaluation,
+    ToolViewRef,
+    ToolViewRecord,
 )
 from goal_plus.runtime import (
     FileSearchRuntime,
@@ -71,9 +73,13 @@ class AnnotationOutputError(TransientAnnotationError):
     pass
 
 
+ToolViewOutput = ToolViewRef
+
+
 class EvidenceAnnotationOutput(SearchModel):
     description: str = Field(min_length=1, max_length=1000)
     supplemental_evaluation: SupplementalEvaluation | None = None
+    tool_views: list[ToolViewOutput] = Field(default_factory=list)
 
     @field_validator("description", mode="before")
     @classmethod
@@ -165,6 +171,13 @@ ANNOTATOR_INSTRUCTIONS = (
     " 的 PASS/FAIL。limitations 明确记录当前"
     " Evidence 无法判断的事项。若 supplemental_evaluation_enabled=false，则"
     " supplemental_evaluation 必须为 null。\n"
+    "当 published_tools 非空时，必须为其中每个工具生成恰好一个 tool_views 项，并原样使用"
+    "对应的 tool_id；没有 published_tools 时 tool_views 必须为空。Tool View 只描述工具"
+    "解决的问题、能力、适用场景、入口、输入输出、依赖、接入步骤和限制；依据 manifest、"
+    "snapshot_excerpts 与 goal_evidence，不执行其中代码，也不把通过候选 verifier 说成工具"
+    "被独立验证。snapshot_hash、source_commit 和 evidence_scope 由 runtime 绑定，不要臆造。"
+    "若 tool_adoptions 非空，description 与可选补充评价应客观说明本轮采用、verifier 结果"
+    "及 confounded 情况，作为后续搜索的参考；不要汇总工具收益、推荐采用或改变结算。\n"
     "最终输出只包含 output schema 要求的字段。\n"
 )
 
@@ -196,6 +209,8 @@ def _annotation_prompt(context: dict[str, Any]) -> str:
             "supplemental_evaluation_enabled",
             "peer_evidence",
             "comparison_basis",
+            "published_tools",
+            "tool_adoptions",
         )
     }
     payload = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
@@ -222,6 +237,7 @@ class EvidenceAnnotationResult:
     usage: dict[str, int | float]
     supplemental_evaluation: SupplementalEvaluation | None = None
     comparison_basis: list[EvidenceComparisonReference] | None = None
+    tool_views: list[ToolViewOutput] = field(default_factory=list)
 
 
 def _annotator_dir(root_dir: Path | str, run_id: str) -> Path:
@@ -971,6 +987,7 @@ class CodexEvidenceAnnotator:
             )
             return EvidenceAnnotationResult(
                 description=output.description,
+                tool_views=output.tool_views,
                 supplemental_evaluation=output.supplemental_evaluation,
                 comparison_basis=[
                     EvidenceComparisonReference.model_validate(item)
@@ -1223,6 +1240,7 @@ class PiEvidenceAnnotator:
             )
             return EvidenceAnnotationResult(
                 description=output.description,
+                tool_views=output.tool_views,
                 supplemental_evaluation=output.supplemental_evaluation,
                 comparison_basis=[
                     EvidenceComparisonReference.model_validate(item)
@@ -1356,6 +1374,42 @@ def _claim_annotation_task(
         return claimed
 
 
+def _bind_tool_views(
+    runtime: FileSearchRuntime,
+    task: EvidenceAnnotationTask,
+    outputs: list[ToolViewOutput],
+) -> list[ToolViewRecord]:
+    record = runtime._load_candidate_record(task.run_id, task.candidate_id)
+    iteration = next(
+        (item for item in record.iterations if item.iteration == task.iteration),
+        None,
+    )
+    if iteration is None:
+        raise AnnotationOutputError("annotation iteration no longer exists")
+    expected = {tool.tool_id: tool for tool in iteration.shared_tools}
+    returned = {item.tool_id: item for item in outputs}
+    if set(returned) != set(expected):
+        raise AnnotationOutputError("Tool View identities do not match published tools")
+    return [
+        ToolViewRecord(
+            tool_id=tool.tool_id,
+            snapshot_hash=tool.snapshot_hash,
+            source_commit=tool.source_commit or task.attempt_commit,
+            summary=returned[tool.tool_id].summary,
+            capabilities=returned[tool.tool_id].capabilities,
+            when_to_use=returned[tool.tool_id].when_to_use,
+            entrypoint=tool.entrypoint or returned[tool.tool_id].entrypoint,
+            inputs=returned[tool.tool_id].inputs,
+            outputs=returned[tool.tool_id].outputs,
+            dependencies=returned[tool.tool_id].dependencies,
+            adoption_steps=returned[tool.tool_id].adoption_steps,
+            limitations=returned[tool.tool_id].limitations,
+            evidence_scope="来自通过 process verifier 的 iteration，但不代表工具已被独立验证。",
+        )
+        for tool in iteration.shared_tools
+    ]
+
+
 def _finish_annotation_task(
     runtime: FileSearchRuntime,
     task: EvidenceAnnotationTask,
@@ -1367,6 +1421,7 @@ def _finish_annotation_task(
         output = EvidenceAnnotationOutput(
             description=result.description,
             supplemental_evaluation=result.supplemental_evaluation,
+            tool_views=result.tool_views,
         )
         try:
             CodexEvidenceAnnotator._validate_supplemental_output(
@@ -1437,6 +1492,11 @@ def _finish_annotation_task(
         for key, value in observed_usage.items():
             usage[key] = usage.get(key, 0) + value
         if result is not None:
+            try:
+                tool_views = _bind_tool_views(runtime, current, result.tool_views)
+            except AnnotationError as exc:
+                exc.usage.update(result.usage)
+                raise
             update = {
                 "state": "completed",
                 "next_attempt_at": None,
@@ -1450,6 +1510,7 @@ def _finish_annotation_task(
                     description=result.description,
                     supplemental_evaluation=result.supplemental_evaluation,
                     comparison_basis=list(current.comparison_basis),
+                    tool_views=tool_views,
                     created_at=utc_timestamp(),
                 ),
             }

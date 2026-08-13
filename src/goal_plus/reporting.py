@@ -379,16 +379,18 @@ tbody tr:last-child td { border-bottom: 0; }
 .evidence-view-filter input { width: 220px; }
 .evidence-view-count { min-width: 82px; padding-bottom: 8px; color: var(--muted); font-size: 11px; text-align: right; }
 .evidence-view-scroll { max-height: 680px; border-radius: 0 0 6px 6px; overflow: auto; scrollbar-gutter: stable; }
-.evidence-view-table { min-width: 1420px; table-layout: fixed; }
+.evidence-view-table { min-width: 1880px; table-layout: fixed; }
 .evidence-view-table thead { position: sticky; top: 0; z-index: 3; }
 .evidence-view-table th:nth-child(1) { width: 178px; }
 .evidence-view-table th:nth-child(2) { width: 94px; }
 .evidence-view-table th:nth-child(3) { width: 74px; }
 .evidence-view-table th:nth-child(4) { width: 90px; }
 .evidence-view-table th:nth-child(5) { width: 112px; }
-.evidence-view-table th:nth-child(6) { width: 330px; }
-.evidence-view-table th:nth-child(7) { width: 390px; }
-.evidence-view-table th:nth-child(8) { width: 150px; }
+.evidence-view-table th:nth-child(6) { width: 250px; }
+.evidence-view-table th:nth-child(7) { width: 330px; }
+.evidence-view-table th:nth-child(8) { width: 270px; }
+.evidence-view-table th:nth-child(9) { width: 190px; }
+.evidence-view-table th:nth-child(10) { width: 150px; }
 .evidence-view-table tbody tr:hover td { background: var(--accent-soft); }
 .evidence-view-table .official-evidence-row td { background: #f2f8fa; }
 .evidence-view-table .official-evidence-row:hover td { background: #e2f0f3; }
@@ -397,6 +399,10 @@ tbody tr:last-child td { border-bottom: 0; }
 .evidence-view-copy { color: var(--text); font-weight: 600; line-height: 18px; }
 .evidence-view-meta { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
 .evidence-view-empty { color: var(--muted); font-style: italic; }
+.evidence-tool-list { display: grid; gap: 8px; }
+.evidence-tool { line-height: 16px; }
+.evidence-tool-id { color: var(--accent); font-size: 11px; font-weight: 700; }
+.evidence-tool-detail { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .evidence-view-error { margin-top: 5px; color: var(--failure); font-size: 11px; line-height: 16px; }
 .evidence-view-monitor { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 15px; }
 .revision { display: block; overflow: hidden; color: var(--accent); text-overflow: ellipsis; white-space: nowrap; }
@@ -1359,6 +1365,24 @@ def _report_iteration_payload(
         "view_error": annotation.last_error if annotation is not None else None,
         "annotation_attempts": annotation.attempts if annotation is not None else 0,
         "annotation_monitor": annotation_monitor,
+        "published_tool_views": (
+            [tool_view.model_dump(mode="json") for tool_view in view.tool_views]
+            if view is not None
+            else []
+        ),
+        "adopted_tools": [
+            adopted_tool.model_dump(mode="json")
+            for adopted_tool in iteration.adopted_tools
+        ],
+        "adoption_confounded": iteration.adoption_confounded,
+        "toolization_decision": (
+            iteration.toolization_decision.model_dump(mode="json")
+            if iteration.toolization_decision is not None
+            else None
+        ),
+        "toolization_advisories": list(iteration.toolization_advisories),
+        "shared_tool_staged_entries": list(iteration.shared_tool_staged_entries),
+        "shared_tool_publish_status": iteration.shared_tool_publish_status,
     }
 
 
@@ -3477,6 +3501,122 @@ def _render_shared_evidence_view(task: dict[str, Any]) -> str:
             for value in values
         )
 
+    def published_tool_views(item: dict[str, Any]) -> str:
+        if item.get("evidence_source"):
+            return '<div class="evidence-view-empty">Not applicable</div>'
+        views = item.get("published_tool_views")
+        if not isinstance(views, list) or not views:
+            return '<div class="evidence-view-empty">None published</div>'
+        rendered = []
+        for tool_view in views:
+            if not isinstance(tool_view, dict):
+                continue
+            tool_id = tool_view.get("tool_id")
+            summary = tool_view.get("summary")
+            if not isinstance(tool_id, str) or not isinstance(summary, str):
+                continue
+            detail = []
+            entrypoint = tool_view.get("entrypoint")
+            if isinstance(entrypoint, str) and entrypoint:
+                detail.append(f"Entrypoint: {entrypoint}")
+            when_to_use = tool_view.get("when_to_use")
+            if isinstance(when_to_use, str) and when_to_use:
+                detail.append(f"Use: {when_to_use}")
+            rendered.append(
+                '<div class="evidence-tool">'
+                f'<div class="evidence-tool-id">{_html(tool_id)}</div>'
+                f'<div>{_html(summary)}</div>'
+                + (
+                    f'<div class="evidence-tool-detail">{_html(" | ".join(detail))}</div>'
+                    if detail
+                    else ""
+                )
+                + "</div>"
+            )
+        return (
+            f'<div class="evidence-tool-list">{"".join(rendered)}</div>'
+            if rendered
+            else '<div class="evidence-view-empty">None published</div>'
+        )
+
+    def tool_adoption_summary(item: dict[str, Any]) -> str:
+        if item.get("evidence_source"):
+            return '<div class="evidence-view-empty">Not applicable</div>'
+        adoptions = item.get("adopted_tools")
+        if not isinstance(adoptions, list) or not adoptions:
+            return '<div class="evidence-view-empty">No shared tool adopted</div>'
+        rendered = []
+        for adoption in adoptions:
+            if not isinstance(adoption, dict):
+                continue
+            tool_id = adoption.get("tool_id")
+            snapshot_hash = adoption.get("snapshot_hash")
+            if not isinstance(tool_id, str) or not isinstance(snapshot_hash, str):
+                continue
+            receipt_id = adoption.get("receipt_id")
+            detail = f"snapshot {snapshot_hash[:12]}"
+            if isinstance(receipt_id, str) and receipt_id:
+                detail += f" | receipt {receipt_id}"
+            rendered.append(
+                '<div class="evidence-tool">'
+                f'<div class="evidence-tool-id">{_html(tool_id)}</div>'
+                f'<div class="evidence-tool-detail">{_html(detail)}</div>'
+                "</div>"
+            )
+        if not rendered:
+            return '<div class="evidence-view-empty">No shared tool adopted</div>'
+        qualifier = (
+            '<div class="evidence-tool-detail">Confounded adoption trial</div>'
+            if item.get("adoption_confounded") is True
+            else '<div class="evidence-tool-detail">Isolated adoption trial</div>'
+        )
+        return f'<div class="evidence-tool-list">{"".join(rendered)}{qualifier}</div>'
+
+    def toolization_review(item: dict[str, Any]) -> str:
+        if item.get("evidence_source"):
+            return '<div class="evidence-view-empty">Not applicable</div>'
+        decision = item.get("toolization_decision")
+        advisories = item.get("toolization_advisories") or []
+        staged_entries = item.get("shared_tool_staged_entries") or []
+        publish_status = item.get("shared_tool_publish_status")
+        if not isinstance(decision, dict):
+            decision_copy = '<div class="evidence-view-empty">Review missing</div>'
+        else:
+            outcome = decision.get("outcome")
+            signals = decision.get("signals") or []
+            exclusion = decision.get("exclusion")
+            tool_names = decision.get("tool_names") or []
+            details = []
+            if signals:
+                details.append("Signals: " + ", ".join(str(item) for item in signals))
+            if exclusion:
+                details.append(f"Exclusion: {exclusion}")
+            if tool_names:
+                details.append("Tools: " + ", ".join(str(item) for item in tool_names))
+            decision_copy = (
+                f'<div class="evidence-tool-id">{_html(outcome)}</div>'
+                f'<div>{_html(decision.get("rationale"))}</div>'
+                + (
+                    f'<div class="evidence-tool-detail">{_html(" | ".join(details))}</div>'
+                    if details
+                    else ""
+                )
+            )
+        settlement = [
+            f"Staged: {', '.join(str(item) for item in staged_entries) or 'none'}",
+            f"Publish: {publish_status or 'unknown'}",
+        ]
+        if advisories:
+            settlement.append(
+                "Advisory: " + ", ".join(str(item) for item in advisories)
+            )
+        return (
+            '<div class="evidence-tool">'
+            f"{decision_copy}"
+            f'<div class="evidence-tool-detail">{_html(" | ".join(settlement))}</div>'
+            "</div>"
+        )
+
     rows = []
     for item in rows_payload:
         candidate_id = str(item.get("candidate_id") or "")
@@ -3485,6 +3625,9 @@ def _render_shared_evidence_view(task: dict[str, Any]) -> str:
         commit = str(item.get("git_head") or "")
         evidence_source = item.get("evidence_source")
         view = item.get("view")
+        tool_view_copy = published_tool_views(item)
+        toolization_copy = toolization_review(item)
+        adoption_copy = tool_adoption_summary(item)
         view_copy = (
             f'<div class="evidence-view-copy">{_html(view)}</div>'
             if view
@@ -3548,6 +3691,9 @@ def _render_shared_evidence_view(task: dict[str, Any]) -> str:
             f"<td>{_status(disposition)}</td>"
             f'<td><div class="evidence-copy">{_html(attempt)}</div></td>'
             f'<td>{view_copy}{view_error}{monitor_copy}<div class="evidence-view-meta">{_status(view_state)}</div></td>'
+            f"<td>{toolization_copy}</td>"
+            f"<td>{tool_view_copy}</td>"
+            f"<td>{adoption_copy}</td>"
             f'<td><code class="revision" title="{escape(commit, quote=True)}">'
             f"{_html(commit[:12] if commit else None)}</code></td>"
             "</tr>"
@@ -3577,11 +3723,17 @@ def _render_shared_evidence_view(task: dict[str, Any]) -> str:
         '<div class="table-scroll evidence-view-scroll">'
         '<table class="evidence-view-table"><thead><tr>'
         "<th>Time</th><th>Candidate</th><th>Iteration</th><th>Score</th>"
-        "<th>Settlement</th><th>Worker attempt</th><th>Objective View</th><th>Revision</th>"
+        "<th>Settlement</th><th>Worker attempt</th><th>Objective View</th>"
+        "<th>Toolization Review</th><th>Published Tool View</th>"
+        "<th>Tool Adoption Summary</th><th>Revision</th>"
         f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
         '<p class="footnote">Worker attempt is the candidate-authored settled hypothesis. '
         "Objective View is the immutable best-effort annotation bound to the exact candidate, "
-        "iteration, and revision; missing Views are not inferred from worker text. Official "
+        "iteration, and revision; missing Views are not inferred from worker text. Published "
+        "Toolization Review compares the worker decision with the authoritative staging and "
+        "publication facts; its advisories do not affect scoring or settlement. Published "
+        "Tool Views appear only after that annotation binds them to the published snapshot. Tool "
+        "adoption summarizes verifier-consumed copy receipts and whether the trial was confounded. Official "
         "evaluation rows are external Judge observations bound to that same exact identity; "
         "they do not change local settlement or ranking.</p>"
         "</div>"

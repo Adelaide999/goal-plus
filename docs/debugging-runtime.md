@@ -286,12 +286,14 @@ guard events, stop continuation messages, and `.gp/goal-plus/...`.
     ├── candidates/<candidate_id>/
     │   ├── candidate.json                        # CandidateRecord: status, score_report, iterations[], results_ledger[]
     │   ├── task.json                             # CandidateTask snapshot
-    │   ├── evidence-annotations/iteration-<n>.json # async View task, retry, usage, optional immutable View
+    │   ├── evidence-annotations/iteration-<n>.json # async View task, retry, usage, immutable iteration/Tool Views
     │   └── logs/iteration-<n>-<verifier>-<id>.log # durable stdout/stderr per call
     ├── workspace/<candidate_id>/                 # the agent's editable workspace
     │   ├── .git/                                 # agent and runtime ledger Git history
     │   ├── results.tsv                           # committed, runtime-owned inherited append-only ledger
     │   └── <allowed_files>
+    ├── shared/index.json                         # optional runtime-internal tool publication index
+    ├── shared/tools/<candidate_id>/<iteration>/  # runtime-owned peer-readable snapshots
     ├── agent_sessions/<agent_session_id>.json    # AgentSessionRecord: candidate/host binding, launch payload, counters
     ├── report.md / report.html                   # text and self-contained audit reports
     └── promotion/                                # selected patch outputs

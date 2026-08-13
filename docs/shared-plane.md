@@ -77,7 +77,7 @@ Benchmark 机制消融由 controller 设置
 补充评价，不向 FrozenSpec 注入 criterion。ON/OFF 都不改变硬分结算、selection、
 promotion gate 或最终验收。
 
-Evidence annotator 默认继承 Search 的 `worker_host`。需要把 ViewAgent 作为独立机制控制
+Evidence annotator 默认继承 Search 的 `worker_host`。需要把 annotator 作为独立机制控制
 变量时，可以冻结 `strategy.evidence_annotator.host=codex` 或 `pi-rpc`；模型、provider、
 home 和调用进程都按该 host 解析，不改变候选 worker 的 host。未设置该字段时继续使用
 host-native 默认路径。
@@ -89,7 +89,7 @@ candidate 最多一个，固定其 candidate、iteration 和 commit，后续推�
 比较基线。
 
 为判断代码变化与原始请求是否相关，annotation task 记录与当前 Search run 绑定的准确
-Goal revision 引用和 SHA-256，而不复制 `raw_goal`。ViewAgent 启动时临时解析该 revision
+Goal revision 引用和 SHA-256，而不复制 `raw_goal`。annotator 启动时临时解析该 revision
 并校验 hash；没有绑定 Goal 时才退回 FrozenSpec objective。原始上下文只进入隔离的
 annotation prompt，不进入 Global Evidence、candidate task 或报告正文；报告只可保留来源、
 引用和 hash。benchmark adapter 只能提供公开任务字段，不能把 hidden judge、答案 patch
@@ -123,12 +123,27 @@ worker，再冻结修正后的 spec，创建 successor run。旧分数不能跨�
 1. 调用 `search_get_agent_context` 读取自己的权威状态和历史。
 2. 调用 `search_get_global_evidence` 读取当前 run 的共享视图。
 3. 独立选择方向，只修改自己的工作区。
-4. 调用 `search_run_verifier`，并用一句 `hypothesis` 描述实际完成的尝试。
-5. 从 verifier settlement 返回后的工作区继续。
+4. 启用 `shared_dir` 时回顾本轮及此前 iteration 的命令序列、临时代码片段和 scratch
+   scripts。命中正向工具化信号时，从 `.tmp/tool-drafts/` 显式选择源文件并调用
+   `search_stage_shared_tool`；否则记录具体排除项。
+5. 调用 `search_run_verifier`，用一句 `hypothesis` 描述实际完成的尝试，并在启用
+   `shared_dir` 时传入 `toolization_decision`。
+6. 从 verifier settlement 返回后的工作区继续。
 
 candidate 不需要在修改前提交 iteration plan。`hypothesis` 是完成尝试后的事实性
 自述，与 verifier 结果一起保存；它不是 pending plan，也不形成协调锁。多个
 candidate 可以同时读取同一版 Evidence 并并发工作。
+
+工具化的正向信号是：重复或等价的多步流程、非显然领域对象/边界/断言检查、解析/trace/
+复现/转换/mutation 检查，以及明显降低 peer 重建成本的流程。复用范围只要求同一 run 内的
+其他 candidate 有用，不要求跨项目通用；短小、任务专属、来自临时代码片段或只输出退出码
+都不能单独作为低价值理由。只有单条普通命令、无逻辑 wrapper、受限产物、依赖 candidate
+私有状态或与已发布快照完全相同才是具体排除项。
+
+`ToolizationDecision` 只是 `IterationRecord` 的普通事实。缺失、声明 staged 但 staging 为空，
+或声明 not_applicable 但 staging 非空会分别产生 advisory；这些字段只供 monitor/report，
+不改变 score、verifier disposition、selection 或 promotion。实际 staging inventory 与现有
+publication settlement 始终是权威。
 
 main agent 不向 worker 提供后续技术方向。正常路径优先续跑同一个原生 session；
 redispatch 只用于恢复，并继续使用同一个 candidate 工作区、Git 历史、verifier 历史
@@ -162,6 +177,16 @@ redispatch 只用于恢复，并继续使用同一个 candidate 工作区、Git 
   }
 }
 ```
+
+冻结 spec 显式启用 `shared_dir` 时，已发布工具还会以 `shared_tools` 出现在同一条
+Global Evidence 中。每项包含 runtime 绑定的 `tool_view`、`tool_id`、`snapshot_hash` 与
+`source_commit`。候选不会看到共享目录路径，也不能在 Tool View 生成前发现工具；它只能通过
+`search_copy_shared_tool` 按精确 id/hash 复制到本地临时 inbox，再在自己的 iteration 中重新验证。
+下一次 worker verifier 原子消费 copy receipt，并将采用作为该 iteration 的事实记录。工具描述与
+采用结果仅是后续搜索的参考，不单独聚合收益，也不改变硬分、retain/discard、选择或 promotion。
+工具化决策本身不进入 Global Evidence。完整状态流保持为：
+`ToolizationDecision -> IterationRecord`，以及独立的
+`staging -> passing verifier -> SharedToolRecord -> Tool View -> Global Evidence -> copy receipt -> adopted_tools`。
 
 verifier 会同步发布 `candidate_id`、`iteration`、`commit`、`score` 和
 `disposition`。`disposition` 取值为：
@@ -203,7 +228,7 @@ View 只用一句中文客观描述实际做了什么，不评价好坏、不推
 步。事实来源是 actual diff，而不是 candidate 的自述。Changed files、verifier command
 和 metrics 只提供验证上下文；命令名称本身或失败的测试不能证明目标行为已经实现。
 
-`supplemental_evaluation` 不读取 FrozenSpec 软标准。ViewAgent 只依据当前候选累计 diff、
+`supplemental_evaluation` 不读取 FrozenSpec 软标准。annotator 只依据当前候选累计 diff、
 公开 verifier Evidence 和 annotation task 创建时固定的 peer 快照，自行提出 1–8 个与当前
 任务实际相关的观察维度。它逐项给出 finding、证据与置信度，并对比较基线中的每个 peer
 返回非定向的 `similar`、`different`、`tradeoff`、`complementary` 或 `unknown`，不能借此
@@ -214,7 +239,7 @@ View 只用一句中文客观描述实际做了什么，不评价好坏、不推
 观察作为下一轮假设来源，但必须独立核对；评价不产生总分或最终推荐，不能改变硬 score、
 PASS/FAIL、candidate-local 基线、run-wide 排名或 promotion gate。
 
-ViewAgent 收到的累计 diff 使用 Git 函数级上下文和至少 10 行普通上下文，并继续受字节
+annotator 收到的累计 diff 使用 Git 函数级上下文和至少 10 行普通上下文，并继续受字节
 上限约束。上下文中未出现某个定义，不代表该定义不存在；这类判断必须降低置信度并写入
 `limitations`。每次 worker 调用 `search_get_global_evidence`，runtime 都会在对应
 `agent_sessions/*.json` 的 `global_evidence_reads` 中记录读取时间、当时 Evidence 数量、

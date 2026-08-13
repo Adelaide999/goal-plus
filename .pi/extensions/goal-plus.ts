@@ -185,6 +185,40 @@ const WorkspaceSpec = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+const SharedDirSpec = Type.Object(
+	{
+		enabled: Type.Boolean(),
+		max_tools_per_iteration: Type.Optional(PositiveInteger),
+		max_files_per_iteration: Type.Optional(PositiveInteger),
+		max_path_entries_per_iteration: Type.Optional(PositiveInteger),
+		max_depth: Type.Optional(PositiveInteger),
+		max_bytes_per_iteration: Type.Optional(PositiveInteger),
+	},
+	{ additionalProperties: false },
+);
+const ToolizationSignal = Type.Union([
+	Type.Literal("repeated_sequence"),
+	Type.Literal("domain_probe"),
+	Type.Literal("parser_or_trace"),
+	Type.Literal("peer_setup_reduction"),
+]);
+const ToolizationExclusion = Type.Union([
+	Type.Literal("single_common_command"),
+	Type.Literal("logic_free_wrapper"),
+	Type.Literal("restricted_artifact"),
+	Type.Literal("candidate_private_state"),
+	Type.Literal("duplicate_snapshot"),
+]);
+const ToolizationDecision = Type.Object(
+	{
+		outcome: Type.Union([Type.Literal("staged"), Type.Literal("not_applicable")]),
+		signals: Type.Array(ToolizationSignal, { maxItems: 4 }),
+		exclusion: Type.Optional(Type.Union([ToolizationExclusion, Type.Null()])),
+		rationale: Type.String({ minLength: 1, maxLength: 1000 }),
+		tool_names: Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { maxItems: 16 }),
+	},
+	{ additionalProperties: false },
+);
 const SearchSpecSchema = Type.Object(
 	{
 		objective: Type.String({ minLength: 1 }),
@@ -199,6 +233,7 @@ const SearchSpecSchema = Type.Object(
 		root_hypotheses: Type.Optional(Type.Array(Type.String())),
 		strategy: Type.Optional(StrategySpec),
 		workspace: Type.Optional(WorkspaceSpec),
+		shared_dir: Type.Optional(SharedDirSpec),
 	},
 	{ additionalProperties: false },
 );
@@ -441,6 +476,26 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 		{ agent_session_id: Type.String() },
 		{ additionalProperties: false },
 	),
+	search_copy_shared_tool: Type.Object(
+		{
+			agent_session_id: Type.String(),
+			tool_id: Type.String(),
+			snapshot_hash: Type.String(),
+		},
+		{ additionalProperties: false },
+	),
+	search_stage_shared_tool: Type.Object(
+		{
+			agent_session_id: Type.String(),
+			name: Type.String({ minLength: 1, maxLength: 120 }),
+			summary: Type.String({ minLength: 1, maxLength: 500 }),
+			entrypoint: Type.String({ minLength: 1, maxLength: 300 }),
+			candidate_relative_source_paths: Type.Array(Type.String({ minLength: 1 }), {
+				minItems: 1,
+			}),
+		},
+		{ additionalProperties: false },
+	),
 	search_get_agent_observability: Type.Object(
 		{ agent_session_id: Type.String() },
 		{ additionalProperties: false },
@@ -452,6 +507,7 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 			scope: Type.Optional(Type.Union([Type.Literal("process"), Type.Literal("promotion")])),
 			agent_session_id: Type.Optional(Type.String()),
 			hypothesis: Type.Optional(Type.String()),
+			toolization_decision: Type.Optional(ToolizationDecision),
 		},
 		{ additionalProperties: false },
 	),
@@ -527,10 +583,16 @@ const RuntimeToolDescriptions: Record<string, string> = {
 		"冻结不可变的 SearchSpec 和 verifier bundle。预检使用一次性源码副本，并拒绝 verifier 工作区副作用；并发 Search 下 verifier 临时文件必须放入唯一的 GOAL_PLUS_VERIFIER_TMPDIR/TMPDIR，绝不能使用固定 /tmp 路径。parallel_loops 模式由一份初始 plan 创建长期候选。",
 	search_create:
 		"从 frozen_spec_id 创建 Search run。初始 run 必须省略 source_run_id，或在 strict schema 下传 null；仅在已有真实前驱时传入准确的 run_* ID，绝不能传 initial 或 in_progress。",
+	search_get_agent_context:
+		"读取当前 worker 的权威 candidate 上下文。candidate_task.share_out_dir 非空表示已启用 shared_dir：同一 run 内可供 peer 使用的 repeated_sequence、domain_probe、parser_or_trace 或 peer_setup_reduction 默认应工具化；短小、任务专属、来自临时代码片段或只输出退出码都不是排除理由。只有 single_common_command、logic_free_wrapper、restricted_artifact、candidate_private_state 或 duplicate_snapshot 支持 not_applicable。",
 	search_get_global_evidence:
-		"读取当前 run 的窄 Global Evidence 视图。每项包含 verifier attempt commit、硬 score、keep/retain/discard/failure disposition、可能延迟的客观 View，以及启用时由 ViewAgent 后验生成的开放式 supplemental_evaluation 和动态 peer 比较；任一 View 为 null 时都无需等待，可先依据 Evidence 独立探索。",
+		"读取当前 run 的窄 Global Evidence 视图。每项包含 verifier attempt commit、硬 score、keep/retain/discard/failure disposition、可能延迟的客观 View，以及启用时由 annotator 后验生成的开放式 supplemental_evaluation 和动态 peer 比较；启用 shared_dir 后，已由 annotator 描述并由 runtime 绑定的 shared_tools 还会携带 tool_view。任一 View 为 null 时都无需等待，可先依据 Evidence 独立探索。",
+	search_copy_shared_tool:
+		"将已出现在 Global Evidence 的 Tool View 所对应的精确 shared-dir 快照复制到当前 candidate 的本地临时 inbox。下一次 worker verifier 会原子消费 receipt 并记录采用；复制本身不改变选择、排名或硬分。",
+	search_stage_shared_tool:
+		"把当前 candidate 的 .tmp/tool-drafts/ 中显式选择的文件安全复制到 .tmp/share-out 的最小工具目录。该工具只负责 staging；路径、链接和 frozen shared-dir 限额由 runtime 校验，发布仍要求归属于当前 worker 且通过的 process verifier。",
 	search_run_verifier:
-		"为一个候选评分。worker process verifier 必须提供一句话 hypothesis，客观概括本轮实际尝试。每份返回的 verifier 报告都会在运行时拥有、继承而来的 workspace/results.tsv 中追加且只追加一条已验证记录，并提交该文件。process verifier 返回 keep/retain/discard/failure disposition；严格改善为 keep，同分为 retain 并成为 candidate-local 最新基线，只有退化或验证失败时恢复此前硬分最佳。开放式补充评价和动态 peer 比较不改变结算、硬 score 或最终 PASS/FAIL。带 candidate_action=stop_and_report 的 VerifierWorkspaceSideEffect 属于基础设施失败：worker 必须停止，不能清理或重试，使父级能够修复并重新冻结。",
+		"为一个候选评分。worker process verifier 必须提供一句话 hypothesis，并在 shared_dir 启用时提交 toolization_decision：staged 至少包含一个正向 signal 和实际 tool_names；not_applicable 必须给出具体 exclusion，不能只写不复用。runtime 以 staging inventory 和 publication settlement 为权威，只把 toolization_review_missing、toolization_stage_missing 或 toolization_decision_mismatch 记录为 monitor/report advisory；它们不改变结算、硬 score、选择或 promotion。工具化目标仅是降低同一 run 内 peer 重建诊断流程的成本，不要求跨项目通用。每份报告都会在运行时拥有、继承而来的 workspace/results.tsv 中追加且只追加一条已验证记录，并提交该文件。process verifier 返回 keep/retain/discard/failure disposition；严格改善为 keep，同分为 retain 并成为 candidate-local 最新基线，只有退化或验证失败时恢复此前硬分最佳。开放式补充评价和动态 peer 比较不改变结算、硬 score 或最终 PASS/FAIL。带 candidate_action=stop_and_report 的 VerifierWorkspaceSideEffect 属于基础设施失败：worker 必须停止，不能清理或重试，使父级能够修复并重新冻结。",
 	search_invalidate_run:
 		"主 agent 确认 verifier 契约、覆盖范围、确定性、目标对齐或基础设施失败后，原子地隔离该 run。随后中断每个 host worker，等待 active worker 数归零，修复并重新冻结，再使用 source_run_id 创建后继项。",
 	search_report:
@@ -1414,6 +1476,8 @@ export default function (pi: ExtensionAPI) {
 	const workerTools = [
 		"search_get_agent_context",
 		"search_get_global_evidence",
+		"search_stage_shared_tool",
+		"search_copy_shared_tool",
 		"search_run_verifier",
 		"search_list_iterations",
 	];

@@ -259,6 +259,17 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
     assert tools.search_get_global_evidence("agent_001")[0]["view"] == (
         "Changed the candidate value."
     )
+    runtime.stage_shared_tool.return_value = {
+        "staged_name": "trace-helper",
+        "staging_path": "/tmp/c001/.tmp/share-out/trace-helper",
+    }
+    assert tools.search_stage_shared_tool(
+        "agent_001",
+        "trace-helper",
+        "Collect a bounded trace.",
+        "trace.py:main",
+        [".tmp/tool-drafts/trace.py"],
+    )["staged_name"] == "trace-helper"
     assert tools.search_get_agent_observability("agent_001") == {
         "agent_session_id": "agent_001",
         "source": "codex_session_jsonl",
@@ -276,6 +287,7 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         "c001",
         agent_session_id="agent_001",
         hypothesis="try a fused path",
+        toolization_decision=None,
     )
     assert worker_verifier_report["aggregate_score"] == 1.0
     assert "global_evidence_injected" not in worker_verifier_report
@@ -286,6 +298,7 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         scope="process",
         agent_session_id="agent_001",
         hypothesis="try a fused path",
+        toolization_decision=None,
     )
     iterations = tools.search_list_iterations("run_1", "c001")
     assert len(iterations) == 2
@@ -332,6 +345,13 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
     )
     runtime.get_agent_observability.assert_called_once_with("agent_001")
     runtime.get_global_evidence.assert_called_once_with("agent_001")
+    runtime.stage_shared_tool.assert_called_once_with(
+        agent_session_id="agent_001",
+        name="trace-helper",
+        summary="Collect a bounded trace.",
+        entrypoint="trace.py:main",
+        candidate_relative_source_paths=[".tmp/tool-drafts/trace.py"],
+    )
 
 
 def _successful_score_report() -> ScoreReport:

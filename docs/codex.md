@@ -26,6 +26,9 @@ Keep `.codex/config.toml` untracked and omit MCP `cwd`; `codex -C` should decide
 the project root for both MCP state and hooks. The example explicitly forwards
 the annotator's named environment variables. Add any custom API-key variable
 named by `GOAL_PLUS_EVIDENCE_ANNOTATOR_API_KEY_ENV` to the same `env_vars` list.
+The same ephemeral annotator turn also produces shared-dir Tool Views; verifier
+settlement never waits for it. The host-neutral lifecycle is documented in
+[`shared-plane.md`](shared-plane.md#工具复制与采用结算).
 
 Codex 0.144.1+ ships project-local Goal Plus host hooks in
 `.codex/hooks.json`; each calls `goal-plus --goal-plus-host-hook` for

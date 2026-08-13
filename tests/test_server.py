@@ -33,6 +33,8 @@ def test_create_mcp_registers_search_runtime_tools(tmp_path: Path) -> None:
         "search_continue_agent_session",
         "search_get_agent_context",
         "search_get_global_evidence",
+        "search_stage_shared_tool",
+        "search_copy_shared_tool",
         "search_get_agent_observability",
         "search_run_verifier",
         "search_list_iterations",
@@ -125,7 +127,21 @@ def test_run_verifier_exposes_optional_agent_session_id(tmp_path: Path) -> None:
 
     assert "agent_session_id" in schema["properties"]
     assert "hypothesis" in schema["properties"]
+    assert "toolization_decision" in schema["properties"]
+    assert "adopted_tools" not in schema["properties"]
     assert schema["properties"]["scope"]["enum"] == ["process", "promotion"]
+    assert tools["search_copy_shared_tool"].parameters["required"] == [
+        "agent_session_id",
+        "tool_id",
+        "snapshot_hash",
+    ]
+    assert tools["search_stage_shared_tool"].parameters["required"] == [
+        "agent_session_id",
+        "name",
+        "summary",
+        "entrypoint",
+        "candidate_relative_source_paths",
+    ]
     assert tools["search_get_global_evidence"].parameters["required"] == [
         "agent_session_id"
     ]

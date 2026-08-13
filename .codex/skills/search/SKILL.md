@@ -200,14 +200,30 @@ candidate-local history 由运行时拥有，不是 `plan.md` 文件。worker �
 `context.results_tsv`、工作区 Git 状态和有界 handoff metadata。其他 candidate 的尝试
 只通过窄 `search_get_global_evidence` 视图披露。每轮修改前读取一次；`view=null` 只表示
 annotator 尚未更新，worker 可先依据 commit、score、disposition 和自己的推理独立探索，
-不等待或轮询。启用开放式补充评价时，每行还包含 ViewAgent 根据当前累计 diff 和 annotation
-task 创建时其他已结算候选快照生成的 `supplemental_evaluation`。其中维度由 ViewAgent
+不等待或轮询。启用开放式补充评价时，每行还包含 annotator 根据当前累计 diff 和 annotation
+task 创建时其他已结算候选快照生成的 `supplemental_evaluation`。其中维度由 annotator
 根据实际 Evidence 后验提出，不来自 FrozenSpec；动态比较、置信度与 limitations 只是第三方
 观察，不是分数、推荐或 promotion gate；它不改变硬分结算规则。worker 可以据此
 形成自己的下一轮假设，但应独立核对。只有代码级证据确有必要时，才在当前 workspace 使用
 `git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace，
 也不 checkout/reset peer commit。修改完成后，worker 在 `search_run_verifier` 中用一句话
 `hypothesis` 客观概括实际尝试。
+
+当 FrozenSpec 显式启用 `shared_dir` 时，candidate 只能从 Global Evidence 的
+`shared_tools[*].tool_view` 发现工具；Tool View 前不向 candidate 暴露，生成后由 runtime 绑定。
+producer 每次 verifier 前必须回顾命令序列、临时代码片段和 scratch scripts。可在 peer workspace
+运行且不依赖 candidate 私有临时状态的能力，只要命中 `repeated_sequence`、`domain_probe`、
+`parser_or_trace` 或 `peer_setup_reduction`，就默认提炼到 `.tmp/tool-drafts/` 并用
+`search_stage_shared_tool` stage。这里的复用范围是同一 run，不要求跨项目；短小、任务专属、
+来自临时代码片段或只输出退出码都不是排除理由。只有 `single_common_command`、
+`logic_free_wrapper`、`restricted_artifact`、`candidate_private_state` 或 `duplicate_snapshot`
+这些具体排除项才支持 `not_applicable`。每次归属于 worker 的 process verifier 都提交
+`toolization_decision`；缺失或与实际 staging 不匹配只记录 monitor/report advisory，不改变硬分、
+结算、选择或 promotion，staging inventory 始终是权威事实。
+先独立判断相关性，再调用
+`search_copy_shared_tool(agent_session_id, tool_id, snapshot_hash)` 将精确快照复制到本地临时
+inbox 并重新验证。下一次 worker verifier 原子消费 receipt。Tool View 与采用结果可以帮助形成
+后续假设，但不改变 hard score、`keep`/`retain`/`discard`/`failure` 结算、选择或 promotion。
 host transcript 是有用上下文，但不是权威 Search 状态。
 
 Codex 的同 worker continuation 使用 `search_continue_agent_session`，随后对现有 task

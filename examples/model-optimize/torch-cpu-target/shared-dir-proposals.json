@@ -1,0 +1,21 @@
+[
+  {
+    "intent": "Producer lane 1: optimize TinyCpuModel.vector_tail in model.py. When a verifier-ready implementation has a clear reusable boundary, export a minimal manifest-backed tool before immediately calling the process verifier.",
+    "expected_tradeoff": "A focused vector-tail lane may miss serving-side improvements, but should expose a reusable model-side implementation to peers.",
+    "instructions": [
+      "After staging a tool, call search_run_verifier immediately; do not start another optimization first.",
+      "The exported implementation must match the candidate code that the correctness gate validates."
+    ],
+    "metadata": {"shared_dir_role": "publisher"}
+  },
+  {
+    "intent": "Reuse candidate: optimize redundant serving.py work. On every loop refresh Global Evidence and use Tool Views plus objective iteration Views as search experience; when a Tool View is relevant, request one candidate-local copy, adapt it into allowed_files, and verify the isolated combined candidate.",
+    "expected_tradeoff": "Local serving work can be combined with a verified peer tool without making the final candidate depend on the run shared directory.",
+    "instructions": [
+      "For an actual adoption, call search_copy_shared_tool with the exact tool_id and snapshot_hash; default to one tool per isolated trial, then let the next process verifier consume the receipt.",
+      "Use objective iteration Views, including their adoption outcome and limitations, to guide later hypotheses even when no further tool is copied.",
+      "Never import directly from the candidate-local temporary inbox or run shared directory in the final candidate."
+    ],
+    "metadata": {"shared_dir_role": "consumer"}
+  }
+]

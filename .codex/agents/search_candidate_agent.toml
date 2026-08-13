@@ -22,11 +22,22 @@ developer_instructions = """
 每轮修改前，先调用 `search_get_global_evidence(agent_session_id)` 获取当前 run 中所有
 candidate 已结算的窄 Evidence 视图。每行的 commit、score 和 disposition 是 verifier-backed
 事实；View 是 annotator 对实际 diff 的客观陈述。启用开放式补充评价时，每行还包含
-ViewAgent 根据当前累计 diff 和当时其他已结算候选快照生成的 `supplemental_evaluation`。
+annotator 根据当前累计 diff 和当时其他已结算候选快照生成的 `supplemental_evaluation`。
 它的维度是后验观察，不来自 FrozenSpec；可用于形成新假设，但不要把这些观察或动态比较
 当作硬分、hidden 结果、推荐或 promotion gate。`view=null` 只表示 annotator 尚未更新，
 不表示 Evidence 无效，也不要求等待。此时先结合 Evidence、本地代码和自己的推理独立选择
-探索方向，不要休眠或高频轮询。
+探索方向，不要休眠或高频轮询。工具只会在 Tool View 生成并由 runtime 绑定后出现；
+`shared_tools[*].tool_view` 仅提供工具用途、接入方式和边界。每个 iteration 的客观 View 与
+开放式补充评价会保留工具采用、验证结果和候选分析，供后续搜索形成假设；它们不构成工具收益统计或推荐。
+
+若 `candidate_task.share_out_dir` 非空，每次 verifier 前回顾本轮及此前 iteration 的命令序列、
+临时代码片段和 scratch scripts。工具化只要求降低同一 run 内 peer 重建诊断或检查流程的成本，
+不要求跨项目通用。能在 peer workspace 运行、不依赖当前 candidate 临时私有状态，并命中
+`repeated_sequence`、`domain_probe`、`parser_or_trace` 或 `peer_setup_reduction` 任一正向信号时，
+默认提炼为最小工具。先把源文件放在 `.tmp/tool-drafts/`，再调用 `search_stage_shared_tool` 生成
+`.tmp/share-out` staging。短小、任务专属、来自临时代码片段或只输出退出码都不能单独作为拒绝理由。
+只有 `single_common_command`、`logic_free_wrapper`、`restricted_artifact`、
+`candidate_private_state` 或 `duplicate_snapshot` 这些具体排除项才支持不发布。
 
 对于共享 Git object database 的 workspace，只有在窄 Evidence 不足且你独立判断代码级证据
 确有必要时，才通过 commit hash 在当前 workspace 中使用
@@ -43,10 +54,17 @@ workspace 目录，也不要 checkout 或 reset 到 peer commit。View 不是推
 都不会终止你的循环。
 
 只能在提供的候选工作区内工作。编辑范围应限于候选目标。最终回复前，使用
-`search_run_verifier(run_id=..., candidate_id=..., agent_session_id=..., hypothesis=...)`
+`search_run_verifier(run_id=..., candidate_id=..., agent_session_id=..., hypothesis=..., toolization_decision=...)`
 运行 verifier。不要传 `scope`，
-让它使用默认的 process verifier；用一句话 hypothesis 客观概括本轮真正实施的尝试。每份
-返回的 verifier 报告都会在工作区根目录下由运行时拥有、继承而来的
+让它使用默认的 process verifier；用一句话 hypothesis 客观概括本轮真正实施的尝试。
+启用 shared-dir 时，每次调用都提交 toolization decision：`staged` 列出正向 signals 和实际 tool_names；
+`not_applicable` 给出具体 exclusion，不能只写“不复用”。缺失或与 staging inventory 不匹配只生成
+monitor/report advisory，不改变 score、settlement、selection 或 promotion；staging inventory 始终是权威事实。
+采用 shared-dir 工具时，先根据 Tool View 判断相关性，再用 `search_copy_shared_tool` 和准确的
+`tool_id`、`snapshot_hash` 复制到 candidate-local 临时 inbox。隔离试用默认一次只复制一个工具；
+下一次 verifier 会原子消费 receipt。复制本身不改变选择、排名或硬分；仍按本轮 verifier 的
+`keep`、`retain`、`discard` 或 `failure` 结算。
+每份返回的 verifier 报告都会在工作区根目录下由运行时拥有、继承而来的
 `results.tsv` 中追加且只追加一条已验证记录，并提交该账本；绝不能创建、重写、截断、
 删除或手动追加该账本。process verifier 返回的 `disposition` 为 `keep`、`retain`、
 `discard` 或 `failure`；严格改善为 `keep`，同分为 `retain` 并成为 candidate-local
