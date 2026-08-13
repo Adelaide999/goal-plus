@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import threading
@@ -12,6 +13,7 @@ from types import SimpleNamespace
 import goal_plus.evidence_annotator as annotator_module
 import pytest
 from goal_plus.evidence_annotator import (
+    ANNOTATOR_INSTRUCTIONS,
     MAX_ANNOTATION_ATTEMPTS,
     MAX_ANNOTATION_DIFF_BYTES,
     CodexEvidenceAnnotator,
@@ -27,6 +29,48 @@ from goal_plus.evidence_annotator import (
 from goal_plus.models import SearchSpec
 from goal_plus.runtime import FileSearchRuntime
 from tests._runtime_helpers import make_project, spec_for
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_annotator_actor_terminology_is_consistent_across_repository() -> None:
+    code_suffixes = {
+        ".py",
+        ".pyi",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".toml",
+        ".md",
+    }
+    roots = [
+        "src",
+        "tests",
+        "scripts",
+        "benchmarks",
+        ".agents",
+        ".codex",
+        ".pi",
+        "docs",
+        "examples",
+    ]
+    actor_pattern = re.compile(r"\bview[_ -]?agent\b", flags=re.IGNORECASE)
+    offenders: list[str] = []
+
+    for relative_root in roots:
+        for path in (ROOT / relative_root).rglob("*"):
+            if (
+                path.is_file()
+                and path.suffix.lower() in code_suffixes
+                and "__pycache__" not in path.parts
+                and actor_pattern.search(path.read_text(encoding="utf-8"))
+            ):
+                offenders.append(path.relative_to(ROOT).as_posix())
+
+    assert offenders == []
 
 
 class RecordingAnnotator:
@@ -52,6 +96,13 @@ class RecordingAnnotator:
             description="Changed the candidate value stored in initial_program.py.",
             usage={"input_tokens": 7, "output_tokens": 3},
         )
+
+
+def test_annotator_instructions_require_tool_views_and_adoption_analysis() -> None:
+    assert "published_tools 非空" in ANNOTATOR_INSTRUCTIONS
+    assert "恰好一个 tool_views" in ANNOTATOR_INSTRUCTIONS
+    assert "tool_adoptions 非空" in ANNOTATOR_INSTRUCTIONS
+    assert "不要汇总工具收益" in ANNOTATOR_INSTRUCTIONS
 
 
 def test_supplemental_output_must_match_dynamic_comparison_basis() -> None:
@@ -218,7 +269,8 @@ def test_codex_annotator_uses_resolved_options_and_default_cli_inheritance(
             output_schemas.append(json.loads(schema.read_text(encoding="utf-8")))
             instructions.append((output.parent / "AGENTS.md").read_text())
             output.write_text(
-                '{"description":"将索引查询实现改为直接查表。"}',
+                '{"description":"将索引查询实现改为直接查表。",'
+                '"supplemental_evaluation":null,"tool_views":[]}',
                 encoding="utf-8",
             )
             self.returncode = 0
@@ -294,6 +346,7 @@ def test_codex_annotator_uses_resolved_options_and_default_cli_inheritance(
     assert output_schemas[0]["required"] == [
         "description",
         "supplemental_evaluation",
+        "tool_views",
     ]
     dimension_schema = output_schemas[0]["$defs"]["SupplementalDimension"]
     assert dimension_schema["required"] == list(dimension_schema["properties"])
@@ -386,6 +439,20 @@ def test_pi_annotator_uses_host_native_ephemeral_cli(
                     {
                         "description": "将索引查询实现改为直接查表。",
                         "supplemental_evaluation": None,
+                        "tool_views": [
+                            {
+                                "tool_id": "candidate-a-i0001-tool",
+                                "summary": "检查索引查询的边界行为。",
+                                "capabilities": ["构造边界输入并检查查询结果"],
+                                "when_to_use": "需要复核索引查询边界时。",
+                                "entrypoint": "probe.py:main",
+                                "inputs": ["候选工作区"],
+                                "outputs": ["进程退出码"],
+                                "dependencies": ["Python 3"],
+                                "adoption_steps": ["运行 python probe.py"],
+                                "limitations": ["只覆盖已编码的边界条件"],
+                            }
+                        ],
                     }
                 ),
                 encoding="utf-8",
@@ -436,6 +503,7 @@ def test_pi_annotator_uses_host_native_ephemeral_cli(
         "exact_attempt_commit": "abc123",
         "verifier_result": {"score": 1.0, "disposition": "keep"},
         "relevant_metrics": {},
+        "published_tools": [{"tool_id": "candidate-a-i0001-tool"}],
         "annotator": {
             "host": "pi-rpc",
             "model": "bench-openai/gpt-5.6-terra",
@@ -450,6 +518,9 @@ def test_pi_annotator_uses_host_native_ephemeral_cli(
     result = HostEvidenceAnnotator().annotate(context)
 
     assert result.description == "将索引查询实现改为直接查表。"
+    assert [item.tool_id for item in result.tool_views] == [
+        "candidate-a-i0001-tool"
+    ]
     assert result.usage == {
         "input_tokens": 12,
         "output_tokens": 5,
@@ -475,8 +546,26 @@ def test_pi_annotator_uses_host_native_ephemeral_cli(
     assert annotator_module.PI_ANNOTATION_TOOL_NAME in system_prompt
     assert popen_kwargs[0]["env"]["PI_CODING_AGENT_DIR"] == str(pi_home)
     assert annotator_module.PI_ANNOTATION_OUTPUT_ENV in popen_kwargs[0]["env"]
-    assert '"additionalProperties":false' in extensions[0]
-    assert '"supplemental_evaluation"' in extensions[0]
+    schema_text = extensions[0].split("const parameters = ", 1)[1].split(
+        ";\n\nexport default", 1
+    )[0]
+    pi_schema = json.loads(schema_text)
+    assert pi_schema["required"] == [
+        "description",
+        "supplemental_evaluation",
+        "tool_views",
+    ]
+    tool_view_schema = pi_schema["$defs"]["ToolViewRef"]
+    assert tool_view_schema["required"] == list(tool_view_schema["properties"])
+    assert tool_view_schema["additionalProperties"] is False
+    assert not {
+        "name",
+        "problem",
+        "use_cases",
+        "integration_steps",
+    } & set(tool_view_schema["properties"])
+    for field in ("inputs", "outputs", "dependencies", "adoption_steps"):
+        assert tool_view_schema["properties"][field]["type"] == "array"
     assert "<untrusted_evidence_json>" in prompts[0]
     assert prompts[0] == annotator_module._annotation_prompt(context)
     monitor = json.loads((tmp_path / "pi-annotation-monitor.json").read_text())

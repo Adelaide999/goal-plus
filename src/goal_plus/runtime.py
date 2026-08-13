@@ -61,7 +61,11 @@ from goal_plus.models import (
     ScoreReport,
     SearchPlan,
     SearchSpec,
+    SharedToolRecord,
     StrategySpec,
+    ToolizationDecision,
+    ToolAdoptionRecord,
+    ToolCopyReceipt,
     VerifierCommand,
     VerifierInvalidationReason,
     VerifierResult,
@@ -70,6 +74,13 @@ from goal_plus.models import (
     WorkerLaunchOptions,
 )
 from goal_plus.paths import DEFAULT_RUNTIME_ROOT, LEGACY_RUNTIME_ROOT
+from goal_plus.shared_dir import (
+    SHARE_OUT_RELATIVE_PATH,
+    TOOL_DRAFTS_RELATIVE_PATH,
+    TOOL_INBOX_RELATIVE_PATH,
+    TOOL_VIEW_MAX_CONTENT_BYTES,
+    SharedDirManager,
+)
 from goal_plus.workspaces import (
     IGNORED_NAMES,
     IGNORED_SUFFIXES,
@@ -1825,6 +1836,93 @@ class FileSearchRuntime:
         mode = self._global_evidence_mode(frozen.spec.strategy.config)
         return mode == "auto"
 
+    def stage_shared_tool(
+        self,
+        agent_session_id: str,
+        name: str,
+        summary: str,
+        entrypoint: str,
+        candidate_relative_source_paths: list[str],
+    ) -> dict[str, Any]:
+        session = self._load_agent_session_by_id(agent_session_id)
+        lock_path = self._candidate_dir(session.run_id, session.candidate_id) / "verifier.lock"
+        with exclusive_file_lock(lock_path):
+            with self._run_transaction(session.run_id):
+                run = self._load_run(session.run_id)
+                self._assert_worker_iteration_allowed(run, "stage shared tool")
+                frozen = self._load_frozen_spec(run.frozen_spec_id)
+                if not frozen.spec.shared_dir.enabled:
+                    raise ValueError("tool staging requires shared_dir.enabled=true")
+                record = self._load_candidate_record(session.run_id, session.candidate_id)
+                if record.status not in {"created", "evaluated"}:
+                    raise RuntimeError(
+                        f"cannot stage a tool for candidate in status {record.status}"
+                    )
+                if record.task.share_out_dir is None:
+                    raise RuntimeError("shared-dir candidate has no share-out directory")
+                limits = frozen.spec.shared_dir
+                return SharedDirManager(self._run_dir(session.run_id)).stage_tool(
+                    workspace=record.task.workspace,
+                    share_out_dir=record.task.share_out_dir,
+                    name=name,
+                    summary=summary,
+                    entrypoint=entrypoint,
+                    candidate_relative_source_paths=candidate_relative_source_paths,
+                    max_tools=limits.max_tools_per_iteration,
+                    max_files=limits.max_files_per_iteration,
+                    max_bytes=limits.max_bytes_per_iteration,
+                    max_path_entries=limits.max_path_entries_per_iteration,
+                    max_depth=limits.max_depth,
+                )
+
+    def copy_shared_tool(
+        self, agent_session_id: str, tool_id: str, snapshot_hash: str
+    ) -> dict[str, Any]:
+        session = self._load_agent_session_by_id(agent_session_id)
+        lock_path = self._candidate_dir(session.run_id, session.candidate_id) / "verifier.lock"
+        with exclusive_file_lock(lock_path):
+            with self._run_transaction(session.run_id):
+                run = self._load_run(session.run_id)
+                self._assert_worker_iteration_allowed(run, "copy shared tool")
+                frozen = self._load_frozen_spec(run.frozen_spec_id)
+                if not frozen.spec.shared_dir.enabled:
+                    raise ValueError("tool copy requires shared_dir.enabled=true")
+                record = self._load_candidate_record(session.run_id, session.candidate_id)
+                if (
+                    len(record.pending_tool_copies)
+                    >= frozen.spec.shared_dir.max_tools_per_iteration
+                ):
+                    raise ValueError("pending tool copies exceed shared_dir max_tools_per_iteration")
+                if any(item.tool_id == tool_id for item in record.pending_tool_copies):
+                    raise ValueError(
+                        "tool already copied for the next verifier iteration: "
+                        f"{tool_id}"
+                    )
+                tool = self._resolve_shared_tool(session.run_id, tool_id, snapshot_hash)
+                if record.results_ledger_git_head is None:
+                    raise RuntimeError("tool copy requires a Git-backed candidate")
+                receipt_id = f"copy_{uuid.uuid4().hex[:24]}"
+                inbox_path = record.task.workspace / TOOL_INBOX_RELATIVE_PATH / receipt_id
+                manager = SharedDirManager(self._run_dir(session.run_id))
+                try:
+                    manager.materialize_tool(tool, inbox_path)
+                except Exception:
+                    shutil.rmtree(inbox_path, ignore_errors=True)
+                    raise
+                receipt = ToolCopyReceipt(
+                    receipt_id=receipt_id,
+                    tool_id=tool.tool_id,
+                    snapshot_hash=tool.snapshot_hash,
+                    source_commit=tool.source_commit,
+                    agent_session_id=agent_session_id,
+                    candidate_base_git_head=record.results_ledger_git_head,
+                    inbox_path=inbox_path,
+                    copied_at=utc_timestamp(),
+                )
+                record.pending_tool_copies.append(receipt)
+                self._write_candidate_record(session.run_id, record)
+        return receipt.model_dump(mode="json")
+
     def run_verifier(
         self,
         run_id: str,
@@ -1832,17 +1930,27 @@ class FileSearchRuntime:
         scope: Literal["process", "promotion"] = "process",
         agent_session_id: str | None = None,
         hypothesis: str | None = None,
+        toolization_decision: ToolizationDecision | dict[str, Any] | None = None,
     ) -> ScoreReport:
         if scope not in {"process", "promotion"}:
             raise ValueError("verifier scope must be 'process' or 'promotion'")
         lock_path = self._candidate_dir(run_id, candidate_id) / "verifier.lock"
         with exclusive_file_lock(lock_path):
+            if scope == "process" and agent_session_id is None:
+                with self._run_transaction(run_id):
+                    record = self._load_candidate_record(run_id, candidate_id)
+                    if record.pending_tool_copies:
+                        raise RuntimeError(
+                            "parent process verifier cannot settle a candidate "
+                            "with pending tool copies"
+                        )
             report = self._run_verifier(
                 run_id,
                 candidate_id,
                 scope=scope,
                 agent_session_id=agent_session_id,
                 hypothesis=hypothesis,
+                toolization_decision=toolization_decision,
             )
         if scope == "process" and agent_session_id is not None:
             self._kick_evidence_annotator(run_id)
@@ -1855,6 +1963,7 @@ class FileSearchRuntime:
         scope: Literal["process", "promotion"] = "process",
         agent_session_id: str | None = None,
         hypothesis: str | None = None,
+        toolization_decision: ToolizationDecision | dict[str, Any] | None = None,
     ) -> ScoreReport:
         """Subagent self-score with ``agent_session_id``; main final verify
         without it. Process calls record ranking iterations; promotion calls
@@ -1867,6 +1976,22 @@ class FileSearchRuntime:
             else:
                 self._assert_run_not_invalidated(run, "run verifier")
         frozen = self._load_frozen_spec(run.frozen_spec_id)
+        normalized_toolization_decision = (
+            ToolizationDecision.model_validate(toolization_decision)
+            if toolization_decision is not None
+            else None
+        )
+        if normalized_toolization_decision is not None and (
+            scope != "process" or agent_session_id is None
+        ):
+            raise ValueError(
+                "toolization_decision is only valid for worker process verifier calls"
+            )
+        if (
+            normalized_toolization_decision is not None
+            and not frozen.spec.shared_dir.enabled
+        ):
+            raise ValueError("toolization_decision requires shared_dir.enabled=true")
         record = self._load_candidate_record(run_id, candidate_id)
         if record.status not in {"created", "evaluated"}:
             raise RuntimeError(
@@ -2002,6 +2127,7 @@ class FileSearchRuntime:
                     hypothesis=hypothesis,
                     agent_session_id=agent_session_id,
                     session=session,
+                    toolization_decision=normalized_toolization_decision,
                 )
 
             if report.promotion_passed is None:
@@ -2053,11 +2179,16 @@ class FileSearchRuntime:
         hypothesis: str | None,
         agent_session_id: str | None,
         session: AgentSessionRecord | None,
+        toolization_decision: ToolizationDecision | None,
     ) -> ScoreReport:
         with self._run_transaction(run_id):
             run = self._load_run(run_id)
             self._assert_worker_iteration_allowed(run, "record verifier result")
             record = self._load_candidate_record(run_id, candidate_id)
+            if agent_session_id is None and record.pending_tool_copies:
+                raise RuntimeError(
+                    "parent process verifier cannot settle a candidate with pending tool copies"
+                )
             prior_best = self._best_git_iteration_record(
                 record,
                 frozen.spec.metric_direction,
@@ -2079,6 +2210,90 @@ class FileSearchRuntime:
                 agent_session_id=agent_session_id,
             )
             created_at = utc_timestamp()
+            pending_tool_copies = (
+                list(record.pending_tool_copies) if agent_session_id is not None else []
+            )
+            for receipt in pending_tool_copies:
+                if receipt.candidate_base_git_head != pre_attempt_settled_head:
+                    raise RuntimeError(
+                        "pending tool copy does not match settled candidate base"
+                    )
+            adopted_file_budget = sum(
+                min(
+                    len(
+                        self._resolve_shared_tool(
+                            run_id, item.tool_id, item.snapshot_hash
+                        ).files
+                    ),
+                    4,
+                )
+                for item in pending_tool_copies
+            )
+            adoption_confounded = bool(
+                pending_tool_copies
+                and (
+                    len(pending_tool_copies) != 1
+                    or not attempt_changed_files
+                    or len(attempt_changed_files) > adopted_file_budget + 2
+                )
+            )
+            shared_settlement = None
+            shared_settlement_error = None
+            shared_inventory = None
+            if frozen.spec.shared_dir.enabled and record.task.share_out_dir is not None:
+                try:
+                    shared_inventory = SharedDirManager(self._run_dir(run_id)).inspect_staging(
+                        record.task.share_out_dir,
+                        max_tools=frozen.spec.shared_dir.max_tools_per_iteration,
+                        deep=False,
+                    )
+                except Exception as exc:
+                    shared_inventory = {
+                        "entries": [],
+                        "errors": [f"staging inspection failed: {exc}"],
+                    }
+            if (
+                frozen.spec.shared_dir.enabled
+                and report.process_passed
+                and agent_session_id is not None
+                and record.task.share_out_dir is not None
+            ):
+                limits = frozen.spec.shared_dir
+                try:
+                    shared_settlement = SharedDirManager(self._run_dir(run_id)).settle_iteration(
+                        candidate_id=candidate_id,
+                        iteration=iteration_number,
+                        source_commit=attempt.git_head,
+                        share_out_dir=record.task.share_out_dir,
+                        max_tools=limits.max_tools_per_iteration,
+                        max_files=limits.max_files_per_iteration,
+                        max_bytes=limits.max_bytes_per_iteration,
+                        max_path_entries=limits.max_path_entries_per_iteration,
+                        max_depth=limits.max_depth,
+                    )
+                except Exception as exc:
+                    shared_settlement_error = f"shared tool snapshot failed: {exc}"
+                    shared_settlement = None
+            shared_inventory_observed = bool(
+                (shared_inventory or {}).get("entries")
+                or (shared_inventory or {}).get("errors")
+            )
+            staged_entries = (
+                shared_settlement.staged_entries
+                if shared_settlement
+                else list((shared_inventory or {}).get("entries", []))
+            )
+            toolization_advisories = []
+            if frozen.spec.shared_dir.enabled and agent_session_id is not None:
+                if toolization_decision is None:
+                    toolization_advisories.append("toolization_review_missing")
+                elif toolization_decision.outcome == "staged" and not staged_entries:
+                    toolization_advisories.append("toolization_stage_missing")
+                elif (
+                    toolization_decision.outcome == "not_applicable"
+                    and staged_entries
+                ):
+                    toolization_advisories.append("toolization_decision_mismatch")
             iteration = IterationRecord(
                 iteration=iteration_number,
                 agent_session_id=agent_session_id,
@@ -2116,6 +2331,54 @@ class FileSearchRuntime:
                     for result in report.verifier_results
                     if result.log_path is not None
                 ],
+                shared_tools=(shared_settlement.tools if shared_settlement else []),
+                shared_tool_errors=(
+                    shared_settlement.errors if shared_settlement
+                    else [shared_settlement_error] if shared_settlement_error
+                    else list((shared_inventory or {}).get("errors", []))
+                ),
+                shared_tool_staged_entries=staged_entries,
+                shared_tool_staged_file_count=(
+                    shared_settlement.staged_file_count if shared_settlement else 0
+                ),
+                shared_tool_staged_bytes=(
+                    shared_settlement.staged_bytes if shared_settlement else 0
+                ),
+                shared_tool_consumed_entries=(
+                    shared_settlement.consumed_entries if shared_settlement else []
+                ),
+                shared_tool_deduplicated_entries=(
+                    shared_settlement.deduplicated_entries if shared_settlement else []
+                ),
+                shared_tool_publish_status=(
+                    "partially_published"
+                    if shared_settlement
+                    and shared_settlement.tools
+                    and shared_settlement.errors
+                    else "published" if shared_settlement and shared_settlement.tools
+                    else "consumed_unchanged" if shared_settlement and shared_settlement.consumed_entries
+                    else "snapshot_rejected" if shared_settlement and shared_settlement.errors
+                    else "snapshot_error" if shared_settlement_error
+                    else "skipped_unattributed_verifier"
+                    if shared_inventory_observed and agent_session_id is None
+                    else "skipped_failed_verifier"
+                    if shared_inventory_observed and not report.process_passed
+                    else "not_staged"
+                ),
+                adopted_tools=[
+                    ToolAdoptionRecord(
+                        tool_id=item.tool_id,
+                        snapshot_hash=item.snapshot_hash,
+                        receipt_id=item.receipt_id,
+                    )
+                    for item in pending_tool_copies
+                ],
+                adoption_confounded=(
+                    None if not pending_tool_copies
+                    else adoption_confounded
+                ),
+                toolization_decision=toolization_decision,
+                toolization_advisories=toolization_advisories,
                 created_at=created_at,
             )
             disposition = self._iteration_disposition(
@@ -2180,6 +2443,14 @@ class FileSearchRuntime:
             iteration.ledger_git_head = ledger_git_head
             iteration.workspace_git_head_after_settlement = ledger_git_head
             record.iterations.append(iteration)
+            if pending_tool_copies:
+                consumed = {item.receipt_id for item in pending_tool_copies}
+                record.pending_tool_copies = [
+                    item for item in record.pending_tool_copies
+                    if item.receipt_id not in consumed
+                ]
+                for item in pending_tool_copies:
+                    shutil.rmtree(item.inbox_path, ignore_errors=True)
             report = report.model_copy(
                 update={
                     "disposition": disposition,
@@ -2190,6 +2461,15 @@ class FileSearchRuntime:
                         best_iteration.git_head if best_iteration is not None else None
                     ),
                     "workspace_git_head_after_settlement": ledger_git_head,
+                    "shared_tool_staged_entries": iteration.shared_tool_staged_entries,
+                    "shared_tool_staged_file_count": iteration.shared_tool_staged_file_count,
+                    "shared_tool_staged_bytes": iteration.shared_tool_staged_bytes,
+                    "shared_tool_publish_status": iteration.shared_tool_publish_status,
+                    "shared_tool_errors": iteration.shared_tool_errors,
+                    "shared_tool_consumed_entries": iteration.shared_tool_consumed_entries,
+                    "shared_tool_deduplicated_entries": iteration.shared_tool_deduplicated_entries,
+                    "toolization_decision": iteration.toolization_decision,
+                    "toolization_advisories": iteration.toolization_advisories,
                 }
             )
             record.status = "evaluated"
@@ -2586,6 +2866,31 @@ class FileSearchRuntime:
                 f"{self._markdown_cell(latest.status if latest else '')} | "
                 f"{self._markdown_cell(latest.hypothesis if latest else '')} |"
             )
+        lines.extend(
+            [
+                "",
+                "## Toolization Reviews",
+                "",
+                "These worker decisions and runtime advisories are observational only; staging inventory and publication settlement remain authoritative.",
+                "",
+                "| Candidate | Iteration | Outcome | Signals | Exclusion | Tool Names | Rationale | Advisories | Staged Entries | Publish Status |",
+                "|---|---:|---|---|---|---|---|---|---|---|",
+            ]
+        )
+        for record in records:
+            for iteration in record.iterations:
+                decision = iteration.toolization_decision
+                lines.append(
+                    f"| `{record.candidate_id}` | {iteration.iteration} | "
+                    f"{self._markdown_cell(decision.outcome if decision else '')} | "
+                    f"{self._markdown_cell(', '.join(decision.signals) if decision else '')} | "
+                    f"{self._markdown_cell(decision.exclusion or '' if decision else '')} | "
+                    f"{self._markdown_cell(', '.join(decision.tool_names) if decision else '')} | "
+                    f"{self._markdown_cell(decision.rationale if decision else '')} | "
+                    f"{self._markdown_cell(', '.join(iteration.toolization_advisories))} | "
+                    f"{self._markdown_cell(', '.join(iteration.shared_tool_staged_entries))} | "
+                    f"{self._markdown_cell(iteration.shared_tool_publish_status)} |"
+                )
         agent_sessions = self._load_agent_sessions(run_id)
         if agent_sessions:
             session_rows = [
@@ -3263,8 +3568,21 @@ class FileSearchRuntime:
             "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
             "process verifier 返回 keep/retain/discard/failure disposition；严格硬分改善为 keep，同分为 retain 并成为 candidate-local 最新基线，只有退化或验证失败时 runtime 才恢复此前硬分最佳。开放式补充评价和 peer 比较不改变结算、硬分或最终验收。下一轮直接从返回后的已结算工作区继续。",
             "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
-            "Global Evidence 展示 peer 的 verifier commit、硬分、disposition、可能延迟的客观 View，以及 ViewAgent 基于实际 Evidence 生成的开放式 supplemental_evaluation。它会动态比较 annotation task 创建时其他已结算候选，但不使用 FrozenSpec 软标准、不参与结算或最终验收。将它视为第三方观察而非推荐；任一 View 为 null 都不要求等待。只有代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
+            "Global Evidence 展示 peer 的 verifier commit、硬分、disposition、可能延迟的客观 View，以及 annotator 基于实际 Evidence 生成的开放式 supplemental_evaluation。它会动态比较 annotation task 创建时其他已结算候选，但不使用 FrozenSpec 软标准、不参与结算或最终验收。将它视为第三方观察而非推荐；任一 View 为 null 都不要求等待。只有代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
         ]
+        share_out_dir = None
+        if frozen.spec.shared_dir.enabled:
+            SharedDirManager(self._run_dir(run.run_id)).ensure_layout()
+            share_out_dir = workspace / SHARE_OUT_RELATIVE_PATH
+            share_out_dir.mkdir(parents=True, exist_ok=True)
+            instructions.extend(
+                [
+                    "shared_dir 发布方规则：工具化的目标是降低同一 run 内其他 candidate 重建诊断或检查流程的成本，不要求跨项目通用。每次 verifier 前回顾本轮及此前 iteration 的命令序列、临时代码片段和 scratch scripts。能在 peer workspace 运行、不依赖当前 candidate 临时私有状态，并命中至少一个正向信号时，默认提炼为最小工具：repeated_sequence（等价多步流程至少两次）、domain_probe（非显然领域对象构造、边界条件或断言）、parser_or_trace（解析、trace、复现、转换或 mutation 检查）、peer_setup_reduction（明显降低 peer 重建成本）。",
+                    f"将显式源文件放在 {TOOL_DRAFTS_RELATIVE_PATH}/，再调用 search_stage_shared_tool 生成 {SHARE_OUT_RELATIVE_PATH}/ staging。不要因为工具短、任务专属、来自临时代码片段或只产生退出码而拒绝。只有具体排除项才支持 not_applicable：single_common_command、logic_free_wrapper、restricted_artifact（主产物、candidate 测试、冻结 verifier/grader、日志、数据、凭据或构建输出）、candidate_private_state 或 duplicate_snapshot。",
+                    "每次归属于当前 worker 的 process verifier 都提交 toolization_decision。staged 至少列出一个正向 signal 和实际 tool_names；not_applicable 必须给出具体 exclusion，不能只写不可复用。runtime 以 staging inventory 和 publication settlement 为权威；决策缺失或与 staging 不匹配只生成 monitor/report advisory，不改变 score、disposition、selection 或 promotion。",
+                    "工具只有在 annotator 生成并由 runtime 绑定 Tool View 后才会出现在 Global Evidence；需要时通过 search_copy_shared_tool 复制并在本候选中重新验证。",
+                ]
+            )
         if plan.worker_policy.get("worker_agent_type"):
             instructions.append(
                 "对受管 agent session 使用 "
@@ -3283,6 +3601,7 @@ class FileSearchRuntime:
             workspace_backend=materialization.backend,
             workspace_branch=materialization.branch,
             workspace_base_revision=materialization.base_revision,
+            share_out_dir=share_out_dir,
             allowed_files=frozen.spec.edit_surface.allow,
             denied_files=frozen.spec.edit_surface.deny,
             instructions=instructions,
@@ -4301,6 +4620,38 @@ class FileSearchRuntime:
         write_json(
             self._run_dir(run.run_id) / "best.json",
             best.model_dump(mode="json"),
+        )
+
+    def _resolve_shared_tool(
+        self, run_id: str, tool_id: str, snapshot_hash: str
+    ) -> SharedToolRecord:
+        available = {
+            tool.tool_id: tool
+            for record in self._load_candidate_records(run_id)
+            for iteration in record.iterations
+            for tool in iteration.shared_tools
+        }
+        tool = available.get(tool_id)
+        if tool is None:
+            raise ValueError(f"tool_id is not published in this run: {tool_id}")
+        if tool.snapshot_hash != snapshot_hash:
+            raise ValueError(f"tool snapshot_hash mismatch for {tool_id}")
+        if not self._tool_view_is_published(run_id, tool):
+            raise ValueError(
+                "tool is not discoverable before its Tool View is published: "
+                f"{tool_id}"
+            )
+        return tool
+
+    def _tool_view_is_published(self, run_id: str, tool: SharedToolRecord) -> bool:
+        task = self._load_evidence_annotation_task(run_id, tool.candidate_id, tool.iteration)
+        if task is None or task.state != "completed" or task.view is None:
+            return False
+        return any(
+            view.tool_id == tool.tool_id
+            and view.snapshot_hash == tool.snapshot_hash
+            and view.source_commit == (tool.source_commit or task.attempt_commit)
+            for view in task.view.tool_views
         )
 
     @staticmethod
@@ -5808,6 +6159,10 @@ class FileSearchRuntime:
         iteration: IterationRecord,
         view: EvidenceViewRecord | None,
     ) -> dict[str, Any]:
+        tool_views = {
+            item.tool_id: item
+            for item in (view.tool_views if view is not None else [])
+        }
         return {
             "candidate_id": candidate_id,
             "iteration": iteration.iteration,
@@ -5821,6 +6176,14 @@ class FileSearchRuntime:
                 if view is not None and view.supplemental_evaluation is not None
                 else None
             ),
+            "shared_tools": [
+                {
+                    **tool.model_dump(mode="json", exclude={"read_only_path"}),
+                    "tool_view": tool_views[tool.tool_id].model_dump(mode="json"),
+                }
+                for tool in iteration.shared_tools
+                if tool.tool_id in tool_views
+            ],
         }
 
     def _global_evidence_view(self, run_id: str) -> list[dict[str, Any]]:
@@ -6066,6 +6429,41 @@ class FileSearchRuntime:
                 )
             task_context = resolved_context
             task_context_source = resolved_source
+        published_tools = []
+        remaining_tool_bytes = TOOL_VIEW_MAX_CONTENT_BYTES
+        if iteration.shared_tools:
+            manager = SharedDirManager(self._run_dir(run_id))
+            prior = next(
+                (
+                    item
+                    for item in reversed(record.iterations)
+                    if item.iteration < iteration.iteration and item.score is not None
+                ),
+                None,
+            )
+            for tool in iteration.shared_tools:
+                tool_input, used = manager.tool_view_input(
+                    tool, max_content_bytes=remaining_tool_bytes
+                )
+                tool_input["goal_evidence"] = {
+                    "score": iteration.score,
+                    "baseline_score": prior.score if prior is not None else None,
+                    "goal_delta": (
+                        iteration.score - prior.score
+                        if iteration.score is not None and prior is not None
+                        else None
+                    ),
+                    "goal_effect": (
+                        "unknown" if prior is None
+                        else "improved" if iteration.disposition == "keep"
+                        else "unchanged" if iteration.disposition == "retain"
+                        else "degraded" if iteration.disposition == "discard"
+                        else "failed"
+                    ),
+                    "disposition": iteration.disposition,
+                }
+                published_tools.append(tool_input)
+                remaining_tool_bytes = max(0, remaining_tool_bytes - used)
         return {
             "run_id": run_id,
             "candidate_id": candidate_id,
@@ -6107,6 +6505,15 @@ class FileSearchRuntime:
             "peer_evidence": peer_evidence,
             "comparison_basis": [
                 item.model_dump(mode="json") for item in task.comparison_basis
+            ],
+            "published_tools": published_tools,
+            "tool_adoptions": [
+                {
+                    **item.model_dump(mode="json"),
+                    "disposition": iteration.disposition,
+                    "confounded": iteration.adoption_confounded,
+                }
+                for item in iteration.adopted_tools
             ],
             "annotator": task.profile.model_dump(mode="json"),
             "outer_deadline_at": task.outer_deadline_at,
