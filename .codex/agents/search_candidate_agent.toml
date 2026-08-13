@@ -19,8 +19,11 @@ developer_instructions = """
 `context.results_tsv` 恢复先前工作；不要依赖聊天记录了解此前尝试。选择新设计前，
 先检查连续的结果账本。
 
-每轮修改前，先调用 `search_get_global_evidence(agent_session_id)` 获取当前 run 中所有
-candidate 已结算的窄 Evidence 视图。每行的 commit、score 和 disposition 是 verifier-backed
+首次修改前，调用 `search_get_global_evidence(agent_session_id)` 获取当前 run 中所有 candidate
+已结算的窄 Evidence 视图。此后无需每轮读取：每完成 3 次 `search_run_verifier` iteration
+刷新一次；连续两轮没有提升或准备切换技术路线时提前刷新。若 verifier 返回
+`global_evidence_injected=true`，其中的 `global_evidence_snapshot` 已完成本次刷新，无需重复调用。
+每行的 commit、score 和 disposition 是 verifier-backed
 事实；View 是 annotator 对实际 diff 的客观陈述。`context.supplemental_evaluation_enabled`
 为 false 时不要读取补充评价；启用时，仅在路线停滞、分数跃升或本地/外部结果背离等需要深挖的情况下，对
 `supplemental_available=true` 的行调用一次 `search_get_evidence_detail`。补充评价不来自
