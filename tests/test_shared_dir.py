@@ -18,6 +18,7 @@ from goal_plus.models import ScoreReport, SearchSpec
 from goal_plus.monitor import goal_plus_monitor_snapshot
 from goal_plus.runtime import FileSearchRuntime
 from goal_plus.shared_dir import SharedDirManager
+from goal_plus.tools import SearchTools
 from tests._runtime_helpers import make_project, spec_for
 
 
@@ -1287,7 +1288,44 @@ def test_shared_dir_is_disabled_by_default(tmp_path: Path) -> None:
     instructions = " ".join(task["instructions"])
     assert "manifest.json" not in instructions
     assert "adopted_tools" not in instructions
+    assert "search_stage_shared_tool" not in instructions
+    assert "search_copy_shared_tool" not in instructions
+    assert "toolization_decision" not in instructions
     assert "Tool View 后才会出现在 Global Evidence" not in instructions
+
+    candidate.write_program_value(1)
+    report = SearchTools(runtime).search_run_verifier(
+        run_id,
+        candidate.candidate_id,
+        agent_session_id=candidate.agent_session_id,
+        hypothesis="Verify without shared tooling",
+        toolization_decision={
+            "outcome": "not_applicable",
+            "signals": [],
+            "exclusion": None,
+            "rationale": "Shared tooling is disabled.",
+            "tool_names": [],
+        },
+    )
+    assert report["process_passed"] is True
+    assert "toolization_decision" not in report
+    [iteration] = _iterations(runtime, run_id, candidate)
+    assert "toolization_decision" not in iteration
+
+    with pytest.raises(ValueError, match="requires shared_dir.enabled=true"):
+        _run_worker_verifier(
+            runtime,
+            run_id,
+            candidate,
+            "Reject impossible shared-tool staging",
+            toolization_decision={
+                "outcome": "staged",
+                "signals": ["domain_probe"],
+                "rationale": "Claim a staged tool while sharing is disabled.",
+                "tool_names": ["probe"],
+            },
+        )
+    assert len(_iterations(runtime, run_id, candidate)) == 1
 
 
 def test_torch_cpu_shared_dir_validation_files_cover_publication_and_adoption() -> None:

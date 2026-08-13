@@ -2035,6 +2035,14 @@ class FileSearchRuntime:
             else:
                 self._assert_run_not_invalidated(run, "run verifier")
         frozen = self._load_frozen_spec(run.frozen_spec_id)
+        if not frozen.spec.shared_dir.enabled:
+            toolization_outcome = (
+                toolization_decision.get("outcome")
+                if isinstance(toolization_decision, dict)
+                else getattr(toolization_decision, "outcome", None)
+            )
+            if toolization_outcome == "not_applicable":
+                toolization_decision = None
         normalized_toolization_decision = (
             ToolizationDecision.model_validate(toolization_decision)
             if toolization_decision is not None
