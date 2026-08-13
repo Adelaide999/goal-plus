@@ -304,7 +304,7 @@ def test_post_verifier_injection_respects_global_evidence_mode(
     assert [report["global_evidence_entry_count"] for report in reports] == [1, 2]
 
 
-def test_global_evidence_presents_open_evaluation_with_dynamic_peer_basis(
+def test_global_evidence_presents_open_evaluation_without_peer_basis(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -348,11 +348,10 @@ def test_global_evidence_presents_open_evaluation_with_dynamic_peer_basis(
 
     first_task = runtime._load_evidence_annotation_task(run_id, first[0], 1)
     task = runtime._load_evidence_annotation_task(run_id, second[0], 1)
-    assert first_task is not None and first_task.comparison_basis == []
+    assert first_task is not None
     assert task is not None and task.supplemental_evaluation_enabled is True
-    assert [item.candidate_id for item in task.comparison_basis] == [first[0]]
-    assert [item.iteration for item in task.comparison_basis] == [2]
     task_payload = task.model_dump(mode="json")
+    assert "comparison_basis" not in task_payload
     assert "task_context" not in task_payload
     assert task.task_context_source == "goal_plus_raw_goal"
     assert task.task_context_ref == "goal_plus:gp_test:revision:1"
@@ -366,12 +365,9 @@ def test_global_evidence_presents_open_evaluation_with_dynamic_peer_basis(
     assert context["changed_files"] == ["initial_program.py"]
     assert context["verifier_contract"][0]["role"] == "ranking_signal"
     assert context["verifier_contract"][0]["command"][-1] == "evaluator.py"
-    assert context["comparison_basis"] == [
-        item.model_dump(mode="json") for item in task.comparison_basis
-    ]
-    assert context["peer_evidence"][0]["candidate_id"] == first[0]
+    assert "comparison_basis" not in context
+    assert "peer_evidence" not in context
 
-    peer = task.comparison_basis[0]
     runtime._write_evidence_annotation_task(
         task.model_copy(
             update={
@@ -393,18 +389,9 @@ def test_global_evidence_presents_open_evaluation_with_dynamic_peer_basis(
                                     "evidence": ["initial_program.py diff"],
                                 }
                             ],
-                            "comparisons": [
-                                {
-                                    **peer.model_dump(mode="json"),
-                                    "relation": "tradeoff",
-                                    "rationale": "This version scores higher but has more stateful risk.",
-                                    "evidence": ["hard score", "candidate diff"],
-                                }
-                            ],
                             "limitations": ["No hidden evaluator evidence is available."],
                         }
                     ),
-                    comparison_basis=task.comparison_basis,
                     created_at="2026-01-01T00:00:00Z",
                 ),
             }
@@ -424,9 +411,21 @@ def test_global_evidence_presents_open_evaluation_with_dynamic_peer_basis(
     assert detail["supplemental_evaluation"]["dimensions"][0]["name"] == (
         "Cache coherence"
     )
-    assert detail["supplemental_evaluation"]["comparisons"][0][
-        "candidate_id"
-    ] == first[0]
+    assert "comparisons" not in detail["supplemental_evaluation"]
+
+    history = runtime.list_global_evidence(
+        second[1], candidate_id=second[0], limit=20
+    )
+    reference = history["items"][0]
+    assert reference["shared_tool_publish_status"] == "not_staged"
+    expanded = runtime.get_global_evidence_entry(
+        second[1],
+        reference["candidate_id"],
+        reference["iteration"],
+        reference["commit"],
+    )
+    assert expanded["supplemental_available"] is True
+    assert "supplemental_evaluation" not in expanded
 
     completed_task = runtime._load_evidence_annotation_task(run_id, second[0], 1)
     assert completed_task is not None and completed_task.view is not None
@@ -508,6 +507,119 @@ def test_worker_hypothesis_is_required_and_parent_evidence_is_private(
             hypothesis="Mutate after promotion",
         )
     assert runtime.get_global_evidence(session_id) == before
+
+
+def test_global_evidence_index_stays_bounded_after_101_rounds_per_candidate() -> None:
+    archive = [
+        {
+            "candidate_id": f"c{candidate:03d}",
+            "iteration": iteration,
+            "commit": f"{candidate:02d}{iteration:04d}",
+            "score": float(100 if iteration == 50 else iteration % 10),
+            "disposition": "keep" if iteration == 50 else "retain",
+            "view": f"candidate {candidate} iteration {iteration}",
+            "view_created_at": "2026-08-13T00:00:00Z",
+            "supplemental_evaluation": None,
+            "shared_tools": [],
+        }
+        for candidate in range(1, 5)
+        for iteration in range(1, 102)
+    ]
+
+    index = FileSearchRuntime._global_evidence_index(
+        archive,
+        metric_direction="maximize",
+    )
+
+    assert len(index) == 8
+    assert {entry["representative_role"] for entry in index} == {
+        "hard_best",
+        "latest_settled",
+    }
+    assert {entry["candidate_evidence_count"] for entry in index} == {101}
+    assert {entry["candidate_omitted_count"] for entry in index} == {99}
+    assert {
+        entry["iteration"]
+        for entry in index
+        if entry["representative_role"] == "hard_best"
+    } == {50}
+    assert {
+        entry["iteration"]
+        for entry in index
+        if entry["representative_role"] == "latest_settled"
+    } == {101}
+
+
+def test_global_evidence_index_preserves_shared_tool_publication_rows() -> None:
+    archive = [
+        {
+            "candidate_id": "c001",
+            "iteration": iteration,
+            "commit": f"commit-{iteration}",
+            "score": float(iteration),
+            "disposition": "keep",
+            "view": f"iteration {iteration}",
+            "view_created_at": "2026-08-13T00:00:00Z",
+            "supplemental_evaluation": None,
+            "shared_tools": (
+                [{"tool_id": "tool-2", "snapshot_hash": "hash-2"}]
+                if iteration == 2
+                else []
+            ),
+        }
+        for iteration in range(1, 5)
+    ]
+
+    index = FileSearchRuntime._global_evidence_index(
+        archive,
+        metric_direction="maximize",
+    )
+
+    assert [entry["iteration"] for entry in index] == [2, 4]
+    assert [entry["representative_role"] for entry in index] == [
+        "shared_dir_settlement",
+        "hard_best_and_latest",
+    ]
+    assert index[0]["shared_tools"] == archive[1]["shared_tools"]
+
+
+def test_global_evidence_hard_best_excludes_discarded_scores() -> None:
+    archive = [
+        {
+            "candidate_id": "c001",
+            "iteration": 1,
+            "commit": "kept",
+            "score": 1.0,
+            "disposition": "keep",
+            "view": "kept view",
+            "view_created_at": "2026-08-13T00:00:00Z",
+            "supplemental_evaluation": None,
+            "shared_tools": [],
+        },
+        {
+            "candidate_id": "c001",
+            "iteration": 2,
+            "commit": "discarded",
+            "score": 100.0,
+            "disposition": "discard",
+            "view": "discarded view",
+            "view_created_at": "2026-08-13T00:00:01Z",
+            "supplemental_evaluation": None,
+            "shared_tools": [],
+        },
+    ]
+
+    index = FileSearchRuntime._global_evidence_index(
+        archive,
+        metric_direction="maximize",
+    )
+
+    assert [entry["representative_role"] for entry in index] == [
+        "hard_best",
+        "latest_settled",
+    ]
+    assert index[0]["commit"] == "kept"
+    assert index[1]["commit"] == "discarded"
 
 
 def test_annotator_config_overrides_then_inherits_worker_launch(

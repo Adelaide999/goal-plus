@@ -38,7 +38,7 @@ main agent
 | candidate worker | 选择自己的技术方向、修改自己的工作区、调用 verifier、提交 handoff |
 | main agent | triage、spec discovery、初始 candidate 分配、全局停止、最终收尾、确认 verifier 失效 |
 | Codex 或 Pi 宿主 | 实际 worker 启动、等待、续跑、deadline、interrupt 和原生 transcript |
-| Evidence annotator | 对每个已结算尝试生成客观描述，并基于动态 Evidence 快照生成开放式补充评价与 peer 比较 |
+| Evidence annotator | 对每个已结算尝试生成客观描述，并基于该候选累计 Evidence 生成开放式补充评价 |
 
 Search runtime 不是 worker supervisor。`AgentSessionRecord` 只记录上下文、来源和
 宿主 launch payload，不表示进程是否存活。Pi 的 pool 状态因此单独保存在
@@ -84,9 +84,8 @@ host-native 默认路径。
 
 每条 Global Evidence View 同时保留本轮 `actual_diff` 与从候选初始基线到当前提交的
 累计 `candidate_diff`。description 只描述本轮增量；开放式补充评价使用累计候选证据。
-annotation task 创建时还会快照最多 8 个其他 candidate 的当前硬分最佳结算版本，每个
-candidate 最多一个，固定其 candidate、iteration 和 commit，后续推理基于这份可审计
-比较基线。
+annotation task 不读取其他 candidate 的 diff 或 View。候选之间的选择性阅读由 Global
+Evidence 的有界索引、分页轻量引用和精确 View 展开接口提供。
 
 为判断代码变化与原始请求是否相关，annotation task 记录与当前 Search run 绑定的准确
 Goal revision 引用和 SHA-256，而不复制 `raw_goal`。annotator 启动时临时解析该 revision
@@ -151,7 +150,13 @@ redispatch 只用于恢复，并继续使用同一个 candidate 工作区、Git 
 
 ## Global Evidence
 
-`search_get_global_evidence` 将当前 run 中已结算的 worker iteration 投影为窄表：
+完整 Global Evidence archive 保留当前 run 中所有已结算的 worker iteration，不删除历史。
+`search_get_global_evidence` 默认只投影一个有界索引：每个 candidate 的普通 View 最多返回
+硬分最佳 `hard_best` 和最新结算 `latest_settled` 两个代表项；两者相同时只返回一项。每项还
+记录该 candidate 的完整 Evidence 数量和省略数量，因此未启用 shared_dir 时默认上下文随
+candidate 数量而不是总轮次增长。启用 shared_dir 时，为保持既有发现与结算规则，发生共享
+发布、去重、拒绝或错误的原始 iteration 继续以 `shared_dir_settlement` 条目原样可见，不把
+工具或结算状态挪到其他代表 View：
 
 ```json
 {
@@ -162,9 +167,18 @@ redispatch 只用于恢复，并继续使用同一个 candidate 工作区、Git 
   "disposition": "keep",
   "view": "将调度逻辑改为按依赖深度分组。",
   "view_created_at": "2026-08-06T12:00:00Z",
-  "supplemental_available": true
+  "supplemental_available": true,
+  "representative_role": "hard_best",
+  "candidate_evidence_count": 101,
+  "candidate_omitted_count": 99
 }
 ```
+
+worker 需要追溯时，先调用 `search_list_global_evidence` 按 candidate 和 cursor 分页列出轻量
+引用；列表不展开完整 supplemental evaluation 或 Tool View。选定精确的
+`candidate_id / iteration / commit` 后，再调用 `search_get_global_evidence_entry` 读取该条
+完整不可变 Evidence/View。补充评价仍由 `search_get_evidence_detail` 按需读取。worker 可以
+选择 archive 中任意 View，但不应批量展开全部历史。
 
 冻结 spec 显式启用 `shared_dir` 时，已发布工具还会以 `shared_tools` 出现在同一条
 Global Evidence 中。每项包含 runtime 绑定的 `tool_view`、`tool_id`、`snapshot_hash` 与
@@ -232,12 +246,10 @@ View 只用一句中文客观描述实际做了什么，不评价好坏、不推
 步。事实来源是 actual diff，而不是 candidate 的自述。Changed files、verifier command
 和 metrics 只提供验证上下文；命令名称本身或失败的测试不能证明目标行为已经实现。
 
-`supplemental_evaluation` 不读取 FrozenSpec 软标准。annotator 只依据当前候选累计 diff、
-公开 verifier Evidence 和 annotation task 创建时固定的 peer 快照，自行提出 1–8 个与当前
-任务实际相关的观察维度。它逐项给出 finding、证据与置信度，并对比较基线中的每个 peer
-返回非定向的 `similar`、`different`、`tradeoff`、`complementary` 或 `unknown`，不能借此
-选择赢家。没有 peer 时 comparisons 为空。limitations 明确列出公开 Evidence 无法判断的
-事项。
+`supplemental_evaluation` 不读取 FrozenSpec 软标准，也不读取其他 candidate 的 diff 或 View。
+annotator 只依据当前候选累计 diff 和公开 verifier Evidence，自行提出 1–8 个与当前任务实际
+相关的观察维度，逐项给出 finding、证据与置信度。limitations 明确列出公开 Evidence 无法
+判断的事项。worker 通过有界 Global Evidence 索引自行选择需要阅读的其他候选历史。
 
 这种评价发生在提交结算之后，因此不会在搜索开始前固定注意力方向。worker 可以把第三方
 观察作为下一轮假设来源，但必须独立核对；评价不产生总分或最终推荐，不能改变硬 score、
@@ -304,7 +316,7 @@ candidate 不应 checkout、reset 或修改 peer revision。最终 promotion art
 ## 选择、Promotion 与失效
 
 run-wide best 从有效 iteration record 的硬 score 中计算，与各 candidate-local best 分开。
-`search_select` 不读取补充评价或 peer 比较来改变排名；硬分并列按原有稳定顺序选择。它将
+`search_select` 不读取补充评价来改变排名；硬分并列按原有稳定顺序选择。它将
 结果绑定到一个精确、通过验证的 worker Evidence commit。只有旧状态
 或当前产物没有对应 durable Evidence 时，parent 才补做 process verifier。
 
