@@ -63,8 +63,9 @@ Annotation 模型，`workers=C,D` 分配 Candidate Worker。只解析用户实�
 
 不要在 SearchSpec 中生成软 rubric 或预设评价维度。Spec Discovery 只能冻结硬 metric、
 verifier、编辑范围、预算和 promotion 合同。开放式补充评价发生在每次 Evidence 结算之后：
-独立 annotator 根据当前候选累计 diff 和当时其他已结算候选的快照，自行提出与任务实际
-相关的观察维度并动态比较。它不读取 hidden 数据，不产生总分或最终推荐，也不改变硬
+独立 annotator 根据当前候选累计 diff，自行提出与任务实际相关的观察维度。worker 通过
+有界 Global Evidence 索引自行选择需要展开的其他候选历史。它不读取 hidden 数据，不产生
+总分或最终推荐，也不改变硬
 PASS/FAIL、数值排名、candidate-local 结算、selection 或 promotion。MainAgent
 不负责定义这些维度，也不要根据 benchmark 类型向 annotator 预埋固定清单。
 
@@ -330,11 +331,13 @@ closeout 或时间提示都只是历史；只遵守最新 launch 之后收到的
 candidate-local history 由运行时拥有，不是本地 plan 文件。worker 必须先调用
 `search_get_agent_context`，并使用 `context.resume`、`context.iterations`、
 `context.results` 和继承的 `context.results_tsv` 作为恢复来源。每轮修改前读取
-`search_get_global_evidence`。其他 candidate 的尝试只通过这个窄视图披露；`view=null`
+`search_get_global_evidence`。默认结果是有界索引，每个 candidate 最多出现 hard-best/latest
+两个代表项。默认索引不足时，先用 `search_list_global_evidence` 分页选择轻量引用，再用
+`search_get_global_evidence_entry` 精确展开一条完整 View，不批量读取全部历史。`view=null`
 只表示 annotator 尚未更新，worker 不等待或轮询，先依据 commit、score、disposition 和
-自己的推理独立探索。启用开放式补充评价时，每行包含 annotator 根据实际 Evidence 后验
-提出的观察维度，以及 annotation task 创建时对其他已结算候选的动态比较。它不来自
-FrozenSpec，不作为硬分、推荐或 promotion gate；worker 可据此形成假设，但应独立核对。仅在
+自己的推理独立探索。启用开放式补充评价时，完整 View 包含 annotator 根据实际 Evidence
+后验提出的观察维度。它不来自 FrozenSpec，不作为硬分、推荐或 promotion gate；worker 可据此
+形成假设，但应独立核对。仅在
 worker 独立判断确有必要时，才在当前 workspace 使用
 `git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace，
 也不 checkout/reset peer commit。worker verifier 用一句话 `hypothesis` 客观概括本轮实际

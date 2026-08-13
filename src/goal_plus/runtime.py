@@ -100,8 +100,7 @@ VERIFIER_OUTPUT_LIMIT_BYTES = 64 * 1024
 VERIFIER_LOG_LIMIT_BYTES = VERIFIER_OUTPUT_LIMIT_BYTES * 2 + 8192
 VERIFIER_TERM_GRACE_SECONDS = 0.5
 MAX_EVIDENCE_ANNOTATION_DIFF_BYTES = 1024 * 1024
-MAX_EVIDENCE_COMPARISON_PEERS = 8
-MAX_EVIDENCE_PEER_DIFF_BYTES = 64 * 1024
+MAX_GLOBAL_EVIDENCE_PAGE_SIZE = 50
 EVIDENCE_ANNOTATOR_MODEL_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL"
 EVIDENCE_ANNOTATOR_REASONING_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT"
 EVIDENCE_ANNOTATOR_BASE_URL_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_BASE_URL"
@@ -1763,7 +1762,7 @@ class FileSearchRuntime:
         }
 
     def get_global_evidence(self, agent_session_id: str) -> list[dict[str, Any]]:
-        """Return settled worker evidence and any completed objective views."""
+        """Return a bounded per-candidate index over settled worker Evidence."""
         session = self._load_agent_session_by_id(agent_session_id)
         with self._run_transaction(session.run_id):
             session = self._load_agent_session_by_id(
@@ -1771,54 +1770,150 @@ class FileSearchRuntime:
                 run_id=session.run_id,
             )
             run = self._load_run(session.run_id)
-            view = self._global_evidence_view(session.run_id)
-            self.attach_external_evaluations(session.run_id, view)
+            archive = self._global_evidence_view(session.run_id)
+            self.attach_external_evaluations(session.run_id, archive)
             frozen = self._load_frozen_spec(run.frozen_spec_id)
             mode = self._global_evidence_mode(frozen.spec.strategy.config)
             if mode == "independent":
-                view = [
+                archive = [
                     entry
-                    for entry in view
+                    for entry in archive
                     if entry["candidate_id"] == session.candidate_id
                 ]
-            completed_views = [
-                GlobalEvidenceViewReference(
-                    candidate_id=str(entry["candidate_id"]),
-                    iteration=int(entry["iteration"]),
-                    commit=str(entry["commit"]),
-                    view_created_at=str(entry["view_created_at"]),
-                    supplemental_evaluation_present=(
-                        entry["supplemental_evaluation"] is not None
-                    ),
-                )
-                for entry in view
-                if entry["view"] is not None
-                and entry["commit"] is not None
-                and entry["view_created_at"] is not None
-            ]
-            read_record = GlobalEvidenceReadRecord(
-                read_at=utc_timestamp(),
-                evidence_count=len(view),
-                completed_view_count=len(completed_views),
-                completed_supplemental_evaluation_count=sum(
-                    item.supplemental_evaluation_present
-                    for item in completed_views
-                ),
-                completed_views=completed_views,
+            view = self._global_evidence_index(
+                archive,
+                metric_direction=frozen.spec.metric_direction,
             )
-            self._write_agent_session(
-                session.model_copy(
-                    update={
-                        "updated_at": read_record.read_at,
-                        "global_evidence_reads": [
-                            *session.global_evidence_reads,
-                            read_record,
-                        ],
-                    }
-                )
-            )
+            self._record_global_evidence_read(session, view)
         self._kick_evidence_annotator(session.run_id)
         return view
+
+    def list_global_evidence(
+        self,
+        agent_session_id: str,
+        *,
+        candidate_id: str | None = None,
+        cursor: int = 0,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Page lightweight references without expanding complete View payloads."""
+        if cursor < 0:
+            raise ValueError("global Evidence cursor must be non-negative")
+        if limit < 1 or limit > MAX_GLOBAL_EVIDENCE_PAGE_SIZE:
+            raise ValueError(
+                "global Evidence limit must be between 1 and "
+                f"{MAX_GLOBAL_EVIDENCE_PAGE_SIZE}"
+            )
+        session = self._load_agent_session_by_id(agent_session_id)
+        with self._run_transaction(session.run_id):
+            session = self._load_agent_session_by_id(
+                agent_session_id,
+                run_id=session.run_id,
+            )
+            archive = self._visible_global_evidence_archive(session)
+            if candidate_id is not None:
+                archive = [
+                    entry
+                    for entry in archive
+                    if entry["candidate_id"] == candidate_id
+                ]
+            total = len(archive)
+            page = archive[cursor : cursor + limit]
+            items = [self._global_evidence_reference(entry) for entry in page]
+        self._kick_evidence_annotator(session.run_id)
+        next_cursor = cursor + len(page)
+        return {
+            "items": items,
+            "cursor": cursor,
+            "next_cursor": next_cursor if next_cursor < total else None,
+            "total": total,
+        }
+
+    def get_global_evidence_entry(
+        self,
+        agent_session_id: str,
+        candidate_id: str,
+        iteration: int,
+        commit: str,
+    ) -> dict[str, Any]:
+        """Expand one immutable View selected by exact Evidence identity."""
+        session = self._load_agent_session_by_id(agent_session_id)
+        with self._run_transaction(session.run_id):
+            session = self._load_agent_session_by_id(
+                agent_session_id,
+                run_id=session.run_id,
+            )
+            archive = self._visible_global_evidence_archive(session)
+            matches = [
+                entry
+                for entry in archive
+                if entry["candidate_id"] == candidate_id
+                and entry["iteration"] == iteration
+                and entry["commit"] == commit
+            ]
+            if len(matches) != 1:
+                raise ValueError("global Evidence entry is unavailable")
+            entry = matches[0]
+            self._record_global_evidence_read(session, [entry])
+        self._kick_evidence_annotator(session.run_id)
+        return entry
+
+    def _visible_global_evidence_archive(
+        self,
+        session: AgentSessionRecord,
+    ) -> list[dict[str, Any]]:
+        run = self._load_run(session.run_id)
+        archive = self._global_evidence_view(session.run_id)
+        self.attach_external_evaluations(session.run_id, archive)
+        frozen = self._load_frozen_spec(run.frozen_spec_id)
+        if self._global_evidence_mode(frozen.spec.strategy.config) == "independent":
+            archive = [
+                entry
+                for entry in archive
+                if entry["candidate_id"] == session.candidate_id
+            ]
+        return archive
+
+    def _record_global_evidence_read(
+        self,
+        session: AgentSessionRecord,
+        entries: list[dict[str, Any]],
+    ) -> None:
+        completed_views = [
+            GlobalEvidenceViewReference(
+                candidate_id=str(entry["candidate_id"]),
+                iteration=int(entry["iteration"]),
+                commit=str(entry["commit"]),
+                view_created_at=str(entry["view_created_at"]),
+                supplemental_evaluation_present=(
+                    entry["supplemental_evaluation"] is not None
+                ),
+            )
+            for entry in entries
+            if entry["view"] is not None
+            and entry["commit"] is not None
+            and entry["view_created_at"] is not None
+        ]
+        read_record = GlobalEvidenceReadRecord(
+            read_at=utc_timestamp(),
+            evidence_count=len(entries),
+            completed_view_count=len(completed_views),
+            completed_supplemental_evaluation_count=sum(
+                item.supplemental_evaluation_present for item in completed_views
+            ),
+            completed_views=completed_views,
+        )
+        self._write_agent_session(
+            session.model_copy(
+                update={
+                    "updated_at": read_record.read_at,
+                    "global_evidence_reads": [
+                        *session.global_evidence_reads,
+                        read_record,
+                    ],
+                }
+            )
+        )
 
     @staticmethod
     def _global_evidence_mode(config: dict[str, Any]) -> str:
@@ -3566,9 +3661,9 @@ class FileSearchRuntime:
             "把 context.agent_session_id 传给 search_run_verifier，并省略 scope 以使用 process verifier；同时用一句话 hypothesis 客观概括本轮实际尝试。",
             "每次 run_verifier 调用都会记录一个 iteration。在配置的 host 预算内工作。尽早完成并验证候选，在达到限制前停止启动新的优化 iteration，并留出足够时间返回简洁摘要。",
             "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
-            "process verifier 返回 keep/retain/discard/failure disposition；严格硬分改善为 keep，同分为 retain 并成为 candidate-local 最新基线，只有退化或验证失败时 runtime 才恢复此前硬分最佳。开放式补充评价和 peer 比较不改变结算、硬分或最终验收。下一轮直接从返回后的已结算工作区继续。",
+            "process verifier 返回 keep/retain/discard/failure disposition；严格硬分改善为 keep，同分为 retain 并成为 candidate-local 最新基线，只有退化或验证失败时 runtime 才恢复此前硬分最佳。开放式补充评价不改变结算、硬分或最终验收。下一轮直接从返回后的已结算工作区继续。",
             "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
-            "Global Evidence 展示 peer 的 verifier commit、硬分、disposition、可能延迟的客观 View，以及 annotator 基于实际 Evidence 生成的开放式 supplemental_evaluation。它会动态比较 annotation task 创建时其他已结算候选，但不使用 FrozenSpec 软标准、不参与结算或最终验收。将它视为第三方观察而非推荐；任一 View 为 null 都不要求等待。只有代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
+            "Global Evidence 默认展示每个 candidate 的硬分最佳和最新结算代表项，以及可能延迟的客观 View 和开放式 supplemental_evaluation。需要追溯时先分页浏览轻量引用，再按精确 candidate、iteration、commit 展开一条完整 View；不要批量展开全部历史。它不使用 FrozenSpec 软标准、不参与结算或最终验收。将它视为第三方观察而非推荐；任一 View 为 null 都不要求等待。只有代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
         ]
         share_out_dir = None
         if frozen.spec.shared_dir.enabled:
@@ -6134,14 +6229,6 @@ class FileSearchRuntime:
             task_context_ref=task_context_ref,
             task_context_sha256=sha256_text(task_context),
             supplemental_evaluation_enabled=supplemental_enabled,
-            comparison_basis=(
-                self._evidence_comparison_basis(
-                    run_id,
-                    target_candidate_id=candidate_id,
-                )
-                if supplemental_enabled
-                else []
-            ),
             profile=profile,
             outer_deadline_at=outer_deadline,
             state="terminal_error" if error else "pending",
@@ -6176,6 +6263,7 @@ class FileSearchRuntime:
                 if view is not None and view.supplemental_evaluation is not None
                 else None
             ),
+            "shared_tool_publish_status": iteration.shared_tool_publish_status,
             "shared_tools": [
                 {
                     **tool.model_dump(mode="json", exclude={"read_only_path"}),
@@ -6185,6 +6273,100 @@ class FileSearchRuntime:
                 if tool.tool_id in tool_views
             ],
         }
+
+    @staticmethod
+    def _global_evidence_reference(entry: dict[str, Any]) -> dict[str, Any]:
+        evaluation = entry.get("supplemental_evaluation")
+        dimensions = evaluation.get("dimensions") if isinstance(evaluation, dict) else []
+        return {
+            "candidate_id": entry["candidate_id"],
+            "iteration": entry["iteration"],
+            "commit": entry["commit"],
+            "score": entry["score"],
+            "disposition": entry["disposition"],
+            "view": entry["view"],
+            "view_created_at": entry["view_created_at"],
+            "shared_tool_publish_status": entry.get("shared_tool_publish_status"),
+            "supplemental_dimension_names": [
+                str(item.get("name"))
+                for item in dimensions
+                if isinstance(item, dict) and item.get("name")
+            ],
+            "shared_tool_count": len(entry.get("shared_tools") or []),
+        }
+
+    @classmethod
+    def _global_evidence_index(
+        cls,
+        archive: list[dict[str, Any]],
+        *,
+        metric_direction: str,
+    ) -> list[dict[str, Any]]:
+        """Select hard-best/latest representatives while preserving exact refs."""
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for entry in archive:
+            grouped.setdefault(str(entry["candidate_id"]), []).append(entry)
+        result: list[dict[str, Any]] = []
+        for candidate_id in sorted(grouped):
+            entries = grouped[candidate_id]
+            latest = max(entries, key=lambda entry: int(entry["iteration"]))
+            scored = [
+                entry
+                for entry in entries
+                if isinstance(entry.get("score"), (int, float))
+                and not isinstance(entry.get("score"), bool)
+                and math.isfinite(float(entry["score"]))
+                and entry.get("disposition") in {"keep", "retain"}
+            ]
+            hard_best = None
+            if scored:
+                score_key = (
+                    (lambda entry: float(entry["score"]))
+                    if metric_direction == "maximize"
+                    else (lambda entry: -float(entry["score"]))
+                )
+                hard_best = max(
+                    scored,
+                    key=lambda entry: (
+                        score_key(entry),
+                        int(entry["iteration"]),
+                    ),
+                )
+            selected: list[tuple[str, dict[str, Any]]] = []
+            if hard_best is not None:
+                selected.append(("hard_best", hard_best))
+            if hard_best is None or (
+                latest["iteration"] != hard_best["iteration"]
+                or latest["commit"] != hard_best["commit"]
+            ):
+                selected.append(("latest_settled", latest))
+            elif selected:
+                selected[0] = ("hard_best_and_latest", hard_best)
+            selected_identities = {
+                (entry["iteration"], entry["commit"]) for _, entry in selected
+            }
+            selected.extend(
+                ("shared_dir_settlement", entry)
+                for entry in entries
+                if (
+                    entry.get("shared_tools")
+                    or entry.get("shared_tool_publish_status")
+                    not in {None, "legacy_unknown", "not_staged"}
+                )
+                and (entry["iteration"], entry["commit"])
+                not in selected_identities
+            )
+            selected.sort(key=lambda item: int(item[1]["iteration"]))
+            for role, entry in selected:
+                result.append(
+                    {
+                        **entry,
+                        "representative_role": role,
+                        "candidate_evidence_count": len(entries),
+                        "candidate_omitted_count": len(entries) - len(selected),
+                    }
+                )
+        return result
 
     def _global_evidence_view(self, run_id: str) -> list[dict[str, Any]]:
         evidence = [
@@ -6406,10 +6588,6 @@ class FileSearchRuntime:
                 ],
                 max_bytes=MAX_EVIDENCE_ANNOTATION_DIFF_BYTES,
             )
-        peer_evidence = self._evidence_comparison_peers(
-            run_id,
-            comparison_basis=task.comparison_basis,
-        )
         task_context = frozen.spec.objective
         task_context_source = "frozen_objective"
         if task.task_context_source is not None:
@@ -6502,10 +6680,6 @@ class FileSearchRuntime:
             "supplemental_evaluation_enabled": (
                 task.supplemental_evaluation_enabled
             ),
-            "peer_evidence": peer_evidence,
-            "comparison_basis": [
-                item.model_dump(mode="json") for item in task.comparison_basis
-            ],
             "published_tools": published_tools,
             "tool_adoptions": [
                 {
@@ -6576,125 +6750,6 @@ class FileSearchRuntime:
             raw_goal, reference = unique[0]
             return raw_goal, "goal_plus_raw_goal", reference
         return fallback, "frozen_objective", f"frozen_objective:{run_id}"
-
-    def _evidence_comparison_basis(
-        self,
-        run_id: str,
-        *,
-        target_candidate_id: str,
-    ) -> list[dict[str, Any]]:
-        run = self._load_run(run_id)
-        frozen = self._load_frozen_spec(run.frozen_spec_id)
-        reverse = frozen.spec.metric_direction == "maximize"
-        settled = []
-        for record in self._load_candidate_records(run_id):
-            if record.candidate_id == target_candidate_id:
-                continue
-            eligible = [
-                iteration
-                for iteration in record.iterations
-                if iteration.agent_session_id is not None
-                and self._git_iteration_eligible(iteration)
-                and iteration.disposition in {None, "keep"}
-            ]
-            if not eligible:
-                continue
-            best = sorted(
-                eligible,
-                key=lambda iteration: iteration.score,
-                reverse=reverse,
-            )[0]
-            settled.append((best.created_at, record, best))
-        settled.sort(
-            key=lambda item: (
-                item[0],
-                item[1].candidate_id,
-                item[2].iteration,
-            )
-        )
-        return [
-            {
-                "candidate_id": record.candidate_id,
-                "iteration": iteration.iteration,
-                "commit": iteration.git_head,
-            }
-            for _, record, iteration in settled[-MAX_EVIDENCE_COMPARISON_PEERS:]
-        ]
-
-    def _evidence_comparison_peers(
-        self,
-        run_id: str,
-        *,
-        comparison_basis: list[Any],
-    ) -> list[dict[str, Any]]:
-        peers: list[dict[str, Any]] = []
-        records = {
-            record.candidate_id: record
-            for record in self._load_candidate_records(run_id)
-        }
-        for reference in comparison_basis:
-            record = records.get(reference.candidate_id)
-            if record is None:
-                raise RuntimeError("annotation comparison candidate is unavailable")
-            iteration = next(
-                (
-                    item
-                    for item in record.iterations
-                    if item.iteration == reference.iteration
-                    and item.git_head == reference.commit
-                ),
-                None,
-            )
-            if iteration is None or iteration.git_head is None:
-                raise RuntimeError("annotation comparison Evidence is unavailable")
-            assert iteration.git_head is not None
-            base_commit = (
-                record.task.workspace_base_revision
-                or iteration.attempt_base_git_head
-            )
-            changed_files: list[str] = []
-            peer_diff: str | None = None
-            diff_omitted: str | None = None
-            if base_commit:
-                try:
-                    changed_files = self._git_changed_files(
-                        record.task.workspace,
-                        base_commit,
-                        iteration.git_head,
-                    )
-                    if changed_files:
-                        peer_diff = self._git_output_bounded(
-                            record.task.workspace,
-                            [
-                                "git",
-                                "diff",
-                                "--full-index",
-                                "--no-ext-diff",
-                                base_commit,
-                                iteration.git_head,
-                                "--",
-                                *changed_files,
-                            ],
-                            max_bytes=MAX_EVIDENCE_PEER_DIFF_BYTES,
-                        )
-                except (RuntimeError, subprocess.CalledProcessError) as exc:
-                    diff_omitted = f"{type(exc).__name__}: {exc}"[:500]
-                    peer_diff = None
-            peers.append(
-                {
-                    "candidate_id": record.candidate_id,
-                    "iteration": iteration.iteration,
-                    "commit": iteration.git_head,
-                    "score": iteration.score,
-                    "process_passed": iteration.process_passed,
-                    "disposition": iteration.disposition,
-                    "agent_summary": iteration.hypothesis,
-                    "changed_files": changed_files,
-                    "candidate_diff": peer_diff,
-                    "diff_omitted": diff_omitted,
-                }
-            )
-        return peers
 
     def _kick_evidence_annotator(self, run_id: str) -> None:
         try:

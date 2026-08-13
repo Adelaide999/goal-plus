@@ -213,6 +213,9 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
         "search_get_global_evidence"
     )
     assert "search_get_global_evidence" in text
+    assert "search_list_global_evidence" in text
+    assert "search_get_global_evidence_entry" in text
+    assert "不要批量" in text
     assert "search_submit_iteration_plan" not in text
     assert "search_run_verifier" in text
     assert "不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`" in text
@@ -499,7 +502,7 @@ def test_pi_assets_use_open_posthoc_evaluation_as_non_gating_feedback() -> None:
     assert "软 rubric 或预设评价维度" in skill
     assert "开放式补充评价发生在每次 Evidence 结算之后" in skill
     assert "不来自 FrozenSpec" in combined
-    assert "动态比较" in combined
+    assert "search_get_global_evidence_entry" in combined
     assert "不改变结算、硬 score 或最终 PASS/FAIL" in combined
 
 

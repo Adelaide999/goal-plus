@@ -259,6 +259,24 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
     assert tools.search_get_global_evidence("agent_001")[0]["view"] == (
         "Changed the candidate value."
     )
+    runtime.list_global_evidence.return_value = {
+        "items": [{"candidate_id": "c001", "iteration": 1}],
+        "cursor": 0,
+        "next_cursor": None,
+        "total": 1,
+    }
+    assert tools.search_list_global_evidence(
+        "agent_001", candidate_id="c001", cursor=0, limit=10
+    )["total"] == 1
+    runtime.get_global_evidence_entry.return_value = {
+        "candidate_id": "c001",
+        "iteration": 1,
+        "commit": "abc123",
+        "view": "Changed the candidate value.",
+    }
+    assert tools.search_get_global_evidence_entry(
+        "agent_001", "c001", 1, "abc123"
+    )["commit"] == "abc123"
     runtime.stage_shared_tool.return_value = {
         "staged_name": "trace-helper",
         "staging_path": "/tmp/c001/.tmp/share-out/trace-helper",
@@ -345,6 +363,12 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
     )
     runtime.get_agent_observability.assert_called_once_with("agent_001")
     runtime.get_global_evidence.assert_called_once_with("agent_001")
+    runtime.list_global_evidence.assert_called_once_with(
+        "agent_001", candidate_id="c001", cursor=0, limit=10
+    )
+    runtime.get_global_evidence_entry.assert_called_once_with(
+        "agent_001", "c001", 1, "abc123"
+    )
     runtime.stage_shared_tool.assert_called_once_with(
         agent_session_id="agent_001",
         name="trace-helper",
