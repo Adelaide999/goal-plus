@@ -257,15 +257,6 @@ class ResolvedEvidenceAnnotatorProfile(SearchModel):
 EvaluationConfidence = Literal["high", "medium", "low"]
 
 
-ComparisonRelation = Literal[
-    "similar",
-    "different",
-    "tradeoff",
-    "complementary",
-    "unknown",
-]
-
-
 class SupplementalDimension(SearchModel):
     name: str = Field(min_length=1, max_length=120)
     finding: str = Field(min_length=1, max_length=1000)
@@ -282,32 +273,19 @@ class SupplementalDimension(SearchModel):
         return " ".join(value.strip().split())
 
 
-class EvidenceComparisonReference(SearchModel):
-    candidate_id: str = Field(min_length=1)
-    iteration: int = Field(ge=1)
-    commit: str = Field(min_length=1)
-
-
-class PeerComparison(EvidenceComparisonReference):
-    relation: ComparisonRelation
-    rationale: str = Field(min_length=1, max_length=1000)
-    evidence: list[str] = Field(default_factory=list, max_length=8)
-
-    @field_validator("rationale", mode="before")
-    @classmethod
-    def rationale_must_be_one_line(cls, value: Any) -> Any:
-        if not isinstance(value, str):
-            return value
-        if "\n" in value or "\r" in value:
-            raise ValueError("peer comparison rationale must be one line")
-        return " ".join(value.strip().split())
-
-
 class SupplementalEvaluation(SearchModel):
     summary: str = Field(min_length=1, max_length=1000)
     dimensions: list[SupplementalDimension] = Field(min_length=1, max_length=8)
-    comparisons: list[PeerComparison] = Field(default_factory=list, max_length=8)
     limitations: list[str] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_peer_comparisons(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "comparisons" not in value:
+            return value
+        payload = dict(value)
+        payload.pop("comparisons", None)
+        return payload
 
     @field_validator("summary", mode="before")
     @classmethod
@@ -405,12 +383,17 @@ class EvidenceViewRecord(SearchModel):
     attempt_commit: str = Field(min_length=1)
     description: str = Field(min_length=1, max_length=1000)
     supplemental_evaluation: SupplementalEvaluation | None = None
-    comparison_basis: list[EvidenceComparisonReference] = Field(
-        default_factory=list,
-        max_length=8,
-    )
     tool_views: list[ToolViewRecord] = Field(default_factory=list)
     created_at: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_comparison_basis(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "comparison_basis" not in value:
+            return value
+        payload = dict(value)
+        payload.pop("comparison_basis", None)
+        return payload
 
     @field_validator("description", mode="before")
     @classmethod
@@ -470,10 +453,6 @@ class EvidenceAnnotationTask(SearchModel):
         pattern=r"^[0-9a-f]{64}$",
     )
     supplemental_evaluation_enabled: bool = False
-    comparison_basis: list[EvidenceComparisonReference] = Field(
-        default_factory=list,
-        max_length=8,
-    )
     profile: ResolvedEvidenceAnnotatorProfile | None = None
     outer_deadline_at: str | None = None
     state: Literal["pending", "retry_wait", "completed", "terminal_error"] = (
@@ -488,6 +467,15 @@ class EvidenceAnnotationTask(SearchModel):
     view: EvidenceViewRecord | None = None
     created_at: str
     updated_at: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_comparison_basis(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "comparison_basis" not in value:
+            return value
+        payload = dict(value)
+        payload.pop("comparison_basis", None)
+        return payload
 
 
 class StrategySpec(SearchModel):

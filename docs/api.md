@@ -99,7 +99,9 @@ feature ledger, and scoped pitfalls. It marks predecessor scores non-reusable.
 | `search_bind_agent_handle` | main/host driver | attach a Codex or Pi native handle |
 | `search_continue_agent_session` | main | return native same-worker continuation fields when supported |
 | `search_get_agent_context` | candidate worker | load authoritative ids, workspace, candidate-local iterations/results, and resume data |
-| `search_get_global_evidence` | candidate worker | project settled worker attempts in the current run as score, disposition, exact attempt commit, and a possibly delayed objective View |
+| `search_get_global_evidence` | candidate worker | return at most two ordinary hard-best/latest Views per candidate while preserving original shared-dir settlement rows |
+| `search_list_global_evidence` | candidate worker | page lightweight immutable Evidence references, optionally filtered by candidate |
+| `search_get_global_evidence_entry` | candidate worker | expand one complete View by exact candidate, iteration, and commit identity |
 | `search_stage_shared_tool` | candidate worker | copy explicit sources from the caller's `.tmp/tool-drafts/` into bounded `.tmp/share-out` staging; this does not publish them |
 | `search_copy_shared_tool` | candidate worker | copy a Tool View-bound shared-dir snapshot into the caller's local inbox for reversible verification |
 | `search_get_evidence_detail` | candidate worker | expand one available supplemental evaluation from the caller's current run; independent mode is candidate-local |
@@ -114,7 +116,7 @@ pool job; ordinary overrides remain dispatch-scoped.
 `search_get_agent_context` exposes `supplemental_evaluation_enabled`. When it is
 false, workers do not wait for or request supplemental evaluation. When enabled,
 `search_get_global_evidence` adds only `supplemental_available=true`; full summary,
-dimensions, peer comparisons, and limitations are
+dimensions, and limitations are
 fetched for a selected immutable row through `search_get_evidence_detail`.
 
 Worker process verifier calls require a one-line `hypothesis` describing the

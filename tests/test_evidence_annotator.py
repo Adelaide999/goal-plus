@@ -105,11 +105,7 @@ def test_annotator_instructions_require_tool_views_and_adoption_analysis() -> No
     assert "不要汇总工具收益" in ANNOTATOR_INSTRUCTIONS
 
 
-def test_supplemental_output_must_match_dynamic_comparison_basis() -> None:
-    comparison_basis = [
-        {"candidate_id": "candidate-a", "iteration": 1, "commit": "abc123"},
-        {"candidate_id": "candidate-b", "iteration": 2, "commit": "def456"},
-    ]
+def test_supplemental_output_ignores_legacy_peer_comparisons() -> None:
     output = EvidenceAnnotationOutput.model_validate(
         {
             "description": "Changed the requested behavior.",
@@ -125,12 +121,13 @@ def test_supplemental_output_must_match_dynamic_comparison_basis() -> None:
                 ],
                 "comparisons": [
                     {
-                        **reference,
+                        "candidate_id": "candidate-a",
+                        "iteration": 1,
+                        "commit": "abc123",
                         "relation": "different",
                         "rationale": "The candidates use distinct access strategies.",
                         "evidence": ["candidate diff"],
                     }
-                    for reference in comparison_basis
                 ],
                 "limitations": ["Runtime behavior was not independently measured."],
             },
@@ -140,25 +137,10 @@ def test_supplemental_output_must_match_dynamic_comparison_basis() -> None:
     CodexEvidenceAnnotator._validate_supplemental_output(
         output,
         enabled=True,
-        comparison_basis=comparison_basis,
     )
-    reversed_output = output.model_copy(
-        update={
-            "supplemental_evaluation": output.supplemental_evaluation.model_copy(
-                update={
-                    "comparisons": list(
-                        reversed(output.supplemental_evaluation.comparisons)
-                    )
-                }
-            )
-        }
-    )
-    with pytest.raises(AnnotationOutputError, match="do not match"):
-        CodexEvidenceAnnotator._validate_supplemental_output(
-            reversed_output,
-            enabled=True,
-            comparison_basis=comparison_basis,
-        )
+    assert "comparisons" not in output.model_dump(mode="json")[
+        "supplemental_evaluation"
+    ]
 
 
 def test_outer_deadline_accepts_unix_epoch() -> None:
@@ -203,10 +185,10 @@ def test_drainer_serially_describes_pending_evidence(tmp_path: Path) -> None:
         )
     assert sum(results) == 2
     assert annotator.max_active == 1
-    view = runtime.get_global_evidence(session.agent_session_id)
-    assert annotator.commits == [entry["commit"] for entry in view]
+    history = runtime.list_global_evidence(session.agent_session_id, limit=20)
+    assert annotator.commits == [entry["commit"] for entry in history["items"]]
     assert annotator.dispositions == ["keep", "retain"]
-    assert [entry["view"] for entry in view] == [
+    assert [entry["view"] for entry in history["items"]] == [
         "Changed the candidate value stored in initial_program.py.",
         "Changed the candidate value stored in initial_program.py.",
     ]

@@ -39,7 +39,8 @@ candidate 调用 search_run_verifier
   -> 按 worker_host 启动一次性 Codex 或 Pi annotator
   -> 校验单行 JSON 输出
   -> run 仍可发布时写入不可变 EvidenceViewRecord
-  -> search_get_global_evidence 投影 view 字段
+  -> search_get_global_evidence 投影有界代表索引
+  -> worker 按需分页并精确展开任意完整 view
 ```
 
 一次 worker verifier settlement 会在返回前持久化 task，随后异步 kick drainer。
@@ -272,8 +273,8 @@ annotation 内容或 verifier settlement：
 
 | 模式 | Candidate 可见行为 |
 |---|---|
-| `manual` | 默认；candidate 显式调用 `search_get_global_evidence` 读取共享 run Evidence |
-| `auto` | verifier 成功返回时额外注入 `global_evidence_snapshot` |
+| `manual` | 默认；candidate 显式调用 `search_get_global_evidence` 读取有界共享索引 |
+| `auto` | verifier 成功返回时额外注入有界 `global_evidence_snapshot` |
 | `independent` | 不自动注入，显式读取也只返回调用 candidate 自己的 Evidence |
 
 Annotator 仍按 run 处理所有 worker Evidence；`independent` 只是 candidate-facing 投影过滤。
