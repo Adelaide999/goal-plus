@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from goal_plus.pi_tool import call_pi_tool
+from goal_plus.models import SearchSpec
 from goal_plus.runtime import FileSearchRuntime
 
 from tests._runtime_helpers import make_project, spec_for
@@ -57,6 +58,40 @@ def test_pi_tool_calls_context_verifier_and_iterations(tmp_path: Path) -> None:
         {"run_id": run_id, "candidate_id": task.candidate_id},
     )
     assert iterations[0]["agent_session_id"] == session.agent_session_id
+
+
+def test_pi_tool_stages_explicit_candidate_drafts(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    runtime_root = tmp_path / ".search"
+    runtime = FileSearchRuntime(runtime_root)
+    data = spec_for(project, max_parallel=1).model_dump(mode="json")
+    data["shared_dir"] = {"enabled": True}
+    frozen = runtime.freeze_spec(
+        SearchSpec.model_validate(data),
+        [project / "evaluator.py"],
+    )
+    run_id = runtime.create_run(frozen.frozen_spec_id)
+    plan = runtime.plan_next(run_id, requested_k=1)
+    task = runtime.start_batch(run_id, plan.plan_id)[0]
+    session = runtime.start_agent_session(run_id, task.candidate_id)
+    source = task.workspace / ".tmp" / "tool-drafts" / "trace.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("print('trace')\n", encoding="utf-8")
+
+    staged = call_pi_tool(
+        runtime_root,
+        "search_stage_shared_tool",
+        {
+            "agent_session_id": session.agent_session_id,
+            "name": "trace-helper",
+            "summary": "Collect a bounded diagnostic trace.",
+            "entrypoint": "trace.py",
+            "candidate_relative_source_paths": [".tmp/tool-drafts/trace.py"],
+        },
+    )
+
+    assert staged["staged_name"] == "trace-helper"
+    assert Path(staged["staging_path"], "trace.py").is_file()
 
 
 @pytest.mark.parametrize(

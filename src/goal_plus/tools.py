@@ -12,6 +12,7 @@ from goal_plus.models import (
     GoalPlusSpecDraftInput,
     GoalPlusTriage,
     SearchSpec,
+    ToolizationDecision,
     VerifierInvalidationReason,
 )
 from goal_plus.monitor import goal_plus_monitor_snapshot
@@ -156,6 +157,34 @@ class SearchTools:
     ) -> list[dict[str, Any]]:
         return self.runtime.get_global_evidence(agent_session_id)
 
+    def search_copy_shared_tool(
+        self,
+        agent_session_id: str,
+        tool_id: str,
+        snapshot_hash: str,
+    ) -> dict[str, Any]:
+        return self.runtime.copy_shared_tool(
+            agent_session_id,
+            tool_id,
+            snapshot_hash,
+        )
+
+    def search_stage_shared_tool(
+        self,
+        agent_session_id: str,
+        name: str,
+        summary: str,
+        entrypoint: str,
+        candidate_relative_source_paths: list[str],
+    ) -> dict[str, Any]:
+        return self.runtime.stage_shared_tool(
+            agent_session_id=agent_session_id,
+            name=name,
+            summary=summary,
+            entrypoint=entrypoint,
+            candidate_relative_source_paths=candidate_relative_source_paths,
+        )
+
     def search_get_agent_observability(self, agent_session_id: str) -> dict[str, Any]:
         return self.runtime.get_agent_observability(agent_session_id)
 
@@ -166,6 +195,7 @@ class SearchTools:
         scope: Literal["process", "promotion"] = "process",
         agent_session_id: str | None = None,
         hypothesis: str | None = None,
+        toolization_decision: ToolizationDecision | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         report = self.runtime.run_verifier(
             run_id,
@@ -173,6 +203,7 @@ class SearchTools:
             scope=scope,
             agent_session_id=agent_session_id,
             hypothesis=hypothesis,
+            toolization_decision=toolization_decision,
         )
         result = report.model_dump(mode="json")
         if scope != "process" or agent_session_id is None:

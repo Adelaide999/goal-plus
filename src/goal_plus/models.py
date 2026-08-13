@@ -59,6 +59,30 @@ class Budget(SearchModel):
 
 WorkspaceBackend = Literal["copy", "git_worktree"]
 IterationDisposition = Literal["keep", "retain", "discard", "failure"]
+SharedToolPublishStatus = Literal[
+    "legacy_unknown", "not_staged",
+    "skipped_unattributed_verifier", "skipped_failed_verifier", "published",
+    "partially_published", "consumed_unchanged", "snapshot_rejected",
+    "snapshot_error",
+]
+ToolizationSignal = Literal[
+    "repeated_sequence",
+    "domain_probe",
+    "parser_or_trace",
+    "peer_setup_reduction",
+]
+ToolizationExclusion = Literal[
+    "single_common_command",
+    "logic_free_wrapper",
+    "restricted_artifact",
+    "candidate_private_state",
+    "duplicate_snapshot",
+]
+ToolizationAdvisory = Literal[
+    "toolization_review_missing",
+    "toolization_stage_missing",
+    "toolization_decision_mismatch",
+]
 VerifierInvalidationReason = Literal[
     "verifier_contract_invalid",
     "verifier_coverage_inadequate",
@@ -310,6 +334,70 @@ class SupplementalEvaluation(SearchModel):
         return normalized
 
 
+class ToolViewRef(SearchModel):
+    tool_id: str = Field(min_length=1)
+    summary: str = Field(min_length=1, max_length=1000)
+    capabilities: list[str] = Field(max_length=16)
+    when_to_use: str = Field(min_length=1, max_length=1000)
+    entrypoint: str | None = Field(max_length=500)
+    inputs: list[str] = Field(max_length=16)
+    outputs: list[str] = Field(max_length=16)
+    dependencies: list[str] = Field(max_length=16)
+    adoption_steps: list[str] = Field(max_length=16)
+    limitations: list[str] = Field(max_length=16)
+
+    @field_validator(
+        "capabilities", "inputs", "outputs", "dependencies",
+        "adoption_steps", "limitations", mode="before"
+    )
+    @classmethod
+    def normalize_items(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        normalized = []
+        for item in value:
+            if not isinstance(item, str):
+                normalized.append(item)
+                continue
+            text = " ".join(item.strip().split())
+            if not text or len(text) > 500:
+                raise ValueError("tool view list items must be non-empty and at most 500 characters")
+            normalized.append(text)
+        return normalized
+
+
+class ToolViewRecord(ToolViewRef):
+    snapshot_hash: str = Field(min_length=1)
+    source_commit: str = Field(min_length=1)
+    evidence_scope: str = Field(min_length=1, max_length=1000)
+
+
+class ToolAdoptionRecord(SearchModel):
+    tool_id: str = Field(min_length=1)
+    snapshot_hash: str = Field(min_length=1)
+    receipt_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_declaration(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "mode" not in value:
+            return value
+        payload = dict(value)
+        payload.pop("mode", None)
+        return payload
+
+
+class ToolCopyReceipt(SearchModel):
+    receipt_id: str = Field(min_length=1)
+    tool_id: str = Field(min_length=1)
+    snapshot_hash: str = Field(min_length=1)
+    source_commit: str | None = None
+    agent_session_id: str = Field(min_length=1)
+    candidate_base_git_head: str = Field(min_length=1)
+    inbox_path: Path
+    copied_at: str
+
+
 class EvidenceViewRecord(SearchModel):
     run_id: str = Field(min_length=1)
     candidate_id: str = Field(min_length=1)
@@ -321,6 +409,7 @@ class EvidenceViewRecord(SearchModel):
         default_factory=list,
         max_length=8,
     )
+    tool_views: list[ToolViewRecord] = Field(default_factory=list)
     created_at: str
 
     @field_validator("description", mode="before")
@@ -469,6 +558,15 @@ class VerifierCommand(SearchModel):
         return normalized
 
 
+class SharedDirSpec(SearchModel):
+    enabled: bool = False
+    max_tools_per_iteration: int = Field(default=16, gt=0, le=128)
+    max_files_per_iteration: int = Field(default=64, gt=0, le=512)
+    max_path_entries_per_iteration: int = Field(default=512, gt=0, le=8192)
+    max_depth: int = Field(default=8, ge=1, le=32)
+    max_bytes_per_iteration: int = Field(default=2 * 1024 * 1024, gt=0, le=64 * 1024 * 1024)
+
+
 class SearchSpec(SearchModel):
     objective: str = Field(min_length=1)
     metric_name: str = Field(min_length=1)
@@ -482,6 +580,7 @@ class SearchSpec(SearchModel):
     root_hypotheses: list[str] = Field(default_factory=list)
     strategy: StrategySpec = Field(default_factory=StrategySpec)
     workspace: WorkspaceSpec = Field(default_factory=WorkspaceSpec)
+    shared_dir: SharedDirSpec = Field(default_factory=SharedDirSpec)
 
     @field_validator("source_path")
     @classmethod
@@ -506,6 +605,7 @@ class SearchSpecDraft(SearchModel):
     root_hypotheses: list[str] | None = None
     strategy: StrategySpec | None = None
     workspace: WorkspaceSpec | None = None
+    shared_dir: SharedDirSpec | None = None
 
 
 GoalPlusStatus = Literal["active", "needs_user", "blocked", "complete", "abandoned"]
@@ -688,6 +788,31 @@ class FrozenSpec(SearchModel):
     created_at: str
 
 
+class SharedToolRecord(SearchModel):
+    tool_id: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1)
+    iteration: int = Field(ge=1)
+    source_commit: str | None = None
+    snapshot_hash: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    summary: str | None = None
+    entrypoint: str | None = None
+    source_relative_path: str = Field(min_length=1)
+    read_only_path: Path
+    files: list[str] = Field(default_factory=list)
+    size_bytes: int = Field(ge=0)
+    created_at: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_asset_id(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "tool_id" in value or "asset_id" not in value:
+            return value
+        payload = dict(value)
+        payload["tool_id"] = payload.pop("asset_id")
+        return payload
+
+
 class CandidateTask(SearchModel):
     run_id: str
     candidate_id: str
@@ -700,6 +825,7 @@ class CandidateTask(SearchModel):
     workspace_backend: WorkspaceBackend = "copy"
     workspace_branch: str | None = None
     workspace_base_revision: str | None = None
+    share_out_dir: Path | None = None
     allowed_files: list[str]
     denied_files: list[str]
     instructions: list[str] = Field(default_factory=list)
@@ -712,6 +838,15 @@ class CandidateTask(SearchModel):
         exclude_if=lambda value: value is None,
     )
     model_provenance: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_legacy_shared_dir(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "shared_dir" not in value:
+            return value
+        payload = dict(value)
+        payload.pop("shared_dir", None)
+        return payload
 
 
 class CandidateProposal(SearchModel):
@@ -760,6 +895,61 @@ class VerifierResult(SearchModel):
     failure_class: str | None = None
 
 
+class ToolizationDecision(SearchModel):
+    outcome: Literal["staged", "not_applicable"]
+    signals: list[ToolizationSignal] = Field(default_factory=list, max_length=4)
+    exclusion: ToolizationExclusion | None = None
+    rationale: str = Field(min_length=1, max_length=1000)
+    tool_names: list[str] = Field(default_factory=list, max_length=16)
+
+    @field_validator("rationale")
+    @classmethod
+    def rationale_must_be_nonempty(cls, value: str) -> str:
+        normalized = " ".join(value.split()).strip()
+        if not normalized:
+            raise ValueError("toolization rationale must be non-empty")
+        return normalized
+
+    @field_validator("signals")
+    @classmethod
+    def signals_must_be_unique(
+        cls, value: list[ToolizationSignal]
+    ) -> list[ToolizationSignal]:
+        if len(value) != len(set(value)):
+            raise ValueError("toolization signals must be unique")
+        return value
+
+    @field_validator("tool_names")
+    @classmethod
+    def tool_names_must_be_unique_and_nonempty(
+        cls, value: list[str]
+    ) -> list[str]:
+        normalized = [" ".join(item.split()).strip() for item in value]
+        if any(not item for item in normalized):
+            raise ValueError("toolization tool_names must be non-empty")
+        if any(len(item) > 120 for item in normalized):
+            raise ValueError("toolization tool_names must not exceed 120 characters")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("toolization tool_names must be unique")
+        return normalized
+
+    @model_validator(mode="after")
+    def outcome_matches_evidence(self) -> "ToolizationDecision":
+        if self.outcome == "staged":
+            if not self.signals:
+                raise ValueError("staged toolization requires at least one signal")
+            if self.exclusion is not None:
+                raise ValueError("staged toolization cannot declare an exclusion")
+            if not self.tool_names:
+                raise ValueError("staged toolization requires at least one tool name")
+        else:
+            if self.exclusion is None:
+                raise ValueError("not_applicable toolization requires an exclusion")
+            if self.tool_names:
+                raise ValueError("not_applicable toolization cannot declare tool names")
+        return self
+
+
 class ScoreReport(SearchModel):
     run_id: str
     candidate_id: str
@@ -776,6 +966,21 @@ class ScoreReport(SearchModel):
     best_iteration: int | None = Field(default=None, ge=1)
     best_git_head: str | None = None
     workspace_git_head_after_settlement: str | None = None
+    shared_tool_staged_entries: list[str] | None = None
+    shared_tool_staged_file_count: int | None = Field(default=None, ge=0)
+    shared_tool_staged_bytes: int | None = Field(default=None, ge=0)
+    shared_tool_publish_status: SharedToolPublishStatus | None = None
+    shared_tool_errors: list[str] | None = None
+    shared_tool_consumed_entries: list[str] | None = None
+    shared_tool_deduplicated_entries: list[str] | None = None
+    toolization_decision: ToolizationDecision | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    toolization_advisories: list[ToolizationAdvisory] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
 
 
 class PromotionEvidence(SearchModel):
@@ -818,7 +1023,42 @@ class IterationRecord(SearchModel):
     restored_to_iteration: int | None = Field(default=None, ge=1)
     restored_to_git_head: str | None = None
     workspace_git_head_after_settlement: str | None = None
+    adopted_tools: list[ToolAdoptionRecord] = Field(default_factory=list, exclude_if=lambda value: not value)
+    adoption_confounded: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    shared_tools: list[SharedToolRecord] = Field(default_factory=list)
+    shared_tool_errors: list[str] = Field(default_factory=list)
+    shared_tool_staged_entries: list[str] = Field(default_factory=list)
+    shared_tool_staged_file_count: int = Field(default=0, ge=0)
+    shared_tool_staged_bytes: int = Field(default=0, ge=0)
+    shared_tool_consumed_entries: list[str] = Field(default_factory=list)
+    shared_tool_deduplicated_entries: list[str] = Field(default_factory=list)
+    shared_tool_publish_status: SharedToolPublishStatus = "legacy_unknown"
+    toolization_decision: ToolizationDecision | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    toolization_advisories: list[ToolizationAdvisory] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
     created_at: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_shared_tool_publish_status(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        if "shared_tools" not in payload and "shared_assets" in payload:
+            payload["shared_tools"] = payload.pop("shared_assets")
+        if "shared_tool_publish_status" not in payload:
+            tools = payload.get("shared_tools") or []
+            errors = payload.get("shared_tool_errors") or []
+            if tools:
+                payload["shared_tool_publish_status"] = "partially_published" if errors else "published"
+            elif errors:
+                payload["shared_tool_publish_status"] = "snapshot_error"
+        return payload
 
 
 class ResultLedgerEntry(SearchModel):
@@ -907,6 +1147,7 @@ class CandidateRecord(SearchModel):
     score_report: ScoreReport | None = None
     promotion_report: ScoreReport | None = None
     promotion_evidence: PromotionEvidence | None = None
+    pending_tool_copies: list[ToolCopyReceipt] = Field(default_factory=list, exclude_if=lambda value: not value)
     iterations: list[IterationRecord] = Field(default_factory=list)
     results_ledger: list[ResultLedgerEntry] = Field(default_factory=list)
     results_ledger_git_head: str | None = None

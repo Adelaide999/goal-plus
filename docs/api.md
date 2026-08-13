@@ -100,6 +100,8 @@ feature ledger, and scoped pitfalls. It marks predecessor scores non-reusable.
 | `search_continue_agent_session` | main | return native same-worker continuation fields when supported |
 | `search_get_agent_context` | candidate worker | load authoritative ids, workspace, candidate-local iterations/results, and resume data |
 | `search_get_global_evidence` | candidate worker | project settled worker attempts in the current run as score, disposition, exact attempt commit, and a possibly delayed objective View |
+| `search_stage_shared_tool` | candidate worker | copy explicit sources from the caller's `.tmp/tool-drafts/` into bounded `.tmp/share-out` staging; this does not publish them |
+| `search_copy_shared_tool` | candidate worker | copy a Tool View-bound shared-dir snapshot into the caller's local inbox for reversible verification |
 | `search_get_agent_observability` | main/monitor | read normalized model, timing, terminal, usage, context, artifact, and handoff evidence for one session |
 
 `search_start_agent_session` does not launch or supervise a worker. The caller
@@ -109,7 +111,12 @@ minimum fields are cumulative across the internal native-session resumes of one
 pool job; ordinary overrides remain dispatch-scoped.
 
 Worker process verifier calls require a one-line `hypothesis` describing the
-realized attempt. `view=null` in Global Evidence means annotation has not been
+realized attempt. With `shared_dir` enabled they may also include a
+`toolization_decision`. `staged` requires one or more positive signals and tool
+names; `not_applicable` requires a concrete exclusion. Missing or contradictory
+decisions produce iteration advisories only. The staging inventory remains
+authoritative, and decisions/advisories do not affect score, disposition,
+selection, or promotion. `view=null` in Global Evidence means annotation has not been
 published yet; workers continue independently and do not wait or poll.
 `strategy.config.global_evidence_mode` controls Evidence delivery without
 changing the candidate-visible prompt or tool surface. `manual` is the default:
@@ -128,6 +135,15 @@ candidate/iteration/commit View references visible at that moment, so reports
 can distinguish a View published after the last verifier from one available
 before a later attempt. These receipts are observational and never affect
 settlement, selection, promotion, or hard PASS/FAIL.
+When `shared_dir.enabled=true`, Global Evidence additionally projects only tools whose Tool View has
+been generated and runtime-bound. A worker may call `search_copy_shared_tool` with that exact
+`tool_id` and `snapshot_hash`; the next process verifier atomically consumes the local copy receipt.
+This records a candidate-local adoption but does not create a separate tool score, recommendation, or
+selection rule.
+`ToolizationDecision` is an iteration-local review fact and never enters Global
+Evidence. The publication path remains staging -> attributed passing process
+verifier -> immutable shared snapshot -> annotator-bound Tool View -> Global
+Evidence -> exact copy receipt -> adopted tool record.
 Each worker settlement snapshots the exact attempt base/head, worker host, and
 resolved annotator model/provider into an internal task. Codex runs annotations
 through ephemeral `codex exec`; Pi runs them through ephemeral, tool-free

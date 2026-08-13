@@ -145,8 +145,9 @@ pi --mode json --print --no-session --no-builtin-tools --tools submit_evidence_a
 
 Pi annotator 没有 session、内置工具、自动发现的 extension、skill、prompt template 或
 context file。运行时只加载一个临时的 `submit_evidence_annotation` terminating tool，参数
-复用 Codex annotator 的同一份 Pydantic JSON Schema；模型和 provider 由固化 profile 决定，
-provider 配置从 `PI_CODING_AGENT_DIR` 读取。
+复用 Codex annotator 的同一份 Pydantic JSON Schema，包括启用 shared-dir 后完整且严格的
+`tool_views` 字段；模型和 provider 由固化 profile 决定，provider 配置从
+`PI_CODING_AGENT_DIR` 读取。
 
 两个路径都会在推理期间重复检查 run 和外层 deadline。run 关闭或 deadline 到期时，
 当前模型进程会被终止，迟到结果不能发布。

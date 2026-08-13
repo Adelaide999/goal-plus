@@ -633,6 +633,34 @@ def test_shared_evidence_view_does_not_substitute_worker_text_for_missing_view()
                             "view": "Objective View <script>is escaped</script>.",
                             "view_state": "completed",
                             "view_error": None,
+                            "toolization_decision": {
+                                "outcome": "staged",
+                                "signals": ["parser_or_trace"],
+                                "exclusion": None,
+                                "rationale": "Parses a non-trivial trace <safely>.",
+                                "tool_names": ["score-helper"],
+                            },
+                            "toolization_advisories": [
+                                "toolization_stage_missing"
+                            ],
+                            "shared_tool_staged_entries": [],
+                            "shared_tool_publish_status": "not_staged",
+                            "published_tool_views": [
+                                {
+                                    "tool_id": "score-helper",
+                                    "summary": "Parses score output <safely>.",
+                                    "entrypoint": "helper.py",
+                                    "when_to_use": "Use for score parsing.",
+                                }
+                            ],
+                            "adopted_tools": [
+                                {
+                                    "tool_id": "shared-parser",
+                                    "snapshot_hash": "b" * 64,
+                                    "receipt_id": "receipt-001",
+                                }
+                            ],
+                            "adoption_confounded": True,
                         },
                     ],
                 }
@@ -644,6 +672,18 @@ def test_shared_evidence_view_does_not_substitute_worker_text_for_missing_view()
     assert "Worker attempt &lt;strong&gt;is not a View&lt;/strong&gt;." in html
     assert "Annotation &lt;failed&gt; safely." in html
     assert "Objective View &lt;script&gt;is escaped&lt;/script&gt;." in html
+    assert "Published Tool View" in html
+    assert "Toolization Review" in html
+    assert "parser_or_trace" in html
+    assert "toolization_stage_missing" in html
+    assert "Parses a non-trivial trace &lt;safely&gt;." in html
+    assert "Tool Adoption Summary" in html
+    assert "score-helper" in html
+    assert "Parses score output &lt;safely&gt;." in html
+    assert "shared-parser" in html
+    assert "receipt receipt-001" in html
+    assert "Confounded adoption trial" in html
+    assert "No shared tool adopted" in html
     assert "<strong>is not a View</strong>" not in html
     assert "<script>is escaped</script>" not in html
     assert html.count("data-evidence-row") == 2

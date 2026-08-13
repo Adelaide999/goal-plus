@@ -7,7 +7,12 @@ from typing import Annotated, Any, Literal
 from pydantic import Field
 
 from goal_plus.goal_plus import FileGoalPlusRuntime
-from goal_plus.models import AgentHostKind, GoalPlusSpecDraftInput, SearchSpec
+from goal_plus.models import (
+    AgentHostKind,
+    GoalPlusSpecDraftInput,
+    SearchSpec,
+    ToolizationDecision,
+)
 from goal_plus.paths import DEFAULT_RUNTIME_ROOT
 from goal_plus.runtime import FileSearchRuntime
 from goal_plus.tools import GoalPlusTools, SearchTools
@@ -244,12 +249,42 @@ def create_mcp(
         """返回当前 run 的窄 Global Evidence 视图。
 
         每项只包含 candidate_id、iteration、score、keep/retain/discard/failure disposition、
-        verifier attempt commit、可能延迟的客观 View，以及启用时由 ViewAgent 后验生成的
+        verifier attempt commit、可能延迟的客观 View，以及启用时由 annotator 后验生成的
         开放式 supplemental_evaluation 和动态 peer 比较。任何 View 为 null 都不影响
         verifier Evidence；worker 不需要等待，可先依据 Evidence 独立探索，必要时再通过
         commit 做只读 Git 比较。
         """
         return tools.search_get_global_evidence(agent_session_id)
+
+    @mcp.tool()
+    def search_copy_shared_tool(
+        agent_session_id: str,
+        tool_id: str,
+        snapshot_hash: str,
+    ) -> dict[str, Any]:
+        """复制一个已绑定 Tool View 的共享工具到候选临时 inbox。"""
+        return tools.search_copy_shared_tool(agent_session_id, tool_id, snapshot_hash)
+
+    @mcp.tool()
+    def search_stage_shared_tool(
+        agent_session_id: str,
+        name: str,
+        summary: str,
+        entrypoint: str,
+        candidate_relative_source_paths: list[str],
+    ) -> dict[str, Any]:
+        """将显式的 candidate tool drafts 安全复制到下一次 verifier staging。
+
+        source paths 必须位于当前 candidate 的 `.tmp/tool-drafts/` 下。该工具只执行
+        staging；只有归属于当前 worker 且通过的 process verifier 才能发布快照。
+        """
+        return tools.search_stage_shared_tool(
+            agent_session_id,
+            name,
+            summary,
+            entrypoint,
+            candidate_relative_source_paths,
+        )
 
     @mcp.tool()
     def search_run_verifier(
@@ -258,11 +293,14 @@ def create_mcp(
         scope: Literal["process", "promotion"] = "process",
         agent_session_id: str | None = None,
         hypothesis: str | None = None,
+        toolization_decision: ToolizationDecision | None = None,
     ) -> dict[str, Any]:
         """Subagent 带 `agent_session_id` 自评分；主流程最终验证不带它。
 
         subagent 传入准确 `run_id`、`candidate_id`、自己的 `agent_session_id`、一句话
-        `hypothesis` 并省略 `scope`；
+        `hypothesis` 并省略 `scope`；启用 shared-dir 时还可提交结构化
+        `toolization_decision`。缺失或与实际 staging 不匹配只记录 advisory，不改变评分、
+        结算、选择或 promotion；决策保存在 iteration 中但不进入 Global Evidence。
         hypothesis 应客观概括本轮实际尝试。运行时随后在继承的 `workspace/results.tsv`
         中追加且只追加一条已验证记录并提交账本。主 agent 不带 `agent_session_id` 的
         内部复验不要求 hypothesis；`promotion` 只属于主流程。带
@@ -275,6 +313,7 @@ def create_mcp(
             scope,
             agent_session_id,
             hypothesis,
+            toolization_decision,
         )
 
     @mcp.tool()
