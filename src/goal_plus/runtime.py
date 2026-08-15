@@ -6020,37 +6020,42 @@ class FileSearchRuntime:
         annotation_host = configured.host or strategy.worker_host
         worker_launch = strategy.worker_launch
         env_model = os.environ.get(EVIDENCE_ANNOTATOR_MODEL_ENV)
+        model_from_annotator_env = False
         if configured.model:
             model = configured.model
+        elif env_model:
+            model = env_model.strip() or None
+            model_from_annotator_env = model is not None
         elif annotation_host == strategy.worker_host and selected_model:
             model = selected_model
         elif annotation_host == strategy.worker_host and worker_launch is not None:
             model = worker_launch.model
-        elif env_model:
-            model = env_model.strip() or None
         elif annotation_host == "pi-rpc":
             model = (os.environ.get("PI_MODEL") or "").strip() or None
         else:
             model = None
 
         reasoning_effort = configured.reasoning_effort
+        env_reasoning_effort = (
+            os.environ.get(EVIDENCE_ANNOTATOR_REASONING_ENV) or None
+        )
+        if reasoning_effort is None:
+            reasoning_effort = env_reasoning_effort
         if (
             reasoning_effort is None
             and annotation_host == strategy.worker_host
             and worker_launch is not None
         ):
             reasoning_effort = worker_launch.reasoning_effort
-        if reasoning_effort is None:
-            reasoning_effort = (
-                os.environ.get(EVIDENCE_ANNOTATOR_REASONING_ENV) or None
-            )
 
         pi_provider: str | None = None
         if annotation_host == "pi-rpc":
             inherited_pi_provider = os.environ.get("PI_PROVIDER")
             if inherited_pi_provider is not None:
                 inherited_pi_provider = inherited_pi_provider.strip() or None
-            configured_pi_provider = configured.pi_provider
+            configured_pi_provider = (
+                None if model_from_annotator_env else configured.pi_provider
+            )
             pi_provider = configured_pi_provider or inherited_pi_provider
             if model and "/" in model:
                 model_provider, _, model_id = model.partition("/")

@@ -620,6 +620,52 @@ def test_pi_worker_model_is_inherited_by_pi_annotator(
     assert context["annotator"]["pi_provider"] == "bench-openai"
 
 
+def test_annotator_environment_overrides_pi_worker_model_and_stale_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pi_home = tmp_path / "pi-home"
+    pi_home.mkdir()
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_home))
+    monkeypatch.setenv("PI_PROVIDER", "deepseek")
+    monkeypatch.setenv(
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL",
+        "bench-openai/gpt-5.6-sol",
+    )
+    monkeypatch.setenv(
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT",
+        "medium",
+    )
+    runtime, run_id, [candidate] = _search_with_candidates(
+        tmp_path,
+        1,
+        strategy_updates={
+            "worker_host": "pi-rpc",
+            "worker_budget": {"max_runtime_seconds": 60},
+            "worker_launch": {
+                "model": "deepseek/deepseek-v4-flash",
+                "reasoning_effort": "high",
+            },
+            "evidence_annotator": {"pi_provider": "pi-rpc"},
+        },
+    )
+    candidate_id, session_id, workspace = candidate
+    (workspace / "initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
+    runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Set the Pi candidate value",
+    )
+
+    task = runtime._load_evidence_annotation_task(run_id, candidate_id, 1)
+    assert task is not None and task.profile is not None
+    assert task.profile.host == "pi-rpc"
+    assert task.profile.model == "bench-openai/gpt-5.6-sol"
+    assert task.profile.pi_provider == "bench-openai"
+    assert task.profile.reasoning_effort == "medium"
+
+
 def test_pi_worker_can_use_an_independent_codex_annotator(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

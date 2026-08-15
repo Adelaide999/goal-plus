@@ -206,14 +206,17 @@ task 在 verifier settlement 时解析并固化 profile；后续修改 session l
 模型优先级为：
 
 1. `strategy.evidence_annotator.model`；
-2. 当前 iteration 固定的 selected worker model；
-3. `strategy.worker_launch.model`；
-4. `GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL`；
+2. `GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL`；
+3. 当前 iteration 固定的 selected worker model；
+4. `strategy.worker_launch.model`；
 5. Pi 的 `PI_MODEL`；
 6. host 默认模型。
 
-reasoning effort 优先使用 annotator 显式配置，其次是 `strategy.worker_launch`，再其次是
-`GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT`。
+Pi 使用环境变量模型时，合格的 `provider/model` 前缀同时覆盖 worker 继承或 spec
+残留的 `pi_provider`；provider 与 harness 指定模型保持同源。
+
+reasoning effort 优先使用 annotator 显式配置，其次是
+`GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT`，再其次是 `strategy.worker_launch`。
 
 Pi provider 优先由带限定符的 `provider/model` 或 `pi_provider` 指定；未指定时继承
 `PI_PROVIDER`。限定模型与显式 `pi_provider` 冲突会被拒绝。Codex 优先使用 SearchSpec
@@ -224,8 +227,8 @@ provider，最后使用 Codex 自身默认 provider。
 
 | 变量 | 用途 |
 |---|---|
-| `GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL` | 未被 spec/worker model 覆盖时的 annotator 模型 |
-| `GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT` | 默认 reasoning effort |
+| `GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL` | 未被 spec 覆盖时的 annotator 模型；优先于 worker 继承 |
+| `GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT` | 未被 spec 覆盖时的 reasoning effort；优先于 worker 继承 |
 | `GOAL_PLUS_EVIDENCE_ANNOTATOR_BASE_URL` | Codex 自定义 provider endpoint |
 | `GOAL_PLUS_EVIDENCE_ANNOTATOR_PROVIDER_ID` | Codex provider id |
 | `GOAL_PLUS_EVIDENCE_ANNOTATOR_PROVIDER_NAME` | Codex provider display name |
