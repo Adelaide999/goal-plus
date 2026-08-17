@@ -281,6 +281,9 @@ def test_codex_worker_agent_calls_context_and_verifier() -> None:
     assert "global_evidence_snapshot" in text
     assert "search_list_global_evidence" in text
     assert "search_get_global_evidence_entry" in text
+    assert "search_list_evidence_topics" in text
+    assert "search_compare_evidence" in text
+    assert "每 candidate 最多 2 条" in text
     assert "不要批量" in text
     assert "search_submit_iteration_plan" not in text
     assert "search_run_verifier" in text

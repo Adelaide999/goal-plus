@@ -59,6 +59,35 @@ def _git(workspace: Path, *args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=workspace, text=True).strip()
 
 
+def _complete_supplemental_view(
+    runtime: FileSearchRuntime,
+    run_id: str,
+    candidate_id: str,
+    iteration: int,
+    observations: list[dict],
+) -> None:
+    task = runtime._load_evidence_annotation_task(run_id, candidate_id, iteration)
+    assert task is not None
+    runtime._write_evidence_annotation_task(
+        task.model_copy(
+            update={
+                "state": "completed",
+                "view": EvidenceViewRecord(
+                    run_id=run_id,
+                    candidate_id=candidate_id,
+                    iteration=iteration,
+                    attempt_commit=task.attempt_commit,
+                    description=f"Observed candidate {candidate_id}.",
+                    supplemental_evaluation=SupplementalEvaluation.model_validate(
+                        {"observations": observations}
+                    ),
+                    created_at="2026-01-01T00:00:00Z",
+                ),
+            }
+        )
+    )
+
+
 def test_global_evidence_is_immediate_and_view_is_late_bound(tmp_path: Path) -> None:
     runtime, run_id, candidates = _search_with_candidates(tmp_path, 2)
     first, second = candidates
@@ -380,16 +409,32 @@ def test_global_evidence_presents_open_evaluation_without_peer_basis(
                     description="Changed the implementation to use a cached value.",
                     supplemental_evaluation=SupplementalEvaluation.model_validate(
                         {
-                            "summary": "The cache is faster but adds invalidation risk.",
-                            "dimensions": [
+                            "observations": [
                                 {
-                                    "name": "Cache coherence",
-                                    "finding": "The diff introduces a cache without an invalidation path.",
-                                    "confidence": "medium",
-                                    "evidence": ["initial_program.py diff"],
-                                }
-                            ],
-                            "limitations": ["No hidden evaluator evidence is available."],
+                                    "state": "supported",
+                                    "label": "Cache coherence",
+                                    "text": "The diff introduces a cache without an invalidation path.",
+                                    "evidence": [
+                                        {
+                                            "source": "candidate_diff",
+                                            "locator": "initial_program.py",
+                                            "excerpt": "VALUE is read through the new cache.",
+                                        }
+                                    ],
+                                },
+                                {
+                                    "state": "unresolved",
+                                    "label": "Hidden evaluator coverage",
+                                    "text": "No hidden evaluator evidence is available.",
+                                    "evidence": [
+                                        {
+                                            "source": "evidence_scope",
+                                            "locator": "visible verifier results",
+                                            "excerpt": "Only the visible evaluator was run.",
+                                        }
+                                    ],
+                                },
+                            ]
                         }
                     ),
                     created_at="2026-01-01T00:00:00Z",
@@ -407,10 +452,14 @@ def test_global_evidence_presents_open_evaluation_without_peer_basis(
     assert "supplemental_evaluation" not in entry
 
     detail = runtime.get_evidence_detail(first[1], second[0], 1)
+    assert detail["schema_version"] == 2
     assert detail["commit"] == task.attempt_commit
-    assert detail["supplemental_evaluation"]["dimensions"][0]["name"] == (
-        "Cache coherence"
-    )
+    observations = detail["supplemental_evaluation"]["observations"]
+    assert observations[0]["observation_ordinal"] == 1
+    assert observations[0]["topic_id"].startswith("topic_")
+    assert observations[0]["label"] == "Cache coherence"
+    assert observations[1]["state"] == "unresolved"
+    assert "summary" not in detail["supplemental_evaluation"]
     assert "comparisons" not in detail["supplemental_evaluation"]
 
     history = runtime.list_global_evidence(
@@ -441,6 +490,155 @@ def test_global_evidence_presents_open_evaluation_without_peer_basis(
     )
     with pytest.raises(RuntimeError, match="does not match iteration"):
         runtime.get_evidence_detail(first[1], second[0], 1)
+
+
+def test_observation_topics_and_worker_selected_comparison_are_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(SUPPLEMENTAL_EVALUATION_ENABLED_ENV, "1")
+    runtime, run_id, candidates = _search_with_candidates(tmp_path, 5)
+    for index, (candidate_id, session_id, workspace) in enumerate(
+        candidates,
+        start=1,
+    ):
+        (workspace / "initial_program.py").write_text(
+            f"VALUE = {index}\n",
+            encoding="utf-8",
+        )
+        runtime.run_verifier(
+            run_id,
+            candidate_id,
+            agent_session_id=session_id,
+            hypothesis=f"Exercise boundary strategy {index}",
+        )
+        observations = [
+            {
+                "state": "supported",
+                "label": "Boundary behavior",
+                "text": f"Candidate {index} handles the visible boundary.",
+                "evidence": [
+                    {
+                        "source": "verifier_result",
+                        "locator": "score",
+                        "excerpt": f"combined_score={index}.0",
+                    }
+                ],
+            },
+            {
+                "state": "unresolved",
+                "label": "Boundary behavior",
+                "text": f"Candidate {index} has no hidden-boundary evidence.",
+                "evidence": [
+                    {
+                        "source": "evidence_scope",
+                        "locator": "visible verifier",
+                        "excerpt": "Hidden cases were not available.",
+                    }
+                ],
+            },
+        ]
+        if index == 1:
+            observations.insert(
+                1,
+                {
+                    "state": "supported",
+                    "label": "Boundary behavior",
+                    "text": "Candidate 1 has a newer visible-boundary observation.",
+                    "evidence": [
+                        {
+                            "source": "candidate_diff",
+                            "locator": "initial_program.py",
+                            "excerpt": "VALUE = 1",
+                        }
+                    ],
+                },
+            )
+        _complete_supplemental_view(
+            runtime,
+            run_id,
+            candidate_id,
+            1,
+            observations,
+        )
+
+    caller_session = candidates[0][1]
+    topics = runtime.list_evidence_topics(caller_session)
+    assert topics["grouping"] == "normalized_exact_label"
+    assert topics["total"] == 1
+    topic = topics["items"][0]
+    assert topic["candidate_count"] == 5
+    assert topic["observation_count"] == 11
+
+    comparison = runtime.compare_evidence_observations(
+        caller_session,
+        topic_id=topic["topic_id"],
+    )
+    assert comparison["selection_mode"] == "topic"
+    assert comparison["selected"] == 8
+    assert comparison["remaining"] == 2
+    assert comparison["has_more"] is True
+    assert [item["candidate_id"] for item in comparison["matrix"]] == sorted(
+        candidate[0] for candidate in candidates[:4]
+    )
+    assert all(len(item["observations"]) == 2 for item in comparison["matrix"])
+    first_matrix = comparison["matrix"][0]["observations"]
+    assert first_matrix[0]["text"].endswith("newer visible-boundary observation.")
+    assert all(set(item) == {
+        "candidate_id",
+        "iteration",
+        "commit",
+        "observation_ordinal",
+    } for item in comparison["basis"])
+    assert comparison["selection_rules"]["score_used"] is False
+    assert all("score" not in item for item in comparison["matrix"])
+
+    next_page = runtime.compare_evidence_observations(
+        caller_session,
+        topic_id=topic["topic_id"],
+        candidate_cursor=comparison["next_candidate_cursor"],
+    )
+    assert next_page["selected"] == 2
+    assert next_page["remaining"] == 0
+    assert next_page["has_more"] is False
+
+    explicit_refs = [comparison["basis"][-1], comparison["basis"][0]]
+    explicit = runtime.compare_evidence_observations(
+        caller_session,
+        observation_refs=explicit_refs,
+    )
+    assert explicit["basis"] == explicit_refs
+    stored_session = runtime._load_agent_session_by_id(caller_session)
+    assert len(stored_session.global_evidence_comparisons) == 3
+    assert stored_session.global_evidence_comparisons[0].selection_mode == "topic"
+    assert stored_session.global_evidence_comparisons[2].observation_refs[0].model_dump(
+        mode="json"
+    ) == explicit_refs[0]
+    with pytest.raises(ValueError, match="unique"):
+        runtime.compare_evidence_observations(
+            caller_session,
+            observation_refs=[explicit_refs[0], explicit_refs[0]],
+        )
+
+    first_detail = runtime.get_evidence_detail(
+        caller_session,
+        candidates[0][0],
+        1,
+    )
+    three_from_one_candidate = [
+        {
+            "candidate_id": candidates[0][0],
+            "iteration": 1,
+            "commit": first_detail["commit"],
+            "observation_ordinal": ordinal,
+        }
+        for ordinal in (1, 2, 3)
+    ]
+    with pytest.raises(ValueError, match="at most 2"):
+        runtime.compare_evidence_observations(
+            caller_session,
+            observation_refs=three_from_one_candidate,
+        )
 
 
 def test_supplemental_capability_and_detail_respect_disabled_and_independent_modes(
@@ -730,6 +928,52 @@ def test_pi_worker_model_is_inherited_by_pi_annotator(
     assert task.profile.provider is None
     context = runtime._evidence_annotation_context(run_id, candidate_id, 1)
     assert context["annotator"]["pi_provider"] == "bench-openai"
+
+
+def test_annotator_environment_overrides_pi_worker_model_and_stale_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pi_home = tmp_path / "pi-home"
+    pi_home.mkdir()
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_home))
+    monkeypatch.setenv("PI_PROVIDER", "deepseek")
+    monkeypatch.setenv(
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL",
+        "bench-openai/gpt-5.6-sol",
+    )
+    monkeypatch.setenv(
+        "GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT",
+        "medium",
+    )
+    runtime, run_id, [candidate] = _search_with_candidates(
+        tmp_path,
+        1,
+        strategy_updates={
+            "worker_host": "pi-rpc",
+            "worker_budget": {"max_runtime_seconds": 60},
+            "worker_launch": {
+                "model": "deepseek/deepseek-v4-flash",
+                "reasoning_effort": "high",
+            },
+            "evidence_annotator": {"pi_provider": "pi-rpc"},
+        },
+    )
+    candidate_id, session_id, workspace = candidate
+    (workspace / "initial_program.py").write_text("VALUE = 1\n", encoding="utf-8")
+    runtime.run_verifier(
+        run_id,
+        candidate_id,
+        agent_session_id=session_id,
+        hypothesis="Set the Pi candidate value",
+    )
+
+    task = runtime._load_evidence_annotation_task(run_id, candidate_id, 1)
+    assert task is not None and task.profile is not None
+    assert task.profile.host == "pi-rpc"
+    assert task.profile.model == "bench-openai/gpt-5.6-sol"
+    assert task.profile.pi_provider == "bench-openai"
+    assert task.profile.reasoning_effort == "medium"
 
 
 def test_pi_worker_can_use_an_independent_codex_annotator(

@@ -108,6 +108,34 @@ system instructions 明确禁止执行其中的指令、运行命令、读取其
 {"description": "将缓存键改为包含输入形状和数据类型。"}
 ```
 
+启用 supplemental evaluation 时，同一输出还包含 View v2 observations：
+
+```json
+{
+  "description": "将缓存键改为包含输入形状和数据类型。",
+  "supplemental_evaluation": {
+    "observations": [
+      {
+        "state": "supported",
+        "label": "缓存键隔离",
+        "text": "候选 diff 将输入形状和数据类型加入缓存键。",
+        "evidence": [
+          {
+            "source": "candidate_diff",
+            "locator": "cache.py:key_for",
+            "excerpt": "key = (shape, dtype, value)"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+annotator 每次生成 1–8 条 observation。缺少可见证据的事项使用 `unresolved`，不生成
+confidence、summary、winner 或 peer comparison。历史 v1 `dimensions/limitations` 在读取时可
+迁移为同一 observation 模型，但原始文件不会因读取而重写。
+
 `description` 必须满足：
 
 - 一句简体中文客观陈述；
@@ -207,14 +235,17 @@ task 在 verifier settlement 时解析并固化 profile；后续修改 session l
 模型优先级为：
 
 1. `strategy.evidence_annotator.model`；
-2. 当前 iteration 固定的 selected worker model；
-3. `strategy.worker_launch.model`；
-4. `GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL`；
+2. `GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL`；
+3. 当前 iteration 固定的 selected worker model；
+4. `strategy.worker_launch.model`；
 5. Pi 的 `PI_MODEL`；
 6. host 默认模型。
 
-reasoning effort 优先使用 annotator 显式配置，其次是 `strategy.worker_launch`，再其次是
-`GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT`。
+Pi 使用环境变量模型时，合格的 `provider/model` 前缀同时覆盖 worker 继承或 spec
+残留的 `pi_provider`；provider 与 harness 指定模型保持同源。
+
+reasoning effort 优先使用 annotator 显式配置，其次是
+`GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT`，再其次是 `strategy.worker_launch`。
 
 Pi provider 优先由带限定符的 `provider/model` 或 `pi_provider` 指定；未指定时继承
 `PI_PROVIDER`。限定模型与显式 `pi_provider` 冲突会被拒绝。Codex 优先使用 SearchSpec
