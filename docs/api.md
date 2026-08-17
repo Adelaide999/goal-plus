@@ -105,6 +105,8 @@ feature ledger, and scoped pitfalls. It marks predecessor scores non-reusable.
 | `search_stage_shared_tool` | candidate worker | copy explicit sources from the caller's `.tmp/tool-drafts/` into bounded `.tmp/share-out` staging; this does not publish them |
 | `search_copy_shared_tool` | candidate worker | copy a Tool View-bound shared-dir snapshot into the caller's local inbox for reversible verification |
 | `search_get_evidence_detail` | candidate worker | expand one available supplemental evaluation from the caller's current run; independent mode is candidate-local |
+| `search_list_evidence_topics` | candidate worker | page a deterministic exact-label index over visible supplemental observations |
+| `search_compare_evidence` | candidate worker | compare 2–8 explicitly selected observations, or one bounded topic page, without ranking candidates |
 | `search_get_agent_observability` | main/monitor | read normalized model, timing, terminal, usage, context, artifact, and handoff evidence for one session |
 
 `search_start_agent_session` does not launch or supervise a worker. The caller
@@ -115,9 +117,17 @@ pool job; ordinary overrides remain dispatch-scoped.
 
 `search_get_agent_context` exposes `supplemental_evaluation_enabled`. When it is
 false, workers do not wait for or request supplemental evaluation. When enabled,
-`search_get_global_evidence` adds only `supplemental_available=true`; full summary,
-dimensions, and limitations are
-fetched for a selected immutable row through `search_get_evidence_detail`.
+`search_get_global_evidence` adds only `supplemental_available=true`; the immutable
+supported/unresolved observations are fetched for a selected row through
+`search_get_evidence_detail`. Each observation is referenced by candidate, iteration,
+commit, and `observation_ordinal`; no opaque observation id is persisted.
+
+`search_compare_evidence` accepts 2–8 exact observation references with at most two
+per candidate. Its topic shortcut orders candidates by id and selects the latest
+supported observation followed by the latest unresolved observation for each candidate.
+The deterministic result does not use hard score and cannot change selection, promotion,
+or PASS/FAIL. Calls persist reference-only receipts in
+`agent_sessions/*.json.global_evidence_comparisons`; they never rewrite a View.
 
 Worker process verifier calls require a one-line `hypothesis` describing the
 realized attempt. With `shared_dir` enabled they may also include a

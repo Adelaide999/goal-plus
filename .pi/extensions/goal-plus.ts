@@ -253,6 +253,15 @@ const GoalPlusSpecDraft = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+const EvidenceObservationReference = Type.Object(
+	{
+		candidate_id: Type.String({ minLength: 1 }),
+		iteration: PositiveInteger,
+		commit: Type.String({ minLength: 1 }),
+		observation_ordinal: PositiveInteger,
+	},
+	{ additionalProperties: false },
+);
 const RuntimeToolSchemas: Record<string, TSchema> = {
 	goal_plus_create: Type.Object(
 		{
@@ -510,6 +519,25 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 		},
 		{ additionalProperties: false },
 	),
+	search_list_evidence_topics: Type.Object(
+		{
+			agent_session_id: Type.String(),
+			cursor: Type.Optional(Type.Integer({ minimum: 0 })),
+			limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+		},
+		{ additionalProperties: false },
+	),
+	search_compare_evidence: Type.Object(
+		{
+			agent_session_id: Type.String(),
+			observation_refs: Type.Optional(
+				Type.Array(EvidenceObservationReference, { minItems: 2, maxItems: 8 }),
+			),
+			topic_id: Type.Optional(Type.String({ minLength: 1 })),
+			candidate_cursor: Type.Optional(Type.Integer({ minimum: 0 })),
+		},
+		{ additionalProperties: false },
+	),
 	search_stage_shared_tool: Type.Object(
 		{
 			agent_session_id: Type.String(),
@@ -622,7 +650,11 @@ const RuntimeToolDescriptions: Record<string, string> = {
 	search_stage_shared_tool:
 		"把当前 candidate 的 .tmp/tool-drafts/ 中显式选择的文件安全复制到 .tmp/share-out 的最小工具目录。该工具只负责 staging；路径、链接和 frozen shared-dir 限额由 runtime 校验，发布仍要求归属于当前 worker 且通过的 process verifier。",
 	search_get_evidence_detail:
-		"按需展开一条已结算 Evidence 的 supplemental evaluation。仅当 agent context 声明该能力开启且目标行 supplemental_available=true 时调用；independent 模式只允许读取自己的 candidate。",
+		"按需展开一条已结算 Evidence 的 observations。返回的 observation_ordinal 与 candidate/iteration/commit 组成精确引用；independent 模式只允许读取自己的 candidate。",
+	search_list_evidence_topics:
+		"分页列出 observation 的精确标签 topic。该列表不执行语义聚类、候选排名或技术方向选择。",
+	search_compare_evidence:
+		"按 2–8 条精确 observation 引用，或按一个 topic，生成无排名的结构化动态对比。显式引用每 candidate 最多 2 条；topic 模式按 candidate_id 选择最新 supported 和最新 unresolved，不使用硬 score。",
 	search_run_verifier:
 		"为一个候选评分。worker process verifier 必须提供一句话 hypothesis，并在 shared_dir 启用时提交 toolization_decision：staged 至少包含一个正向 signal 和实际 tool_names；not_applicable 必须给出具体 exclusion，不能只写不复用。runtime 以 staging inventory 和 publication settlement 为权威，只把 toolization_review_missing、toolization_stage_missing 或 toolization_decision_mismatch 记录为 monitor/report advisory；它们不改变结算、硬 score、选择或 promotion。工具化目标仅是降低同一 run 内 peer 重建诊断流程的成本，不要求跨项目通用。每份报告都会在运行时拥有、继承而来的 workspace/results.tsv 中追加且只追加一条已验证记录，并提交该文件。process verifier 返回 keep/retain/discard/failure disposition；严格改善为 keep，同分为 retain 并成为 candidate-local 最新基线，只有退化或验证失败时恢复此前硬分最佳。开放式补充评价不改变结算、硬 score 或最终 PASS/FAIL。带 candidate_action=stop_and_report 的 VerifierWorkspaceSideEffect 属于基础设施失败：worker 必须停止，不能清理或重试，使父级能够修复并重新冻结。",
 	search_invalidate_run:
@@ -1513,6 +1545,8 @@ export default function (pi: ExtensionAPI) {
 		"search_stage_shared_tool",
 		"search_copy_shared_tool",
 		"search_get_evidence_detail",
+		"search_list_evidence_topics",
+		"search_compare_evidence",
 		"search_run_verifier",
 		"search_list_iterations",
 	];

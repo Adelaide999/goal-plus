@@ -40,6 +40,8 @@ SEARCH_TOOL_NAMES = {
     "search_stage_shared_tool",
     "search_copy_shared_tool",
     "search_get_evidence_detail",
+    "search_list_evidence_topics",
+    "search_compare_evidence",
     "search_get_agent_observability",
     "search_run_verifier",
     "search_list_iterations",

@@ -248,22 +248,55 @@ View 只用一句中文客观描述实际做了什么，不评价好坏、不推
 
 `supplemental_evaluation` 不读取 FrozenSpec 软标准，也不读取其他 candidate 的 diff 或 View。
 annotator 只依据当前候选累计 diff 和公开 verifier Evidence，自行提出 1–8 个与当前任务实际
-相关的观察维度，逐项给出 finding、证据与置信度。limitations 明确列出公开 Evidence 无法
-判断的事项。worker 通过有界 Global Evidence 索引自行选择需要阅读的其他候选历史。
+相关的原子 observation。每项包含 `supported` 或 `unresolved` 状态、开放式 label、客观 text，
+以及 1–4 个结构化 Evidence 引用。View v2 不生成 summary、confidence 或内嵌 peer comparison；
+公开 Evidence 无法判断的事项必须写成 `unresolved` observation。worker 通过有界 Global
+Evidence 索引自行选择需要阅读的其他候选历史。
 
 这种评价发生在提交结算之后，因此不会在搜索开始前固定注意力方向。worker 可以把第三方
 观察作为下一轮假设来源，但必须独立核对；评价不产生总分或最终推荐，不能改变硬 score、
 PASS/FAIL、candidate-local 基线、run-wide 排名或 promotion gate。
 
 annotator 收到的累计 diff 使用 Git 函数级上下文和至少 10 行普通上下文，并继续受字节
-上限约束。上下文中未出现某个定义，不代表该定义不存在；这类判断必须降低置信度并写入
-`limitations`。每次 worker 调用 `search_get_global_evidence`，runtime 都会在对应
+上限约束。上下文中未出现某个定义，不代表该定义不存在；这类事项必须标记为 `unresolved`。
+每次 worker 调用 `search_get_global_evidence`，runtime 都会在对应
 `agent_sessions/*.json` 的 `global_evidence_reads` 中记录读取时间、当时 Evidence 数量、
 已完成 View 的 candidate/iteration/commit 引用以及其中是否含 supplemental evaluation。
 该读取记录只用于审计 View 是否在后续 verifier 之前可见，不参与候选结算或最终验收。
 
+`search_list_evidence_topics` 当前只按规范化后的精确 label 建立可重建 topic 索引，不做语义
+聚类。`search_compare_evidence` 由 worker 显式选择 2–8 条 observation，且每个 candidate 最多
+2 条；也可按 topic 逐页选择每个 candidate 最新的 supported、再选择最新 unresolved。结果只做
+确定性的一致、差异、独有项和未解决项整理，不读取硬 score，不产生排名或推荐。每次调用会在
+`global_evidence_comparisons` 中保存独立收据；原始 View 保持不变。
+
 `view=null` 只表示 annotation 尚未发布，Evidence 本身已经有效。candidate 可以先按
 自己的方向继续，不应等待、sleep 或轮询 View。
+
+## Global Evidence 长程上下文优化 TODO
+
+以下工作以 PR #24 的按需 supplemental disclosure 和当前有界代表索引为基线，不改变
+verifier settlement、硬 score、promotion gate 或 shared_dir 的既有发布与结算规则：
+
+- [x] 完整原始 View 已作为不可变 archive 保存；任何后续聚类、gist 或压缩结果都只能是
+  可重建的派生索引，并继续保留到原始 `candidate_id / iteration / commit` 的精确引用。
+- [x] 完整 supplemental evaluation 已通过 `search_get_evidence_detail` 按需读取，不再内联到
+  默认 Global Evidence 索引或每次周期刷新中。
+- [x] 引入 View v2：停止生成 `summary` 和 observation `confidence`，将当前 dimensions 与
+  limitations 规范化为可独立引用的 supported/unresolved observations；历史 v1 文件不重写。
+- [x] observation 不持久化额外 opaque id。派生索引使用
+  `candidate_id / iteration / commit / observation_ordinal` 作为透明、稳定的精确引用。
+- [ ] 在 observation 数量增大后自动进行主题聚类。聚类应依据 View 自身内容和证据生成，
+  不预先固定 benchmark 专属的人工类别，也不删除少数、未知或冲突观察。
+- [ ] 为每个 worker 增加基于单调 Evidence revision 的增量读取，只交付上次成功读取后新增或
+  变化的派生索引项。不能只使用 archive 数组 offset，因为异步 View 可能晚于 settlement 发布。
+- [ ] 将分层 gist tree 与增量读取绑定：短期增量保留原文，达到历史阈值后才生成可展开的
+  主题级和时间段级 gist；每个 gist 必须能追溯到未改写的原始 View。
+- [x] worker 可按 exact-label topic 或精确 observation 引用主动选择对比内容；runtime 不预先指定
+  peer 对照、技术方向或 winner。topic 选择每页最多返回 8 条，并公开 remaining/has_more。
+
+语义聚类索引和增量 revision 必须分别落地和测试。当前 exact-label topic 是可重建索引，不是
+权威 Evidence；gist 在具备原始引用和防摘要坍缩约束前不作为 worker 输入。
 
 verifier settlement 和 Evidence 读取都可以触发 run-scoped annotator。一个 drainer
 串行处理 backlog，但 verifier、selection 和 promotion 都不等待它。重试状态、解析后的

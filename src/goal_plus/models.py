@@ -254,62 +254,121 @@ class ResolvedEvidenceAnnotatorProfile(SearchModel):
     provider: ResolvedCodexProvider | None = None
 
 
-EvaluationConfidence = Literal["high", "medium", "low"]
+ObservationState = Literal["supported", "unresolved"]
+ObservationEvidenceSource = Literal[
+    "actual_diff",
+    "candidate_diff",
+    "verifier_result",
+    "task_context",
+    "evidence_scope",
+    "legacy_annotation",
+]
 
 
-class SupplementalDimension(SearchModel):
-    name: str = Field(min_length=1, max_length=120)
-    finding: str = Field(min_length=1, max_length=1000)
-    confidence: EvaluationConfidence
-    evidence: list[str] = Field(default_factory=list, max_length=8)
+class ObservationEvidence(SearchModel):
+    source: ObservationEvidenceSource
+    locator: str = Field(min_length=1, max_length=300)
+    excerpt: str = Field(min_length=1, max_length=500)
 
-    @field_validator("name", "finding", mode="before")
+    @field_validator("locator", "excerpt", mode="before")
     @classmethod
     def text_must_be_one_line(cls, value: Any) -> Any:
         if not isinstance(value, str):
             return value
         if "\n" in value or "\r" in value:
-            raise ValueError("supplemental evaluation text must be one line")
+            raise ValueError("observation evidence text must be one line")
+        return " ".join(value.strip().split())
+
+
+class SupplementalObservation(SearchModel):
+    state: ObservationState
+    label: str = Field(min_length=1, max_length=120)
+    text: str = Field(min_length=1, max_length=1000)
+    evidence: list[ObservationEvidence] = Field(min_length=1, max_length=4)
+
+    @field_validator("label", "text", mode="before")
+    @classmethod
+    def text_must_be_one_line(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if "\n" in value or "\r" in value:
+            raise ValueError("supplemental observation text must be one line")
         return " ".join(value.strip().split())
 
 
 class SupplementalEvaluation(SearchModel):
-    summary: str = Field(min_length=1, max_length=1000)
-    dimensions: list[SupplementalDimension] = Field(min_length=1, max_length=8)
-    limitations: list[str] = Field(default_factory=list, max_length=8)
+    observations: list[SupplementalObservation] = Field(min_length=1, max_length=16)
 
     @model_validator(mode="before")
     @classmethod
-    def migrate_peer_comparisons(cls, value: Any) -> Any:
-        if not isinstance(value, dict) or "comparisons" not in value:
+    def migrate_legacy_evaluation(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
             return value
+        if "observations" in value:
+            observations = value["observations"]
+            if isinstance(observations, list) and len(observations) > 8:
+                raise ValueError("new supplemental evaluations allow at most 8 observations")
+            return {"observations": value["observations"]}
+
         payload = dict(value)
-        payload.pop("comparisons", None)
-        return payload
+        observations: list[dict[str, Any]] = []
 
-    @field_validator("summary", mode="before")
-    @classmethod
-    def summary_must_be_one_line(cls, value: Any) -> Any:
-        if not isinstance(value, str):
-            return value
-        if "\n" in value or "\r" in value:
-            raise ValueError("supplemental evaluation summary must be one line")
-        return " ".join(value.strip().split())
+        def legacy_text(item: str, limit: int) -> str:
+            return " ".join(item.strip().split())[:limit]
 
-    @field_validator("limitations", mode="before")
-    @classmethod
-    def limitations_must_be_one_line(cls, value: Any) -> Any:
-        if not isinstance(value, list):
-            return value
-        normalized = []
-        for item in value:
-            if not isinstance(item, str):
-                normalized.append(item)
+        for index, dimension in enumerate(payload.get("dimensions") or [], start=1):
+            if not isinstance(dimension, dict):
                 continue
-            if "\n" in item or "\r" in item:
-                raise ValueError("supplemental evaluation limitation must be one line")
-            normalized.append(" ".join(item.strip().split()))
-        return normalized
+            finding = dimension.get("finding")
+            label = dimension.get("name")
+            if not isinstance(finding, str) or not finding.strip():
+                continue
+            if not isinstance(label, str) or not label.strip():
+                label = f"Legacy observation {index}"
+            legacy_evidence = dimension.get("evidence") or []
+            evidence = [
+                {
+                    "source": "legacy_annotation",
+                    "locator": f"dimensions[{index - 1}].evidence",
+                    "excerpt": legacy_text(item, 500),
+                }
+                for item in legacy_evidence[:4]
+                if isinstance(item, str) and legacy_text(item, 500)
+            ]
+            if not evidence:
+                evidence = [
+                    {
+                        "source": "legacy_annotation",
+                        "locator": f"dimensions[{index - 1}].finding",
+                        "excerpt": legacy_text(finding, 500),
+                    }
+                ]
+            observations.append(
+                {
+                    "state": "supported",
+                    "label": label,
+                    "text": finding,
+                    "evidence": evidence,
+                }
+            )
+        for index, limitation in enumerate(payload.get("limitations") or [], start=1):
+            if not isinstance(limitation, str) or not limitation.strip():
+                continue
+            observations.append(
+                {
+                    "state": "unresolved",
+                    "label": "Legacy evidence limitation",
+                    "text": legacy_text(limitation, 1000),
+                    "evidence": [
+                        {
+                            "source": "legacy_annotation",
+                            "locator": f"limitations[{index - 1}]",
+                            "excerpt": legacy_text(limitation, 500),
+                        }
+                    ],
+                }
+            )
+        return {"observations": observations}
 
 
 class ToolViewRef(SearchModel):
@@ -377,6 +436,7 @@ class ToolCopyReceipt(SearchModel):
 
 
 class EvidenceViewRecord(SearchModel):
+    schema_version: Literal[1, 2] = 2
     run_id: str = Field(min_length=1)
     candidate_id: str = Field(min_length=1)
     iteration: int = Field(ge=1)
@@ -411,6 +471,69 @@ class GlobalEvidenceViewReference(SearchModel):
     commit: str = Field(min_length=1)
     view_created_at: str
     supplemental_evaluation_present: bool = False
+
+
+class GlobalEvidenceObservationReference(SearchModel):
+    candidate_id: str = Field(min_length=1)
+    iteration: int = Field(ge=1)
+    commit: str = Field(min_length=1)
+    observation_ordinal: int = Field(ge=1)
+
+
+class GlobalEvidenceComparisonRecord(SearchModel):
+    compared_at: str
+    selection_mode: Literal["explicit", "topic"]
+    topic_id: str | None = Field(default=None, min_length=1)
+    observation_refs: list[GlobalEvidenceObservationReference] = Field(
+        min_length=2,
+        max_length=8,
+    )
+    selected_count: int = Field(ge=2, le=8)
+    candidate_cursor: int | None = Field(default=None, ge=0)
+    next_candidate_cursor: int | None = Field(default=None, ge=0)
+    remaining: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def selection_contract_is_consistent(self) -> "GlobalEvidenceComparisonRecord":
+        if self.selected_count != len(self.observation_refs):
+            raise ValueError("selected_count must match observation_refs")
+        identities = {
+            (
+                item.candidate_id,
+                item.iteration,
+                item.commit,
+                item.observation_ordinal,
+            )
+            for item in self.observation_refs
+        }
+        if len(identities) != len(self.observation_refs):
+            raise ValueError("comparison observation_refs must be unique")
+        candidate_counts: dict[str, int] = {}
+        for item in self.observation_refs:
+            candidate_counts[item.candidate_id] = (
+                candidate_counts.get(item.candidate_id, 0) + 1
+            )
+        if any(count > 2 for count in candidate_counts.values()):
+            raise ValueError("comparison allows at most 2 observations per candidate")
+        if self.selection_mode == "explicit":
+            if (
+                self.topic_id is not None
+                or self.candidate_cursor is not None
+                or self.next_candidate_cursor is not None
+                or self.remaining != 0
+            ):
+                raise ValueError("explicit comparison cannot contain topic pagination")
+        else:
+            if self.topic_id is None or self.candidate_cursor is None:
+                raise ValueError("topic comparison requires topic_id and candidate_cursor")
+            if (self.next_candidate_cursor is None) != (self.remaining == 0):
+                raise ValueError("topic pagination cursor must match remaining count")
+            if (
+                self.next_candidate_cursor is not None
+                and self.next_candidate_cursor <= self.candidate_cursor
+            ):
+                raise ValueError("next topic cursor must advance")
+        return self
 
 
 class GlobalEvidenceReadRecord(SearchModel):
@@ -1159,5 +1282,8 @@ class AgentSessionRecord(SearchModel):
     launch: dict[str, Any] = Field(default_factory=dict)
     counters: dict[str, int] = Field(default_factory=dict)
     global_evidence_reads: list[GlobalEvidenceReadRecord] = Field(
+        default_factory=list
+    )
+    global_evidence_comparisons: list[GlobalEvidenceComparisonRecord] = Field(
         default_factory=list
     )

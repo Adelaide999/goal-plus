@@ -45,7 +45,9 @@ from goal_plus.models import (
     FeedbackPolicy,
     EvidenceViewRecord,
     FrozenSpec,
+    GlobalEvidenceComparisonRecord,
     GlobalEvidenceReadRecord,
+    GlobalEvidenceObservationReference,
     GlobalEvidenceViewReference,
     IterationDisposition,
     PromotionEvidence,
@@ -92,6 +94,9 @@ from goal_plus.workspaces import (
 )
 
 
+MIN_EVIDENCE_COMPARISON_OBSERVATIONS = 2
+MAX_EVIDENCE_COMPARISON_OBSERVATIONS = 8
+MAX_EVIDENCE_COMPARISON_PER_CANDIDATE = 2
 VERIFIER_PHASE_ENV = "GOAL_PLUS_VERIFIER_PHASE"
 VERIFIER_DIAGNOSTICS_ENV = "GOAL_PLUS_VERIFIER_DIAGNOSTICS_DIR"
 VERIFIER_RESOURCE_ENV = "GOAL_PLUS_VERIFIER_RESOURCE"
@@ -1858,7 +1863,7 @@ class FileSearchRuntime:
         candidate_id: str,
         iteration: int,
     ) -> dict[str, Any]:
-        """Return one immutable supplemental evaluation visible to a worker."""
+        """Return canonical observations for one immutable Evidence View."""
         session = self._load_agent_session_by_id(agent_session_id)
         if not supplemental_evaluation_enabled():
             raise RuntimeError("supplemental evaluation is disabled for this run")
@@ -1871,42 +1876,492 @@ class FileSearchRuntime:
             raise PermissionError(
                 "independent Global Evidence only exposes the caller's candidate"
             )
-
-        entry = next(
-            (
+        with self._run_transaction(session.run_id):
+            session = self._load_agent_session_by_id(
+                agent_session_id,
+                run_id=session.run_id,
+            )
+            archive, observations = self._visible_evidence_observations(session)
+            entry = next(
+                (
+                    item
+                    for item in archive
+                    if item["candidate_id"] == candidate_id
+                    and item["iteration"] == iteration
+                ),
+                None,
+            )
+            if entry is None:
+                raise ValueError("settled worker Evidence iteration not found")
+            selected = [
                 item
-                for item in self._global_evidence_view(session.run_id)
+                for item in observations
                 if item["candidate_id"] == candidate_id
                 and item["iteration"] == iteration
-            ),
-            None,
-        )
-        if entry is None:
-            raise ValueError("settled worker Evidence iteration not found")
-
-        task = self._load_evidence_annotation_task(
-            session.run_id, candidate_id, iteration
-        )
-        view = task.view if task is not None and task.state == "completed" else None
-        if (
-            task is None
-            or view is None
-            or task.run_id != session.run_id
-            or task.candidate_id != candidate_id
-            or task.iteration != iteration
-            or task.attempt_commit != entry["commit"]
-        ):
-            raise RuntimeError("supplemental Evidence identity does not match iteration")
-        if view.supplemental_evaluation is None:
-            raise RuntimeError("supplemental evaluation is not available")
-
+                and item["commit"] == entry["commit"]
+            ]
+            if not selected:
+                raise RuntimeError("supplemental evaluation is not available")
+            self._record_global_evidence_read(session, [entry])
         return {
+            "schema_version": 2,
             "candidate_id": candidate_id,
             "iteration": iteration,
             "commit": entry["commit"],
-            "supplemental_evaluation": view.supplemental_evaluation.model_dump(
-                mode="json"
-            ),
+            "supplemental_evaluation": {
+                "observations": [
+                    self._observation_detail(item) for item in selected
+                ]
+            },
+        }
+
+    def list_evidence_topics(
+        self,
+        agent_session_id: str,
+        *,
+        cursor: int = 0,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """List exact-label topics without synthesizing or clustering them."""
+        if cursor < 0:
+            raise ValueError("Evidence topic cursor must be non-negative")
+        if limit < 1 or limit > MAX_GLOBAL_EVIDENCE_PAGE_SIZE:
+            raise ValueError(
+                "Evidence topic limit must be between 1 and "
+                f"{MAX_GLOBAL_EVIDENCE_PAGE_SIZE}"
+            )
+        if not supplemental_evaluation_enabled():
+            raise RuntimeError("supplemental evaluation is disabled for this run")
+        session = self._load_agent_session_by_id(agent_session_id)
+        with self._run_transaction(session.run_id):
+            session = self._load_agent_session_by_id(
+                agent_session_id,
+                run_id=session.run_id,
+            )
+            _, observations = self._visible_evidence_observations(session)
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for observation in observations:
+            grouped.setdefault(str(observation["topic_id"]), []).append(observation)
+        topics = []
+        for topic_id, items in grouped.items():
+            aliases = sorted({str(item["label"]) for item in items})
+            topics.append(
+                {
+                    "topic_id": topic_id,
+                    "label": aliases[0],
+                    "aliases": aliases,
+                    "observation_count": len(items),
+                    "candidate_count": len(
+                        {str(item["candidate_id"]) for item in items}
+                    ),
+                    "supported_count": sum(
+                        item["state"] == "supported" for item in items
+                    ),
+                    "unresolved_count": sum(
+                        item["state"] == "unresolved" for item in items
+                    ),
+                    "latest_iteration": max(int(item["iteration"]) for item in items),
+                }
+            )
+        topics.sort(key=lambda item: (str(item["label"]).casefold(), item["topic_id"]))
+        page = topics[cursor : cursor + limit]
+        next_cursor = cursor + len(page)
+        return {
+            "items": page,
+            "cursor": cursor,
+            "next_cursor": next_cursor if next_cursor < len(topics) else None,
+            "total": len(topics),
+            "grouping": "normalized_exact_label",
+        }
+
+    def compare_evidence_observations(
+        self,
+        agent_session_id: str,
+        *,
+        observation_refs: list[
+            GlobalEvidenceObservationReference | dict[str, Any]
+        ] | None = None,
+        topic_id: str | None = None,
+        candidate_cursor: int = 0,
+    ) -> dict[str, Any]:
+        """Compare worker-selected observations without ranking candidates."""
+        if (observation_refs is None) == (topic_id is None):
+            raise ValueError(
+                "provide exactly one of observation_refs or topic_id"
+            )
+        if candidate_cursor < 0:
+            raise ValueError("candidate cursor must be non-negative")
+        if not supplemental_evaluation_enabled():
+            raise RuntimeError("supplemental evaluation is disabled for this run")
+
+        parsed_refs = None
+        if observation_refs is not None:
+            parsed_refs = [
+                item
+                if isinstance(item, GlobalEvidenceObservationReference)
+                else GlobalEvidenceObservationReference.model_validate(item)
+                for item in observation_refs
+            ]
+            if not (
+                MIN_EVIDENCE_COMPARISON_OBSERVATIONS
+                <= len(parsed_refs)
+                <= MAX_EVIDENCE_COMPARISON_OBSERVATIONS
+            ):
+                raise ValueError("comparison requires between 2 and 8 observations")
+            identities = [self._observation_reference_tuple(item) for item in parsed_refs]
+            if len(set(identities)) != len(identities):
+                raise ValueError("comparison observation references must be unique")
+            candidate_counts: dict[str, int] = {}
+            for item in parsed_refs:
+                candidate_counts[item.candidate_id] = (
+                    candidate_counts.get(item.candidate_id, 0) + 1
+                )
+            if any(
+                count > MAX_EVIDENCE_COMPARISON_PER_CANDIDATE
+                for count in candidate_counts.values()
+            ):
+                raise ValueError(
+                    "comparison accepts at most 2 observations per candidate"
+                )
+
+        session = self._load_agent_session_by_id(agent_session_id)
+        with self._run_transaction(session.run_id):
+            session = self._load_agent_session_by_id(
+                agent_session_id,
+                run_id=session.run_id,
+            )
+            archive, observations = self._visible_evidence_observations(session)
+            by_reference = {
+                self._observation_payload_tuple(item): item for item in observations
+            }
+            next_candidate_cursor = None
+            remaining = 0
+            if parsed_refs is not None:
+                missing = [
+                    self._observation_reference_dict(item)
+                    for item in parsed_refs
+                    if self._observation_reference_tuple(item) not in by_reference
+                ]
+                if missing:
+                    raise ValueError(
+                        "comparison observation is unavailable: "
+                        + json.dumps(missing[0], sort_keys=True)
+                    )
+                selected = [
+                    by_reference[self._observation_reference_tuple(item)]
+                    for item in parsed_refs
+                ]
+                selection_mode = "explicit"
+            else:
+                assert topic_id is not None
+                topic_observations = [
+                    item for item in observations if item["topic_id"] == topic_id
+                ]
+                candidates = sorted(
+                    {str(item["candidate_id"]) for item in topic_observations}
+                )
+                if candidate_cursor >= len(candidates):
+                    raise ValueError("candidate cursor is beyond the topic result set")
+                candidate_groups = [
+                    self._latest_topic_observations(
+                        topic_observations,
+                        candidate_id,
+                    )
+                    for candidate_id in candidates
+                ]
+                selected = []
+                next_index = candidate_cursor
+                while next_index < len(candidate_groups):
+                    group = candidate_groups[next_index]
+                    if (
+                        selected
+                        and len(selected) + len(group)
+                        > MAX_EVIDENCE_COMPARISON_OBSERVATIONS
+                    ):
+                        break
+                    selected.extend(group)
+                    next_index += 1
+                if next_index < len(candidate_groups):
+                    next_candidate_cursor = next_index
+                    remaining = sum(
+                        len(group) for group in candidate_groups[next_index:]
+                    )
+                selection_mode = "topic"
+
+            if len(selected) < MIN_EVIDENCE_COMPARISON_OBSERVATIONS:
+                raise ValueError("comparison requires at least 2 visible observations")
+
+            selected_entry_keys = {
+                (
+                    str(item["candidate_id"]),
+                    int(item["iteration"]),
+                    str(item["commit"]),
+                )
+                for item in selected
+            }
+            selected_entries = [
+                entry
+                for entry in archive
+                if (
+                    str(entry["candidate_id"]),
+                    int(entry["iteration"]),
+                    str(entry["commit"]),
+                )
+                in selected_entry_keys
+            ]
+            self._record_global_evidence_comparison(
+                session,
+                selected_entries,
+                selected,
+                selection_mode=selection_mode,
+                topic_id=topic_id,
+                candidate_cursor=(
+                    candidate_cursor if selection_mode == "topic" else None
+                ),
+                next_candidate_cursor=next_candidate_cursor,
+                remaining=remaining,
+            )
+
+        return self._comparison_payload(
+            selected,
+            selection_mode=selection_mode,
+            topic_id=topic_id,
+            candidate_cursor=candidate_cursor,
+            next_candidate_cursor=next_candidate_cursor,
+            remaining=remaining,
+        )
+
+    @staticmethod
+    def _observation_topic_id(label: str) -> str:
+        normalized = " ".join(label.strip().casefold().split())
+        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+        return f"topic_{digest}"
+
+    @staticmethod
+    def _observation_reference_tuple(
+        reference: GlobalEvidenceObservationReference,
+    ) -> tuple[str, int, str, int]:
+        return (
+            reference.candidate_id,
+            reference.iteration,
+            reference.commit,
+            reference.observation_ordinal,
+        )
+
+    @staticmethod
+    def _observation_payload_tuple(
+        observation: dict[str, Any],
+    ) -> tuple[str, int, str, int]:
+        return (
+            str(observation["candidate_id"]),
+            int(observation["iteration"]),
+            str(observation["commit"]),
+            int(observation["observation_ordinal"]),
+        )
+
+    @staticmethod
+    def _observation_reference_dict(
+        reference: GlobalEvidenceObservationReference,
+    ) -> dict[str, Any]:
+        return reference.model_dump(mode="json")
+
+    @staticmethod
+    def _observation_detail(observation: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "observation_ordinal": observation["observation_ordinal"],
+            "topic_id": observation["topic_id"],
+            "state": observation["state"],
+            "label": observation["label"],
+            "text": observation["text"],
+            "evidence": observation["evidence"],
+        }
+
+    @staticmethod
+    def _observation_with_reference(
+        observation: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "reference": {
+                "candidate_id": observation["candidate_id"],
+                "iteration": observation["iteration"],
+                "commit": observation["commit"],
+                "observation_ordinal": observation["observation_ordinal"],
+            },
+            "topic_id": observation["topic_id"],
+            "state": observation["state"],
+            "label": observation["label"],
+            "text": observation["text"],
+            "evidence": observation["evidence"],
+        }
+
+    def _visible_evidence_observations(
+        self,
+        session: AgentSessionRecord,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        archive = self._visible_global_evidence_archive(session)
+        observations = []
+        for entry in archive:
+            if not entry.get("supplemental_available"):
+                continue
+            task = self._load_evidence_annotation_task(
+                session.run_id,
+                str(entry["candidate_id"]),
+                int(entry["iteration"]),
+            )
+            view = task.view if task is not None and task.state == "completed" else None
+            if (
+                view is None
+                or view.attempt_commit != entry["commit"]
+                or view.supplemental_evaluation is None
+            ):
+                raise RuntimeError(
+                    "supplemental Evidence identity does not match iteration"
+                )
+            for ordinal, observation in enumerate(
+                view.supplemental_evaluation.observations,
+                start=1,
+            ):
+                observations.append(
+                    {
+                        "candidate_id": entry["candidate_id"],
+                        "iteration": entry["iteration"],
+                        "commit": entry["commit"],
+                        "observation_ordinal": ordinal,
+                        "topic_id": self._observation_topic_id(observation.label),
+                        **observation.model_dump(mode="json"),
+                    }
+                )
+        return archive, observations
+
+    @staticmethod
+    def _latest_topic_observations(
+        observations: list[dict[str, Any]],
+        candidate_id: str,
+    ) -> list[dict[str, Any]]:
+        matching = [
+            item for item in observations if item["candidate_id"] == candidate_id
+        ]
+        result = []
+        for state in ("supported", "unresolved"):
+            state_items = [item for item in matching if item["state"] == state]
+            if state_items:
+                result.append(
+                    max(
+                        state_items,
+                        key=lambda item: (
+                            int(item["iteration"]),
+                            int(item["observation_ordinal"]),
+                        ),
+                    )
+                )
+        return result
+
+    @classmethod
+    def _comparison_payload(
+        cls,
+        selected: list[dict[str, Any]],
+        *,
+        selection_mode: Literal["explicit", "topic"],
+        topic_id: str | None,
+        candidate_cursor: int,
+        next_candidate_cursor: int | None,
+        remaining: int,
+    ) -> dict[str, Any]:
+        basis = [
+            cls._observation_with_reference(item)["reference"] for item in selected
+        ]
+        by_candidate: dict[str, list[dict[str, Any]]] = {}
+        by_topic: dict[str, list[dict[str, Any]]] = {}
+        for item in selected:
+            by_candidate.setdefault(str(item["candidate_id"]), []).append(item)
+            by_topic.setdefault(str(item["topic_id"]), []).append(item)
+
+        agreements = []
+        differences = []
+        unique = []
+        for selected_topic_id, items in sorted(by_topic.items()):
+            text_groups: dict[str, list[dict[str, Any]]] = {}
+            for item in items:
+                normalized = " ".join(str(item["text"]).casefold().split())
+                text_groups.setdefault(normalized, []).append(item)
+            for group in text_groups.values():
+                if len({item["candidate_id"] for item in group}) >= 2:
+                    agreements.append(
+                        {
+                            "topic_id": selected_topic_id,
+                            "label": group[0]["label"],
+                            "text": group[0]["text"],
+                            "refs": [
+                                cls._observation_with_reference(item)["reference"]
+                                for item in group
+                            ],
+                        }
+                    )
+            supported_groups = [
+                group
+                for group in text_groups.values()
+                if any(item["state"] == "supported" for item in group)
+            ]
+            if (
+                len(supported_groups) > 1
+                and len({item["candidate_id"] for item in items}) > 1
+            ):
+                differences.append(
+                    {
+                        "topic_id": selected_topic_id,
+                        "label": items[0]["label"],
+                        "variants": [
+                            {
+                                "text": group[0]["text"],
+                                "refs": [
+                                    cls._observation_with_reference(item)["reference"]
+                                    for item in group
+                                ],
+                            }
+                            for group in supported_groups
+                        ],
+                    }
+                )
+            if len({item["candidate_id"] for item in items}) == 1:
+                unique.extend(
+                    cls._observation_with_reference(item)["reference"]
+                    for item in items
+                )
+
+        return {
+            "selection_mode": selection_mode,
+            "topic_id": topic_id,
+            "basis": basis,
+            "matrix": [
+                {
+                    "candidate_id": candidate_id,
+                    "observations": [
+                        cls._observation_with_reference(item) for item in items
+                    ],
+                }
+                for candidate_id, items in sorted(by_candidate.items())
+            ],
+            "agreements": agreements,
+            "differences": differences,
+            "unique_observations": unique,
+            "unresolved": [
+                cls._observation_with_reference(item)["reference"]
+                for item in selected
+                if item["state"] == "unresolved"
+            ],
+            "selected": len(selected),
+            "remaining": remaining,
+            "has_more": next_candidate_cursor is not None,
+            "candidate_cursor": candidate_cursor if selection_mode == "topic" else None,
+            "next_candidate_cursor": next_candidate_cursor,
+            "selection_rules": {
+                "minimum": MIN_EVIDENCE_COMPARISON_OBSERVATIONS,
+                "maximum": MAX_EVIDENCE_COMPARISON_OBSERVATIONS,
+                "maximum_per_candidate": MAX_EVIDENCE_COMPARISON_PER_CANDIDATE,
+                "topic_order": "candidate_id",
+                "topic_per_candidate": "latest_supported_then_latest_unresolved",
+                "score_used": False,
+            },
         }
 
     def _visible_global_evidence_archive(
@@ -1930,6 +2385,23 @@ class FileSearchRuntime:
         session: AgentSessionRecord,
         entries: list[dict[str, Any]],
     ) -> None:
+        read_record = self._global_evidence_read_record(entries)
+        self._write_agent_session(
+            session.model_copy(
+                update={
+                    "updated_at": read_record.read_at,
+                    "global_evidence_reads": [
+                        *session.global_evidence_reads,
+                        read_record,
+                    ],
+                }
+            )
+        )
+
+    @staticmethod
+    def _global_evidence_read_record(
+        entries: list[dict[str, Any]],
+    ) -> GlobalEvidenceReadRecord:
         completed_views = [
             GlobalEvidenceViewReference(
                 candidate_id=str(entry["candidate_id"]),
@@ -1945,7 +2417,7 @@ class FileSearchRuntime:
             and entry["commit"] is not None
             and entry["view_created_at"] is not None
         ]
-        read_record = GlobalEvidenceReadRecord(
+        return GlobalEvidenceReadRecord(
             read_at=utc_timestamp(),
             evidence_count=len(entries),
             completed_view_count=len(completed_views),
@@ -1954,13 +2426,47 @@ class FileSearchRuntime:
             ),
             completed_views=completed_views,
         )
+
+    def _record_global_evidence_comparison(
+        self,
+        session: AgentSessionRecord,
+        entries: list[dict[str, Any]],
+        selected: list[dict[str, Any]],
+        *,
+        selection_mode: Literal["explicit", "topic"],
+        topic_id: str | None,
+        candidate_cursor: int | None,
+        next_candidate_cursor: int | None,
+        remaining: int,
+    ) -> None:
+        read_record = self._global_evidence_read_record(entries)
+        compared_at = utc_timestamp()
+        record = GlobalEvidenceComparisonRecord(
+            compared_at=compared_at,
+            selection_mode=selection_mode,
+            topic_id=topic_id,
+            observation_refs=[
+                GlobalEvidenceObservationReference.model_validate(
+                    self._observation_with_reference(item)["reference"]
+                )
+                for item in selected
+            ],
+            selected_count=len(selected),
+            candidate_cursor=candidate_cursor,
+            next_candidate_cursor=next_candidate_cursor,
+            remaining=remaining,
+        )
         self._write_agent_session(
             session.model_copy(
                 update={
-                    "updated_at": read_record.read_at,
+                    "updated_at": compared_at,
                     "global_evidence_reads": [
                         *session.global_evidence_reads,
                         read_record,
+                    ],
+                    "global_evidence_comparisons": [
+                        *session.global_evidence_comparisons,
+                        record,
                     ],
                 }
             )
@@ -3724,7 +4230,7 @@ class FileSearchRuntime:
             "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
             "process verifier 返回 keep/retain/discard/failure disposition；严格硬分改善为 keep，同分为 retain 并成为 candidate-local 最新基线，只有退化或验证失败时 runtime 才恢复此前硬分最佳。开放式补充评价不改变结算、硬分或最终验收。下一轮直接从返回后的已结算工作区继续。",
             "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
-            "Global Evidence 默认展示每个 candidate 的硬分最佳和最新结算代表项。需要追溯时先分页浏览轻量引用，再按精确 candidate、iteration、commit 展开一条完整 View；不要批量展开全部历史。按 context.supplemental_evaluation_enabled 和 Evidence 的 supplemental_available 标记按需读取一次 search_get_evidence_detail；补充评价不参与结算。仅在当前 Git 能解析该 commit 且代码证据必要时用 git diff HEAD <commit> -- <allowed-file> 做只读比较；不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
+            "Global Evidence 默认展示每个 candidate 的硬分最佳和最新结算代表项。需要追溯时先分页浏览轻量引用，再按精确 candidate、iteration、commit 展开一条完整 View；不要批量展开全部历史。按 context.supplemental_evaluation_enabled 和 Evidence 的 supplemental_available 标记按需读取一次 search_get_evidence_detail；detail 返回 supported/unresolved observations。需要结构化比较时，用 search_compare_evidence 显式选择 2–8 条且每 candidate 最多 2 条，或使用不依赖硬 score 的 topic 模式；比较不参与结算。仅在当前 Git 能解析该 commit 且代码证据必要时用 git diff HEAD <commit> -- <allowed-file> 做只读比较；不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
         ]
         share_out_dir = None
         if frozen.spec.shared_dir.enabled:
@@ -6107,37 +6613,42 @@ class FileSearchRuntime:
         annotation_host = configured.host or strategy.worker_host
         worker_launch = strategy.worker_launch
         env_model = os.environ.get(EVIDENCE_ANNOTATOR_MODEL_ENV)
+        model_from_annotator_env = False
         if configured.model:
             model = configured.model
+        elif env_model:
+            model = env_model.strip() or None
+            model_from_annotator_env = model is not None
         elif annotation_host == strategy.worker_host and selected_model:
             model = selected_model
         elif annotation_host == strategy.worker_host and worker_launch is not None:
             model = worker_launch.model
-        elif env_model:
-            model = env_model.strip() or None
         elif annotation_host == "pi-rpc":
             model = (os.environ.get("PI_MODEL") or "").strip() or None
         else:
             model = None
 
         reasoning_effort = configured.reasoning_effort
+        env_reasoning_effort = (
+            os.environ.get(EVIDENCE_ANNOTATOR_REASONING_ENV) or None
+        )
+        if reasoning_effort is None:
+            reasoning_effort = env_reasoning_effort
         if (
             reasoning_effort is None
             and annotation_host == strategy.worker_host
             and worker_launch is not None
         ):
             reasoning_effort = worker_launch.reasoning_effort
-        if reasoning_effort is None:
-            reasoning_effort = (
-                os.environ.get(EVIDENCE_ANNOTATOR_REASONING_ENV) or None
-            )
 
         pi_provider: str | None = None
         if annotation_host == "pi-rpc":
             inherited_pi_provider = os.environ.get("PI_PROVIDER")
             if inherited_pi_provider is not None:
                 inherited_pi_provider = inherited_pi_provider.strip() or None
-            configured_pi_provider = configured.pi_provider
+            configured_pi_provider = (
+                None if model_from_annotator_env else configured.pi_provider
+            )
             pi_provider = configured_pi_provider or inherited_pi_provider
             if model and "/" in model:
                 model_provider, _, model_id = model.partition("/")

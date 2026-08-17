@@ -158,9 +158,40 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         }
     ]
     runtime.get_evidence_detail.return_value = {
+        "schema_version": 2,
         "candidate_id": "c001",
         "iteration": 1,
-        "supplemental_evaluation": {"summary": "Changed the candidate value."},
+        "supplemental_evaluation": {
+            "observations": [
+                {
+                    "observation_ordinal": 1,
+                    "topic_id": "topic_1",
+                    "state": "supported",
+                    "label": "Candidate value",
+                    "text": "Changed the candidate value.",
+                    "evidence": [
+                        {
+                            "source": "candidate_diff",
+                            "locator": "initial_program.py",
+                            "excerpt": "VALUE changed.",
+                        }
+                    ],
+                }
+            ]
+        },
+    }
+    runtime.list_evidence_topics.return_value = {
+        "items": [{"topic_id": "topic_1", "label": "Candidate value"}],
+        "cursor": 0,
+        "next_cursor": None,
+        "total": 1,
+        "grouping": "normalized_exact_label",
+    }
+    runtime.compare_evidence_observations.return_value = {
+        "selection_mode": "explicit",
+        "selected": 2,
+        "basis": [],
+        "matrix": [],
     }
     runtime.redispatch_candidate.return_value = agent_session.model_copy(
         update={
@@ -295,8 +326,28 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
     )["staged_name"] == "trace-helper"
     assert tools.search_get_evidence_detail("agent_001", "c001", 1)[
         "supplemental_evaluation"
-    ]["summary"] == "Changed the candidate value."
+    ]["observations"][0]["text"] == "Changed the candidate value."
     runtime.get_evidence_detail.assert_called_once_with("agent_001", "c001", 1)
+    assert tools.search_list_evidence_topics("agent_001")["total"] == 1
+    comparison = tools.search_compare_evidence(
+        "agent_001",
+        observation_refs=[
+            {
+                "candidate_id": "c001",
+                "iteration": 1,
+                "commit": "abc123",
+                "observation_ordinal": 1,
+            },
+            {
+                "candidate_id": "c002",
+                "iteration": 1,
+                "commit": "def456",
+                "observation_ordinal": 1,
+            },
+        ],
+    )
+    assert comparison["selected"] == 2
+    runtime.compare_evidence_observations.assert_called_once()
     assert tools.search_get_agent_observability("agent_001") == {
         "agent_session_id": "agent_001",
         "source": "codex_session_jsonl",
