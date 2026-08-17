@@ -157,6 +157,11 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
             "view": "Changed the candidate value.",
         }
     ]
+    runtime.get_evidence_detail.return_value = {
+        "candidate_id": "c001",
+        "iteration": 1,
+        "supplemental_evaluation": {"summary": "Changed the candidate value."},
+    }
     runtime.redispatch_candidate.return_value = agent_session.model_copy(
         update={
             "agent_session_id": "agent_002",
@@ -270,6 +275,10 @@ def test_search_tools_delegate_runtime_calls_with_models() -> None:
         "trace.py:main",
         [".tmp/tool-drafts/trace.py"],
     )["staged_name"] == "trace-helper"
+    assert tools.search_get_evidence_detail("agent_001", "c001", 1)[
+        "supplemental_evaluation"
+    ]["summary"] == "Changed the candidate value."
+    runtime.get_evidence_detail.assert_called_once_with("agent_001", "c001", 1)
     assert tools.search_get_agent_observability("agent_001") == {
         "agent_session_id": "agent_001",
         "source": "codex_session_jsonl",

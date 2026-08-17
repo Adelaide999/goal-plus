@@ -761,8 +761,9 @@ def _autoresearch_lease_stop_context(
         reason = (
             f"Search 候选 {session.agent_session_id} 的 AutoResearch lease 仍处于 active："
             f"{'，并且'.join(requirements)}。不要返回父级。先使用此 agent_session_id 调用 "
-            "search_get_agent_context 刷新 candidate-local 证据，再调用 "
-            "search_get_global_evidence。选择不同且有证据支持的假设并实现修改，然后使用同一 "
+            "search_get_agent_context 刷新 candidate-local 证据，并继续遵循 Global Evidence 的"
+            "定期刷新节奏；到刷新节点时调用 search_get_global_evidence。选择不同且有证据支持的"
+            "假设并实现修改，然后使用同一 "
             "agent_session_id 运行 search_run_verifier，省略 scope 以使用 process verifier，"
             "并用一句话 hypothesis 客观概括本轮实际尝试。"
             "将结果与当前最佳项比较并继续深度搜索。不要因为完成一次 iteration、暂时没有"

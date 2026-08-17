@@ -277,6 +277,8 @@ def test_codex_worker_agent_calls_context_and_verifier() -> None:
     assert 'name = "search_candidate_agent"' in text
     assert "search_get_agent_context" in text
     assert "search_get_global_evidence" in text
+    assert "每完成 3 次 `search_run_verifier` iteration" in text
+    assert "global_evidence_snapshot` 已完成本次刷新" in text
     assert "search_submit_iteration_plan" not in text
     assert "search_run_verifier" in text
     assert "不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`" in text

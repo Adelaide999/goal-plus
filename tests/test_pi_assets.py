@@ -191,28 +191,16 @@ def test_pi_worker_prompt_requires_runtime_context_and_verifier() -> None:
     )
 
     assert "search_get_agent_context" in text
-    assert "candidate_task.share_out_dir" in text
-    assert ".tmp/share-out" in text
-    assert ".tmp/tool-drafts" in text
-    assert "search_stage_shared_tool" in text
-    assert "repeated_sequence" in text
-    assert "domain_probe" in text
-    assert "parser_or_trace" in text
-    assert "peer_setup_reduction" in text
-    assert "single_common_command" in text
-    assert "candidate_private_state" in text
-    assert "不要求跨项目通用" in text
-    assert "短、任务专属、来自临时代码片段或只产生退出码" in text
-    assert "toolization_decision" in text
-    assert "shared_tool_publish_status=not_staged" in text
-    assert "只会生成 monitor/report advisory" in text
+    assert "candidate_task.share_out_dir" not in text
+    assert "search_stage_shared_tool" not in text
+    assert "search_copy_shared_tool" not in text
+    assert "toolization_decision" not in text
     assert "required-column-probe" not in text
     assert "mutation-check-trace" not in text
     assert "Astropy" not in text
-    assert text.index("candidate_task.share_out_dir") < text.index(
-        "search_get_global_evidence"
-    )
     assert "search_get_global_evidence" in text
+    assert "每完成 3 次 `search_run_verifier` iteration 刷新一次" in text
+    assert "global_evidence_snapshot` 已完成本次刷新" in text
     assert "search_submit_iteration_plan" not in text
     assert "search_run_verifier" in text
     assert "不得直接运行任务自带的 `runner`、`evaluator` 或 `grader`" in text

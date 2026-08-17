@@ -249,10 +249,9 @@ def create_mcp(
         """返回当前 run 的窄 Global Evidence 视图。
 
         每项只包含 candidate_id、iteration、score、keep/retain/discard/failure disposition、
-        verifier attempt commit、可能延迟的客观 View，以及启用时由 annotator 后验生成的
-        开放式 supplemental_evaluation 和动态 peer 比较。任何 View 为 null 都不影响
-        verifier Evidence；worker 不需要等待，可先依据 Evidence 独立探索，必要时再通过
-        commit 做只读 Git 比较。
+        verifier attempt commit、可能延迟的客观 View，以及可选 supplemental evaluation
+        的可用标记；启用 shared_dir 时还可包含已绑定 Tool View 的共享工具。任何 View 为 null
+        都不影响 verifier Evidence；worker 不需要等待，可先依据 Evidence 独立探索。
         """
         return tools.search_get_global_evidence(agent_session_id)
 
@@ -284,6 +283,24 @@ def create_mcp(
             summary,
             entrypoint,
             candidate_relative_source_paths,
+        )
+
+    @mcp.tool()
+    def search_get_evidence_detail(
+        agent_session_id: str,
+        candidate_id: str,
+        iteration: Annotated[int, Field(ge=1)],
+    ) -> dict[str, Any]:
+        """按需展开一条已结算 Evidence 的 supplemental evaluation。
+
+        仅当 agent context 声明该能力已开启，且 Global Evidence 对目标行返回
+        `supplemental_available=true` 时调用。目标必须属于同一 run；`independent` 模式只
+        允许读取调用方自己的 candidate。返回内容不含 peer workspace、transcript 或推理。
+        """
+        return tools.search_get_evidence_detail(
+            agent_session_id,
+            candidate_id,
+            iteration,
         )
 
     @mcp.tool()

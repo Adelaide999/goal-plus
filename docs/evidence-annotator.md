@@ -278,6 +278,8 @@ annotation 内容或 verifier settlement：
 
 Annotator 仍按 run 处理所有 worker Evidence；`independent` 只是 candidate-facing 投影过滤。
 任何模式下 View 都不影响分数和选择。详细交付契约见 [API](api.md#worker-context)。
+Worker 首次修改前读取 Evidence；此后每完成三次 verifier iteration 刷新一次，连续两轮无提升
+或准备切换技术路线时提前刷新。`auto` 返回的注入快照算作刷新，无需再次调用读取工具。
 
 ## 持久化布局
 

@@ -32,6 +32,7 @@ def test_pi_tool_calls_context_verifier_and_iterations(tmp_path: Path) -> None:
     )
     assert context["workspace"] == str(task.workspace)
     assert context["candidate_id"] == task.candidate_id
+    assert context["supplemental_evaluation_enabled"] is False
 
     assert call_pi_tool(
         runtime_root,

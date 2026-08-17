@@ -332,8 +332,12 @@ candidate-local history 由运行时拥有，不是本地 plan 文件。worker �
 `context.results` 和继承的 `context.results_tsv` 作为恢复来源。每轮修改前读取
 `search_get_global_evidence`。其他 candidate 的尝试只通过这个窄视图披露；`view=null`
 只表示 annotator 尚未更新，worker 不等待或轮询，先依据 commit、score、disposition 和
-自己的推理独立探索。启用开放式补充评价时，每行包含 annotator 根据实际 Evidence 后验
-提出的观察维度，以及 annotation task 创建时对其他已结算候选的动态比较。它不来自
+自己的推理独立探索。`context.supplemental_evaluation_enabled=false` 时不要
+等待或尝试读取补充评价；启用时仅以 `supplemental_available` 标记可展开的行。仅在线路
+停滞、结构性分数跃升、hidden 泛化风险或官方/本地结果
+背离时，通过 `search_get_evidence_detail` 按需读取完整评价，且不重复读取同一不可变行。
+完整内容包含 annotator 根据实际 Evidence 后验提出的观察维度，以及 annotation task 创建时
+对其他已结算候选的动态比较。它不来自
 FrozenSpec，不作为硬分、推荐或 promotion gate；worker 可据此形成假设，但应独立核对。仅在
 worker 独立判断确有必要时，才在当前 workspace 使用
 `git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace，
