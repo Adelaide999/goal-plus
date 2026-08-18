@@ -32,11 +32,10 @@ annotator 对实际 diff 的客观陈述。仅当默认
 View；不要批量展开全部历史。`context.supplemental_evaluation_enabled` 为 false 时不要读取补充
 评价；启用时，仅对 `supplemental_available=true` 的行按需调用一次
 `search_get_evidence_detail`，从返回的 `observation_ordinal`、candidate、iteration 和 commit
-组成精确 observation 引用。这些 observation 不来自 FrozenSpec。需要比较时可以先用
-`search_list_evidence_topics` 查看精确标签 topic，
-再调用 `search_compare_evidence`：显式模式选择 2–8 条且每 candidate 最多 2 条；topic 模式按
-candidate_id 选择最新 supported 与最新 unresolved observation。比较不使用硬 score，不产生排名、
-推荐或 promotion gate，也不要为了比较而批量读取全部历史。`view=null` 不影响 Evidence，无需等待
+组成精确 observation 引用。这些 observation 不来自 FrozenSpec。comparison annotator 会从有界代表 View
+中自动选择 2–8 条 observation（每 candidate 最多 2 条）生成 comparison；默认索引只内联
+`comparison_gist`，完整 basis、选择理由和比较按需从 detail 读取。comparison 不读取硬 score，
+不产生排名、推荐或 promotion gate，也不要为了比较而批量读取全部历史。`view=null` 不影响 Evidence，无需等待
 或轮询。工具只会在 Tool View 生成并由
 runtime 绑定后出现；
 `shared_tools[*].tool_view` 仅提供工具用途、接入方式和边界。每个 iteration 的客观 View 与

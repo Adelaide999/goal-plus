@@ -264,11 +264,11 @@ annotator 收到的累计 diff 使用 Git 函数级上下文和至少 10 行普�
 已完成 View 的 candidate/iteration/commit 引用以及其中是否含 supplemental evaluation。
 该读取记录只用于审计 View 是否在后续 verifier 之前可见，不参与候选结算或最终验收。
 
-`search_list_evidence_topics` 当前只按规范化后的精确 label 建立可重建 topic 索引，不做语义
-聚类。`search_compare_evidence` 由 worker 显式选择 2–8 条 observation，且每个 candidate 最多
-2 条；也可按 topic 逐页选择每个 candidate 最新的 supported、再选择最新 unresolved。结果只做
-确定性的一致、差异、独有项和未解决项整理，不读取硬 score，不产生排名或推荐。每次调用会在
-`global_evidence_comparisons` 中保存独立收据；原始 View 保持不变。
+原始 Self View 保持不变。comparison annotator 在 peer observations 可用后，从当前 View 与
+peer hard-best/latest 代表 View 的有界目录中自动选择 2–8 条，每个 candidate 最多 2 条。
+选择理由、精确引用和 comparison claims 持久化在对应 annotation task；目录不向 annotator
+提供硬 score。默认 Global Evidence 仅公开 comparison 可用性和一行 gist，完整 basis 由
+`search_get_evidence_detail` 按需返回。worker 不承担 observation 选取，也没有独立 compare 工具。
 
 `view=null` 只表示 annotation 尚未发布，Evidence 本身已经有效。candidate 可以先按
 自己的方向继续，不应等待、sleep 或轮询 View。
@@ -292,8 +292,8 @@ verifier settlement、硬 score、promotion gate 或 shared_dir 的既有发布�
   变化的派生索引项。不能只使用 archive 数组 offset，因为异步 View 可能晚于 settlement 发布。
 - [ ] 将分层 gist tree 与增量读取绑定：短期增量保留原文，达到历史阈值后才生成可展开的
   主题级和时间段级 gist；每个 gist 必须能追溯到未改写的原始 View。
-- [x] worker 可按 exact-label topic 或精确 observation 引用主动选择对比内容；runtime 不预先指定
-  peer 对照、技术方向或 winner。topic 选择每页最多返回 8 条，并公开 remaining/has_more。
+- [x] comparison annotator 从有界代表 View 自动选择 2–8 条 observation，精确保存 basis 与
+  选择理由；worker 不新增选择工具，默认只接收一行 gist，并按需展开完整比较。
 
 语义聚类索引和增量 revision 必须分别落地和测试。当前 exact-label topic 是可重建索引，不是
 权威 Evidence；gist 在具备原始引用和防摘要坍缩约束前不作为 worker 输入。

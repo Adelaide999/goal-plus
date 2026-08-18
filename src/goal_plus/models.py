@@ -446,15 +446,6 @@ class EvidenceViewRecord(SearchModel):
     tool_views: list[ToolViewRecord] = Field(default_factory=list)
     created_at: str
 
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_comparison_basis(cls, value: Any) -> Any:
-        if not isinstance(value, dict) or "comparison_basis" not in value:
-            return value
-        payload = dict(value)
-        payload.pop("comparison_basis", None)
-        return payload
-
     @field_validator("description", mode="before")
     @classmethod
     def normalize_description(cls, value: Any) -> Any:
@@ -480,23 +471,59 @@ class GlobalEvidenceObservationReference(SearchModel):
     observation_ordinal: int = Field(ge=1)
 
 
-class GlobalEvidenceComparisonRecord(SearchModel):
-    compared_at: str
-    selection_mode: Literal["explicit", "topic"]
-    topic_id: str | None = Field(default=None, min_length=1)
+class EvidenceComparisonSelection(SearchModel):
+    reference: GlobalEvidenceObservationReference
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class EvidenceComparisonClaim(SearchModel):
+    text: str = Field(min_length=1, max_length=1000)
     observation_refs: list[GlobalEvidenceObservationReference] = Field(
+        min_length=1,
+        max_length=8,
+    )
+
+
+class EvidenceComparisonViewRecord(SearchModel):
+    schema_version: Literal[1] = 1
+    gist: str = Field(min_length=1, max_length=500)
+    selections: list[EvidenceComparisonSelection] = Field(
         min_length=2,
         max_length=8,
     )
-    selected_count: int = Field(ge=2, le=8)
-    candidate_cursor: int | None = Field(default=None, ge=0)
-    next_candidate_cursor: int | None = Field(default=None, ge=0)
-    remaining: int = Field(default=0, ge=0)
+    agreements: list[EvidenceComparisonClaim] = Field(
+        default_factory=list,
+        max_length=8,
+    )
+    differences: list[EvidenceComparisonClaim] = Field(
+        default_factory=list,
+        max_length=8,
+    )
+    unique_observations: list[EvidenceComparisonClaim] = Field(
+        default_factory=list,
+        max_length=8,
+    )
+    unresolved: list[EvidenceComparisonClaim] = Field(
+        default_factory=list,
+        max_length=8,
+    )
+    catalog_view_count: int = Field(ge=2)
+    catalog_observation_count: int = Field(ge=2)
+    catalog_truncated: bool = False
+    created_at: str
+
+    @field_validator("gist", mode="before")
+    @classmethod
+    def gist_must_be_one_line(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if "\n" in value or "\r" in value:
+            raise ValueError("comparison gist must be one line")
+        return " ".join(value.strip().split())
 
     @model_validator(mode="after")
-    def selection_contract_is_consistent(self) -> "GlobalEvidenceComparisonRecord":
-        if self.selected_count != len(self.observation_refs):
-            raise ValueError("selected_count must match observation_refs")
+    def comparison_contract_is_consistent(self) -> "EvidenceComparisonViewRecord":
+        refs = [item.reference for item in self.selections]
         identities = {
             (
                 item.candidate_id,
@@ -504,35 +531,38 @@ class GlobalEvidenceComparisonRecord(SearchModel):
                 item.commit,
                 item.observation_ordinal,
             )
-            for item in self.observation_refs
+            for item in refs
         }
-        if len(identities) != len(self.observation_refs):
-            raise ValueError("comparison observation_refs must be unique")
+        if len(identities) != len(refs):
+            raise ValueError("comparison selections must be unique")
         candidate_counts: dict[str, int] = {}
-        for item in self.observation_refs:
+        for item in refs:
             candidate_counts[item.candidate_id] = (
                 candidate_counts.get(item.candidate_id, 0) + 1
             )
+        if len(candidate_counts) < 2:
+            raise ValueError("comparison must select at least two candidates")
         if any(count > 2 for count in candidate_counts.values()):
             raise ValueError("comparison allows at most 2 observations per candidate")
-        if self.selection_mode == "explicit":
-            if (
-                self.topic_id is not None
-                or self.candidate_cursor is not None
-                or self.next_candidate_cursor is not None
-                or self.remaining != 0
-            ):
-                raise ValueError("explicit comparison cannot contain topic pagination")
-        else:
-            if self.topic_id is None or self.candidate_cursor is None:
-                raise ValueError("topic comparison requires topic_id and candidate_cursor")
-            if (self.next_candidate_cursor is None) != (self.remaining == 0):
-                raise ValueError("topic pagination cursor must match remaining count")
-            if (
-                self.next_candidate_cursor is not None
-                and self.next_candidate_cursor <= self.candidate_cursor
-            ):
-                raise ValueError("next topic cursor must advance")
+        for claim in [
+            *self.agreements,
+            *self.differences,
+            *self.unique_observations,
+            *self.unresolved,
+        ]:
+            claim_identities = {
+                (
+                    item.candidate_id,
+                    item.iteration,
+                    item.commit,
+                    item.observation_ordinal,
+                )
+                for item in claim.observation_refs
+            }
+            if len(claim_identities) != len(claim.observation_refs):
+                raise ValueError("comparison claim references must be unique")
+            if not claim_identities.issubset(identities):
+                raise ValueError("comparison claim references must be selected")
         return self
 
 
@@ -588,18 +618,22 @@ class EvidenceAnnotationTask(SearchModel):
     attempt_history: list[dict[str, Any]] = Field(default_factory=list)
     usage: dict[str, int | float] = Field(default_factory=dict)
     view: EvidenceViewRecord | None = None
+    comparison_state: Literal[
+        "pending",
+        "retry_wait",
+        "completed",
+        "terminal_error",
+        "not_applicable",
+    ] = "pending"
+    comparison_attempts: int = Field(default=0, ge=0)
+    comparison_next_attempt_at: str | None = None
+    comparison_error_fingerprint: str | None = None
+    comparison_last_error: str | None = None
+    comparison_attempt_history: list[dict[str, Any]] = Field(default_factory=list)
+    comparison_usage: dict[str, int | float] = Field(default_factory=dict)
+    comparison: EvidenceComparisonViewRecord | None = None
     created_at: str
     updated_at: str
-
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_comparison_basis(cls, value: Any) -> Any:
-        if not isinstance(value, dict) or "comparison_basis" not in value:
-            return value
-        payload = dict(value)
-        payload.pop("comparison_basis", None)
-        return payload
-
 
 class StrategySpec(SearchModel):
     name: str = "agent_guided"
@@ -1282,8 +1316,5 @@ class AgentSessionRecord(SearchModel):
     launch: dict[str, Any] = Field(default_factory=dict)
     counters: dict[str, int] = Field(default_factory=dict)
     global_evidence_reads: list[GlobalEvidenceReadRecord] = Field(
-        default_factory=list
-    )
-    global_evidence_comparisons: list[GlobalEvidenceComparisonRecord] = Field(
         default_factory=list
     )

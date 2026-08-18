@@ -7,7 +7,6 @@ from goal_plus.goal_plus import FileGoalPlusRuntime
 from goal_plus.models import (
     AgentHostKind,
     CandidateProposal,
-    GlobalEvidenceObservationReference,
     GoalPlusNextAction,
     GoalPlusSpecDraft,
     GoalPlusSpecDraftInput,
@@ -224,34 +223,6 @@ class SearchTools:
             agent_session_id,
             candidate_id,
             iteration,
-        )
-
-    def search_list_evidence_topics(
-        self,
-        agent_session_id: str,
-        cursor: int = 0,
-        limit: int = 20,
-    ) -> dict[str, Any]:
-        return self.runtime.list_evidence_topics(
-            agent_session_id,
-            cursor=cursor,
-            limit=limit,
-        )
-
-    def search_compare_evidence(
-        self,
-        agent_session_id: str,
-        observation_refs: list[
-            GlobalEvidenceObservationReference | dict[str, Any]
-        ] | None = None,
-        topic_id: str | None = None,
-        candidate_cursor: int = 0,
-    ) -> dict[str, Any]:
-        return self.runtime.compare_evidence_observations(
-            agent_session_id,
-            observation_refs=observation_refs,
-            topic_id=topic_id,
-            candidate_cursor=candidate_cursor,
         )
 
     def search_get_agent_observability(self, agent_session_id: str) -> dict[str, Any]:

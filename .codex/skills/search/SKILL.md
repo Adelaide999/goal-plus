@@ -208,10 +208,10 @@ candidate-local history 由运行时拥有，不是 `plan.md` 文件。worker �
 `context.supplemental_evaluation_enabled=false` 时不要读取补充评价；启用时以
 `supplemental_available` 标记可展开行，并通过 `search_get_evidence_detail` 按需读取一次。
 detail 提供 supported/unresolved observations；它们不来自 FrozenSpec，也不生成 summary 或
-confidence。需要比较时，worker
-可以用 `search_list_evidence_topics` 浏览精确标签 topic，再用 `search_compare_evidence` 显式选择
-2–8 条 observation（每 candidate 最多 2 条），或使用 topic 的确定性选择；比较不使用硬 score，
-不是分数、推荐或 promotion gate，也不改变硬分结算规则。worker 可以据此
+confidence。comparison annotator 会从有界代表 View 自动选择 2–8 条 observation（每 candidate 最多 2 条）
+生成 comparison。默认索引只显示可用性和一行 gist；完整 basis、选择理由及比较由
+`search_get_evidence_detail` 按需返回。比较不使用硬 score，不是分数、推荐或 promotion gate，
+也不改变硬分结算规则。worker 可以据此
 形成自己的下一轮假设，但应独立核对。只有代码级证据确有必要时，才在当前 workspace 使用
 `git diff HEAD <commit> -- <allowed-file>` 做只读比较，不访问其他 candidate workspace，
 也不 checkout/reset peer commit。修改完成后，worker 在 `search_run_verifier` 中用一句话

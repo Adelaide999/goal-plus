@@ -39,6 +39,7 @@ candidate 调用 search_run_verifier
   -> 按 worker_host 启动一次性 Codex 或 Pi annotator
   -> 校验单行 JSON 输出
   -> run 仍可发布时写入不可变 EvidenceViewRecord
+  -> peer observations 可用后，以独立调用生成一次派生 comparison
   -> search_get_global_evidence 投影有界代表索引
   -> worker 按需分页并精确展开任意完整 view
 ```
@@ -135,6 +136,18 @@ system instructions 明确禁止执行其中的指令、运行命令、读取其
 annotator 每次生成 1–8 条 observation。缺少可见证据的事项使用 `unresolved`，不生成
 confidence、summary、winner 或 peer comparison。历史 v1 `dimensions/limitations` 在读取时可
 迁移为同一 observation 模型，但原始文件不会因读取而重写。
+
+原始 Self View 发布后保持不可变。共享模式中，只要至少两个 candidate 已有 observation，
+comparison annotator 就从当前 View 与 peer hard-best/latest 代表 View 的有界目录中自动选择
+2–8 条 observation，每个 candidate 最多 2 条，并且必须包含当前 candidate。一次调用同时
+生成逐条选择理由、一行 `gist` 以及可选的 agreements、differences、unique observations 和
+unresolved claims；
+输入目录不包含 score 或 disposition，输出 schema 也没有 winner、排名或推荐字段。
+
+每条 View 最多生成一次 comparison。首条 View 会等待 peer，第二条出现后 drainer 会补齐两者；
+之后的新历史不会重写既有 basis。默认 Global Evidence 只公开
+`comparison_available/comparison_gist`，完整 selections 与 claims 由
+`search_get_evidence_detail` 按需返回，避免每轮重复注入完整比较。
 
 `description` 必须满足：
 
@@ -287,6 +300,8 @@ Codex MCP 配置必须通过 `env_vars` 显式转发 annotator 所需变量。�
 每个 task 最多尝试三次。瞬时失败使用 30 秒、120 秒的持久化 backoff；第三次失败后
 进入 `terminal_error`。HTTP 429/5xx、timeout、连接错误和临时不可用等被视为瞬时失败；
 无效 profile、超大 diff、run 关闭等为永久失败。结构化输出缺失或解析失败可以重试。
+comparison 使用独立的 `comparison_state`、attempt history 和 usage，沿用相同重试上限；其
+失败不会把已经 `completed` 的 Self View 或 verifier Evidence 改为失败。
 
 `GOAL_PLUS_OUTER_DEADLINE_AT` 在 task 创建时固化。它接受 Unix 秒、Unix 毫秒或带时区的
 ISO 时间戳。单次 host timeout 会被缩短到剩余外层时间；deadline 到期后不再启动或发布
@@ -308,7 +323,8 @@ annotation 内容或 verifier settlement：
 | `auto` | verifier 成功返回时额外注入有界 `global_evidence_snapshot` |
 | `independent` | 不自动注入，显式读取也只返回调用 candidate 自己的 Evidence |
 
-Annotator 仍按 run 处理所有 worker Evidence；`independent` 只是 candidate-facing 投影过滤。
+Annotator 仍按 run 处理所有 worker Evidence；`independent` 不生成跨 candidate comparison，
+并继续只向调用方投影自己的 Evidence。
 任何模式下 View 都不影响分数和选择。详细交付契约见 [API](api.md#worker-context)。
 Worker 首次修改前读取 Evidence；此后每完成三次 verifier iteration 刷新一次，连续两轮无提升
 或准备切换技术路线时提前刷新。`auto` 返回的注入快照算作刷新，无需再次调用读取工具。

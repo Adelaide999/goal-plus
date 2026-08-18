@@ -9,7 +9,6 @@ from pydantic import Field
 from goal_plus.goal_plus import FileGoalPlusRuntime
 from goal_plus.models import (
     AgentHostKind,
-    GlobalEvidenceObservationReference,
     GoalPlusSpecDraftInput,
     SearchSpec,
     ToolizationDecision,
@@ -332,39 +331,6 @@ def create_mcp(
             agent_session_id,
             candidate_id,
             iteration,
-        )
-
-    @mcp.tool()
-    def search_list_evidence_topics(
-        agent_session_id: str,
-        cursor: Annotated[int, Field(ge=0)] = 0,
-        limit: Annotated[int, Field(ge=1, le=50)] = 20,
-    ) -> dict[str, Any]:
-        """列出 observation 的精确标签 topic，不执行语义聚类或候选排名。"""
-        return tools.search_list_evidence_topics(
-            agent_session_id,
-            cursor,
-            limit,
-        )
-
-    @mcp.tool()
-    def search_compare_evidence(
-        agent_session_id: str,
-        observation_refs: list[GlobalEvidenceObservationReference] | None = None,
-        topic_id: str | None = None,
-        candidate_cursor: Annotated[int, Field(ge=0)] = 0,
-    ) -> dict[str, Any]:
-        """按精确 observation 或 topic 生成无排名的结构化动态对比。
-
-        显式模式要求 2–8 条引用、每个 candidate 最多 2 条，并保持调用方顺序。topic 模式
-        按 candidate_id 依次选择每个 candidate 最新 supported 与最新 unresolved observation，
-        单页最多 8 条。两种模式都不使用硬 score，也不产生 winner 或 promotion 建议。
-        """
-        return tools.search_compare_evidence(
-            agent_session_id,
-            observation_refs,
-            topic_id,
-            candidate_cursor,
         )
 
     @mcp.tool()

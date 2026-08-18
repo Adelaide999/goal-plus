@@ -7,6 +7,11 @@ import subprocess
 
 import pytest
 
+from goal_plus.evidence_annotator import (
+    EvidenceComparisonOutput,
+    EvidenceComparisonResult,
+    drain_evidence_annotations,
+)
 from goal_plus.models import (
     EvidenceViewRecord,
     SearchSpec,
@@ -492,12 +497,12 @@ def test_global_evidence_presents_open_evaluation_without_peer_basis(
         runtime.get_evidence_detail(first[1], second[0], 1)
 
 
-def test_observation_topics_and_worker_selected_comparison_are_bounded(
+def test_comparison_annotator_automatically_selects_bounded_peer_observations(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(SUPPLEMENTAL_EVALUATION_ENABLED_ENV, "1")
-    runtime, run_id, candidates = _search_with_candidates(tmp_path, 5)
+    runtime, run_id, candidates = _search_with_candidates(tmp_path, 2)
     for index, (candidate_id, session_id, workspace) in enumerate(
         candidates,
         start=1,
@@ -506,139 +511,125 @@ def test_observation_topics_and_worker_selected_comparison_are_bounded(
             f"VALUE = {index}\n",
             encoding="utf-8",
         )
-        runtime.run_verifier(
+        report = runtime.run_verifier(
             run_id,
             candidate_id,
             agent_session_id=session_id,
-            hypothesis=f"Exercise boundary strategy {index}",
+            hypothesis=f"Exercise strategy {index}",
         )
-        observations = [
-            {
-                "state": "supported",
-                "label": "Boundary behavior",
-                "text": f"Candidate {index} handles the visible boundary.",
-                "evidence": [
-                    {
-                        "source": "verifier_result",
-                        "locator": "score",
-                        "excerpt": f"combined_score={index}.0",
-                    }
-                ],
-            },
-            {
-                "state": "unresolved",
-                "label": "Boundary behavior",
-                "text": f"Candidate {index} has no hidden-boundary evidence.",
-                "evidence": [
-                    {
-                        "source": "evidence_scope",
-                        "locator": "visible verifier",
-                        "excerpt": "Hidden cases were not available.",
-                    }
-                ],
-            },
-        ]
-        if index == 1:
-            observations.insert(
-                1,
-                {
-                    "state": "supported",
-                    "label": "Boundary behavior",
-                    "text": "Candidate 1 has a newer visible-boundary observation.",
-                    "evidence": [
-                        {
-                            "source": "candidate_diff",
-                            "locator": "initial_program.py",
-                            "excerpt": "VALUE = 1",
-                        }
-                    ],
-                },
-            )
+        assert report.aggregate_score == float(index)
         _complete_supplemental_view(
             runtime,
             run_id,
             candidate_id,
             1,
-            observations,
+            [
+                {
+                    "state": "supported",
+                    "label": "Implementation strategy",
+                    "text": f"Candidate {index} uses strategy {index}.",
+                    "evidence": [
+                        {
+                            "source": "candidate_diff",
+                            "locator": "initial_program.py",
+                            "excerpt": f"VALUE = {index}",
+                        }
+                    ],
+                }
+            ],
         )
 
-    caller_session = candidates[0][1]
-    topics = runtime.list_evidence_topics(caller_session)
-    assert topics["grouping"] == "normalized_exact_label"
-    assert topics["total"] == 1
-    topic = topics["items"][0]
-    assert topic["candidate_count"] == 5
-    assert topic["observation_count"] == 11
+    class AutomaticComparisonAnnotator:
+        contexts: list[dict] = []
 
-    comparison = runtime.compare_evidence_observations(
-        caller_session,
-        topic_id=topic["topic_id"],
-    )
-    assert comparison["selection_mode"] == "topic"
-    assert comparison["selected"] == 8
-    assert comparison["remaining"] == 2
-    assert comparison["has_more"] is True
-    assert [item["candidate_id"] for item in comparison["matrix"]] == sorted(
-        candidate[0] for candidate in candidates[:4]
-    )
-    assert all(len(item["observations"]) == 2 for item in comparison["matrix"])
-    first_matrix = comparison["matrix"][0]["observations"]
-    assert first_matrix[0]["text"].endswith("newer visible-boundary observation.")
-    assert all(set(item) == {
-        "candidate_id",
-        "iteration",
-        "commit",
-        "observation_ordinal",
-    } for item in comparison["basis"])
-    assert comparison["selection_rules"]["score_used"] is False
-    assert all("score" not in item for item in comparison["matrix"])
+        def compare(self, context: dict) -> EvidenceComparisonResult:
+            self.contexts.append(context)
+            serialized = json.dumps(context["comparison_catalog"], sort_keys=True)
+            assert '"score"' not in serialized
+            assert '"evidence"' not in serialized
+            target_identity = context["comparison_catalog"]["target"]
+            observations = [
+                observation
+                for view in context["comparison_catalog"]["views"]
+                for observation in view["observations"]
+            ]
+            target = next(
+                item
+                for item in observations
+                if all(
+                    item["reference"][field] == target_identity[field]
+                    for field in ("candidate_id", "iteration", "commit")
+                )
+            )
+            peer = next(
+                item
+                for item in observations
+                if item["reference"]["candidate_id"]
+                != target_identity["candidate_id"]
+            )
+            references = [target["reference"], peer["reference"]]
+            return EvidenceComparisonResult(
+                output=EvidenceComparisonOutput.model_validate(
+                    {
+                        "gist": (
+                            f"{target_identity['candidate_id']} 与 peer 采用不同的可见实现策略。"
+                        ),
+                        "selections": [
+                            {
+                                "reference": reference,
+                                "reason": "覆盖当前实现与一个可核对的 peer 对照。",
+                            }
+                            for reference in references
+                        ],
+                        "agreements": [],
+                        "differences": [
+                            {
+                                "text": "两条 observation 描述了不同实现策略。",
+                                "observation_refs": references,
+                            }
+                        ],
+                        "unique_observations": [],
+                        "unresolved": [],
+                    }
+                ),
+                usage={"input_tokens": 11, "output_tokens": 7},
+            )
 
-    next_page = runtime.compare_evidence_observations(
-        caller_session,
-        topic_id=topic["topic_id"],
-        candidate_cursor=comparison["next_candidate_cursor"],
+    annotator = AutomaticComparisonAnnotator()
+    assert drain_evidence_annotations(
+        runtime.root_dir,
+        run_id,
+        annotator=annotator,
+    ) == 0
+    assert len(annotator.contexts) == 2
+    assert all(
+        context["selection_contract"]["score_available"] is False
+        and context["selection_contract"]["must_include_target_view"] is True
+        for context in annotator.contexts
     )
-    assert next_page["selected"] == 2
-    assert next_page["remaining"] == 0
-    assert next_page["has_more"] is False
 
-    explicit_refs = [comparison["basis"][-1], comparison["basis"][0]]
-    explicit = runtime.compare_evidence_observations(
-        caller_session,
-        observation_refs=explicit_refs,
-    )
-    assert explicit["basis"] == explicit_refs
-    stored_session = runtime._load_agent_session_by_id(caller_session)
-    assert len(stored_session.global_evidence_comparisons) == 3
-    assert stored_session.global_evidence_comparisons[0].selection_mode == "topic"
-    assert stored_session.global_evidence_comparisons[2].observation_refs[0].model_dump(
-        mode="json"
-    ) == explicit_refs[0]
-    with pytest.raises(ValueError, match="unique"):
-        runtime.compare_evidence_observations(
-            caller_session,
-            observation_refs=[explicit_refs[0], explicit_refs[0]],
-        )
+    for candidate_id, _, _ in candidates:
+        task = runtime._load_evidence_annotation_task(run_id, candidate_id, 1)
+        assert task is not None
+        assert task.state == "completed"
+        assert task.comparison_state == "completed"
+        assert task.comparison_attempts == 1
+        assert task.comparison is not None
+        assert len(task.comparison.selections) == 2
+        assert task.comparison.catalog_view_count == 2
 
-    first_detail = runtime.get_evidence_detail(
-        caller_session,
-        candidates[0][0],
+    entries = runtime.get_global_evidence(candidates[0][1])
+    assert all(entry["comparison_available"] is True for entry in entries)
+    assert all(entry["comparison_gist"] for entry in entries)
+    assert all("selections" not in entry for entry in entries)
+    detail = runtime.get_evidence_detail(
+        candidates[0][1],
+        candidates[1][0],
         1,
     )
-    three_from_one_candidate = [
-        {
-            "candidate_id": candidates[0][0],
-            "iteration": 1,
-            "commit": first_detail["commit"],
-            "observation_ordinal": ordinal,
-        }
-        for ordinal in (1, 2, 3)
-    ]
-    with pytest.raises(ValueError, match="at most 2"):
-        runtime.compare_evidence_observations(
-            caller_session,
-            observation_refs=three_from_one_candidate,
-        )
+    assert detail["comparison"]["gist"]
+    assert len(detail["comparison"]["selections"]) == 2
+    assert runtime.list_iterations(run_id, candidates[1][0])[0]["score"] == 2.0
 
 
 def test_supplemental_capability_and_detail_respect_disabled_and_independent_modes(

@@ -339,8 +339,8 @@ candidate-local history 由运行时拥有，不是本地 plan 文件。worker �
 等待或尝试读取补充评价；启用时仅以 `supplemental_available` 标记可展开的行。仅在线路
 停滞、结构性分数跃升、hidden 泛化风险或官方/本地结果
 背离时，通过 `search_get_evidence_detail` 按需读取 supported/unresolved observations，且不重复
-读取同一不可变行。需要比较时先读取精确 observation 引用，再用 `search_compare_evidence`
-显式选择 2–8 条（每 candidate 最多 2 条），或使用不依赖硬 score 的 topic 模式。
+读取同一不可变行。comparison annotator 会从有界代表 View 自动选择 2–8 条 observation（每 candidate
+最多 2 条）生成 comparison；默认索引只显示一行 gist，detail 返回完整 basis 和选择理由。
 完整内容包含 annotator 根据实际 Evidence 后验提出的观察维度。它不来自 FrozenSpec，不作为
 硬分、推荐或 promotion gate；worker 可据此形成假设，但应独立核对。仅在
 worker 独立判断确有必要时，才在当前 workspace 使用

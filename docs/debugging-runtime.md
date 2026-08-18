@@ -521,8 +521,6 @@ These tools are safe to call anytime — they're read-only:
 | `search_get_agent_context(agent_session_id)` | What a specific subagent sees (including its own iterations) |
 | `search_get_global_evidence(agent_session_id)` | Settled worker Evidence and possibly delayed objective Views across the session's current run |
 | `search_get_evidence_detail(agent_session_id, candidate_id, iteration)` | One on-demand supplemental evaluation authorized by the caller's current run and Evidence mode |
-| `search_list_evidence_topics(agent_session_id, cursor, limit)` | Paginated exact-label observation topics visible to the caller |
-| `search_compare_evidence(agent_session_id, observation_refs, topic_id, candidate_cursor)` | Deterministic worker-selected comparison with a 2–8 observation bound |
 
 ## Cross-Referencing Layers
 
