@@ -10,6 +10,8 @@ from goal_plus.goal_plus import FileGoalPlusRuntime
 from goal_plus.models import (
     AgentHostKind,
     GoalPlusSpecDraftInput,
+    GoalPlusWorkEventKind,
+    GoalPlusWorkItemInput,
     SearchSpec,
     ToolizationDecision,
 )
@@ -392,6 +394,46 @@ def create_mcp(
     ) -> dict[str, Any]:
         """记录目标应保留 goal 形态，还是向 Search 升级。"""
         return goal_tools.goal_plus_record_triage(goal_plus_id, triage)
+
+    @mcp.tool()
+    def goal_plus_upsert_work_items(
+        goal_plus_id: str,
+        work_items: list[GoalPlusWorkItemInput],
+    ) -> dict[str, Any]:
+        """创建或更新当前目标修订版的编排工作项 DAG。"""
+        return goal_tools.goal_plus_upsert_work_items(goal_plus_id, work_items)
+
+    @mcp.tool()
+    def goal_plus_record_work_event(
+        goal_plus_id: str,
+        work_item_id: str,
+        event: GoalPlusWorkEventKind,
+        summary: Annotated[str, Field(min_length=1, max_length=4000)],
+        host: str | None = None,
+        task_name: str | None = None,
+        agent_id: str | None = None,
+        transcript_path: str | None = None,
+        search_run_id: str | None = None,
+        evidence: list[dict[str, Any]] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """记录主 Agent 与普通 subagent/Search 的编排摘要和状态迁移。
+
+        仅保存任务摘要、host handle 和证据引用，不保存私有推理或完整对话正文。
+        """
+        return goal_tools.goal_plus_record_work_event(
+            goal_plus_id,
+            work_item_id,
+            event,
+            summary,
+            host,
+            task_name,
+            agent_id,
+            transcript_path,
+            search_run_id,
+            evidence,
+            metadata,
+        )
 
     @mcp.tool()
     def goal_plus_save_spec_draft(

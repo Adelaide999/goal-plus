@@ -932,6 +932,11 @@ def run_pi_rpc_worker(
                                 "goal_plus_submit_final_check 提交结构化结论。"
                                 if launch.get("role") == "final-checker"
                                 else (
+                                    "Subagent deadline is near. Stop new work, run focused "
+                                    "verification, and return a concise result now."
+                                )
+                                if launch.get("role") == "ordinary"
+                                else (
                                     "Worker 截止时间临近。停止启动新的分析、编辑或优化 iteration。"
                                     "如果自最近一次记录的 verifier 后工作区发生了变化，立即最后运行一次 "
                                     "search_run_verifier；否则立即返回简洁摘要。不要再启动新的优化 "

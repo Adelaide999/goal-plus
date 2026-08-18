@@ -57,6 +57,32 @@ const GoalPlusNextAction = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+const GoalPlusWorkItem = Type.Object(
+	{
+		work_item_id: Type.String({ minLength: 1, maxLength: 120, pattern: "^[A-Za-z0-9._-]+$" }),
+		title: Type.String({ minLength: 1, maxLength: 240 }),
+		objective: Type.String({ minLength: 1, maxLength: 8000 }),
+		route: Type.Optional(
+			Type.Union([Type.Literal("main"), Type.Literal("subagent"), Type.Literal("search")]),
+		),
+		depends_on: Type.Optional(Type.Array(Type.String())),
+		scope: Type.Optional(Type.Array(Type.String())),
+		acceptance: Type.Optional(Type.Array(Type.String())),
+		required: Type.Optional(Type.Boolean()),
+	},
+	{ additionalProperties: false },
+);
+const GoalPlusWorkEvent = Type.Union([
+	Type.Literal("dispatch"),
+	Type.Literal("message"),
+	Type.Literal("result"),
+	Type.Literal("rework"),
+	Type.Literal("accepted"),
+	Type.Literal("blocked"),
+	Type.Literal("failed"),
+	Type.Literal("cancelled"),
+	Type.Literal("search_routed"),
+]);
 const PositiveInteger = Type.Integer({ exclusiveMinimum: 0 });
 const NullableString = Type.Union([Type.String(), Type.Null()]);
 const NullablePositiveInteger = Type.Union([PositiveInteger, Type.Null()]);
@@ -291,6 +317,29 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 		{
 			goal_plus_id: Type.String(),
 			triage: GoalPlusTriage,
+		},
+		{ additionalProperties: false },
+	),
+	goal_plus_upsert_work_items: Type.Object(
+		{
+			goal_plus_id: Type.String(),
+			work_items: Type.Array(GoalPlusWorkItem, { minItems: 1 }),
+		},
+		{ additionalProperties: false },
+	),
+	goal_plus_record_work_event: Type.Object(
+		{
+			goal_plus_id: Type.String(),
+			work_item_id: Type.String(),
+			event: GoalPlusWorkEvent,
+			summary: Type.String({ minLength: 1, maxLength: 4000 }),
+			host: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+			task_name: Type.Optional(Type.String()),
+			agent_id: Type.Optional(Type.String()),
+			transcript_path: Type.Optional(Type.String()),
+			search_run_id: Type.Optional(Type.String()),
+			evidence: Type.Optional(Type.Array(LooseObject)),
+			metadata: Type.Optional(LooseObject),
 		},
 		{ additionalProperties: false },
 	),
@@ -583,8 +632,20 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 		{ launch: LooseObject },
 		{ additionalProperties: false },
 	),
+	pi_goal_plus_run_work_item: Type.Object(
+		{
+			goal_plus_id: Type.String(),
+			work_item_id: Type.String(),
+			max_runtime_seconds: Type.Optional(Type.Integer({ minimum: 30, maximum: 3600 })),
+		},
+		{ additionalProperties: false },
+	),
 };
 const RuntimeToolDescriptions: Record<string, string> = {
+	goal_plus_upsert_work_items:
+		"创建或更新当前目标修订版的可审计工作项 DAG。main 保留关键路径，subagent 处理独立工作，search 只用于具备可度量 verifier 的并行探索。",
+	goal_plus_record_work_event:
+		"记录 dispatch、简短消息摘要、结果、返工和主 Agent 验收。只保存编排事实与证据引用，不保存私有推理或完整对话正文。",
 	goal_plus_save_spec_draft:
 		"保存发现的 SearchSpec draft。新的 Pi spec 使用 orchestration_mode=parallel_loops，以 max_parallel 作为初始 candidate/subagent 数。",
 	search_freeze_spec:
@@ -630,6 +691,7 @@ const MAIN_GATED_TOOLS = new Set([
 	"pi_search_pool_continue",
 	"pi_search_pool_close",
 	"pi_goal_plus_run_final_check",
+	"pi_goal_plus_run_work_item",
 ]);
 
 interface GoalPlusNativeState {
@@ -665,6 +727,8 @@ interface GoalPlusStatusPayload {
 	search_tasks_total?: number;
 	current_search_run_id?: string | null;
 	linked_search?: unknown;
+	source_path?: string | null;
+	work_items?: unknown[];
 }
 
 interface GoalPlusGatePayload {
@@ -1152,6 +1216,24 @@ function goalPlusRequestFromSlashInput(text: string): GoalPlusSlashRequest | und
 	};
 }
 
+function enforceGoalPlusThinking(pi: ExtensionAPI, ctx: ExtensionContext): string | undefined {
+	try {
+		pi.setThinkingLevel("xhigh");
+	} catch (error) {
+		ctx.ui.notify(`Goal Plus requires main thinking=max: ${String(error)}`, "error");
+		return undefined;
+	}
+	const observed = pi.getThinkingLevel();
+	if (observed === "off") {
+		ctx.ui.notify(
+			"Goal Plus requires main thinking=max; the selected Pi model has reasoning disabled.",
+			"error",
+		);
+		return undefined;
+	}
+	return observed;
+}
+
 async function createGoalPlusStart(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
@@ -1172,12 +1254,30 @@ async function createGoalPlusStart(
 		});
 		return undefined;
 	}
+	const observedThinking = enforceGoalPlusThinking(pi, ctx);
+	if (!observedThinking) return undefined;
 	const commandCtx = commandContextFrom(ctx);
 	const startEntryCount = ctx.sessionManager.getEntries().length;
 	const result = await runJsonCli(pi, commandCtx, "goal_plus_create", {
 		raw_goal: rawGoal,
 		source_path: ctx.cwd,
-		policy: withFinalCheck ? { final_check: { mode: "required" } } : undefined,
+		policy: {
+			execution: {
+				mode: "orchestrated",
+				main_reasoning_effort: "max",
+				delegation: "proactive",
+				search_routing: "auto",
+				completion: "until_terminal",
+				host: {
+					protocol: "goal-plus-ultra-v1",
+					host_id: "pi",
+					native_reasoning_effort: observedThinking,
+					enforcement: "host",
+					operations: ["spawn", "wait", "observe"],
+				},
+			},
+			...(withFinalCheck ? { final_check: { mode: "required" } } : {}),
+		},
 	});
 	const status = statusFrom(result.details);
 	if (!status?.goal_plus_id) {
@@ -1208,6 +1308,7 @@ async function updateGoalPlusStart(
 	ctx: ExtensionContext,
 	rawGoal: string,
 ): Promise<string | undefined> {
+	if (!enforceGoalPlusThinking(pi, ctx)) return undefined;
 	if (!activeGoalPlusId) {
 		ctx.ui.notify("No active Goal Plus record to edit", "error");
 		return undefined;
@@ -1237,6 +1338,7 @@ async function resumeGoalPlusStart(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 ): Promise<string | undefined> {
+	if (!enforceGoalPlusThinking(pi, ctx)) return undefined;
 	if (!activeGoalPlusId) {
 		ctx.ui.notify("No interrupted Goal Plus record to resume", "error");
 		return undefined;
@@ -1352,6 +1454,131 @@ function registerPiFinalCheckTool(pi: ExtensionAPI) {
 	});
 }
 
+function registerPiWorkItemTool(pi: ExtensionAPI) {
+	pi.registerTool({
+		name: "pi_goal_plus_run_work_item",
+		label: "Pi Goal Plus Work Item",
+		description: "在隔离的 Pi RPC 子进程中执行一个已规划的普通 subagent 工作项。",
+		parameters: toolParameters("pi_goal_plus_run_work_item"),
+		executionMode: "concurrent",
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const input = params as {
+				goal_plus_id: string;
+				work_item_id: string;
+				max_runtime_seconds?: number;
+			};
+			const commandCtx = commandContextFrom(ctx);
+			const statusResult = await runJsonCli(pi, commandCtx, "goal_plus_status", {
+				goal_plus_id: input.goal_plus_id,
+			});
+			const status = statusFrom(statusResult.details);
+			const workItem = status?.work_items?.find(
+				(item) => isRecord(item) && item.work_item_id === input.work_item_id,
+			);
+			if (!isRecord(workItem) || workItem.route !== "subagent") {
+				throw new Error(`Unknown Pi subagent work item: ${input.work_item_id}`);
+			}
+			const workStatus = String(workItem.status || "");
+			if (!["planned", "active", "blocked", "failed"].includes(workStatus)) {
+				throw new Error(`Pi work item ${input.work_item_id} cannot run while ${workStatus}`);
+			}
+			const event = workStatus === "active" ? "message" : "dispatch";
+			const sessionId = `${input.goal_plus_id}_${input.work_item_id}_${Date.now()}`.replace(
+				/[^A-Za-z0-9._-]/g,
+				"_",
+			);
+			const dispatchResult = await runJsonCli(pi, commandCtx, "goal_plus_record_work_event", {
+				goal_plus_id: input.goal_plus_id,
+				work_item_id: input.work_item_id,
+				event,
+				summary: event === "dispatch" ? "Pi host dispatched work item." : "Pi host resumed work item.",
+				host: "pi",
+				task_name: input.work_item_id,
+				agent_id: sessionId,
+			});
+			if (isRecord(dispatchResult.details) && dispatchResult.details.ok === false) {
+				throw new Error(String(dispatchResult.details.error || "Pi work item dispatch was rejected"));
+			}
+			const scope = Array.isArray(workItem.scope) ? workItem.scope.map(String).join(", ") : "current workspace";
+			const acceptance = Array.isArray(workItem.acceptance)
+				? workItem.acceptance.map(String).join("\n- ")
+				: "Run focused verification and report concrete evidence.";
+			const launch = {
+				role: "ordinary",
+				root: runtimeRoot,
+				cwd: status?.source_path || ctx.cwd,
+				agent_session_id: sessionId,
+				session_id: sessionId,
+				thinking_level: "xhigh",
+				prompt: [
+					"You are an implementation subagent. Work only on the assigned item.",
+					`Title: ${String(workItem.title || input.work_item_id)}`,
+					`Objective: ${String(workItem.objective || "")}`,
+					`Scope: ${scope}`,
+					`Acceptance:\n- ${acceptance}`,
+					"Do not coordinate other agents or use Goal Plus/Search tools. Return a concise result and verification evidence.",
+				].join("\n\n"),
+				budget_control: {
+					max_runtime_seconds: input.max_runtime_seconds ?? 600,
+					soft_closeout_seconds: 30,
+				},
+			};
+			const invocation = projectModuleInvocation(commandCtx, "goal-plus-pi-worker", "goal_plus.pi_worker");
+			const result = await pi.exec(invocation.command, [
+				...invocation.argsPrefix,
+				"run",
+				"--launch-json",
+				JSON.stringify(launch),
+			]);
+			if (result.code !== 0) {
+				await runJsonCli(pi, commandCtx, "goal_plus_record_work_event", {
+					goal_plus_id: input.goal_plus_id,
+					work_item_id: input.work_item_id,
+					event: "failed",
+					summary: "Pi subagent process failed before returning a result.",
+					host: "pi",
+					agent_id: sessionId,
+				});
+				return commandFailure("pi_goal_plus_run_work_item", invocation, result);
+			}
+			const handle = JSON.parse(result.stdout || "{}");
+			const metadata = isRecord(handle) && isRecord(handle.metadata) ? handle.metadata : {};
+			const metrics = isRecord(metadata.pi_metrics) ? metadata.pi_metrics : {};
+			const observedThinking = typeof metrics.thinking_level === "string"
+				? metrics.thinking_level
+				: undefined;
+			const failed = metadata.timed_out === true || observedThinking === "off" || !observedThinking;
+			const assistantText = typeof metadata.assistant_text === "string"
+				? metadata.assistant_text.trim()
+				: "";
+			const summary = assistantText
+				? assistantText.slice(0, 4000)
+				: "Pi subagent completed without a textual result.";
+			const updated = await runJsonCli(pi, commandCtx, "goal_plus_record_work_event", {
+				goal_plus_id: input.goal_plus_id,
+				work_item_id: input.work_item_id,
+				event: failed ? "failed" : "result",
+				summary: failed ? "Pi subagent did not complete with reasoning enabled." : summary,
+				host: "pi",
+				task_name: input.work_item_id,
+				agent_id: sessionId,
+				transcript_path: typeof metadata.session_file === "string" ? metadata.session_file : undefined,
+				metadata: {
+					requested_reasoning_effort: "xhigh",
+					native_reasoning_effort: observedThinking,
+				},
+			});
+			if (isRecord(updated.details) && updated.details.ok === false) {
+				throw new Error(String(updated.details.error || "Pi work item result was rejected"));
+			}
+			return {
+				content: [{ type: "text" as const, text: summary }],
+				details: { handle, status: updated.details },
+			};
+		},
+	});
+}
+
 function extractCandidatePath(event: ToolCallEvent): string | undefined {
 	const input = event.input as Record<string, unknown>;
 	if (event.toolName === "bash") return String(input.command || "");
@@ -1458,6 +1685,8 @@ export default function (pi: ExtensionAPI) {
 		"goal_plus_monitor_snapshot",
 		"goal_plus_list_models",
 		"goal_plus_record_triage",
+		"goal_plus_upsert_work_items",
+		"goal_plus_record_work_event",
 		"goal_plus_save_spec_draft",
 		"goal_plus_link_search_run",
 		"goal_plus_record_search_result",
@@ -1465,6 +1694,7 @@ export default function (pi: ExtensionAPI) {
 		"goal_plus_submit_final_check",
 		"goal_plus_set_status",
 		"goal_plus_gate",
+		"pi_goal_plus_run_work_item",
 		"search_freeze_spec",
 		"search_create",
 		"search_status",
@@ -1493,11 +1723,20 @@ export default function (pi: ExtensionAPI) {
 		"search_list_iterations",
 	];
 	const finalCheckerTools = ["goal_plus_status", "goal_plus_submit_final_check"];
-	const roleTools = role === "worker" ? workerTools : role === "final-checker" ? finalCheckerTools : mainTools;
+	const roleTools = role === "worker"
+		? workerTools
+		: role === "final-checker"
+			? finalCheckerTools
+			: role === "ordinary"
+				? []
+				: mainTools;
 	for (const tool of roleTools) {
 		registerRuntimeTool(pi, tool);
 	}
-	if (role === "main") registerPiFinalCheckTool(pi);
+	if (role === "main") {
+		registerPiFinalCheckTool(pi);
+		registerPiWorkItemTool(pi);
+	}
 	pi.on("input", async (event, ctx) => {
 		if (role !== "main" || (ctx.mode !== "print" && ctx.mode !== "json")) {
 			return { action: "continue" };
