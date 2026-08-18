@@ -77,3 +77,9 @@ The harness must set its highest supported reasoning budget before the first
 main turn, dispatch work items through its worker API, and report lifecycle
 transitions through `goal_plus_record_work_event`. Provider names and command
 schemas remain outside the core state machine.
+
+Main/worker interaction monitoring is an optional read-only projection, not an
+Ultra lifecycle stage. Hosts may annotate work events with namespaced native
+operation metadata; the `orchestration` feature plugin then exposes a common
+task/result/decision view without moving process ownership into the runtime.
+See [Monitor Feature Plugins](feature-plugins.md).

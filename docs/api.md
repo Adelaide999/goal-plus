@@ -195,6 +195,13 @@ combines that delta with worker usage. Per-task statistics are also retained in
 `search_tasks[].statistics` and aggregated under
 `search_task_aggregate.statistics`.
 
+`goal_plus_monitor_snapshot.feature_plugins` contains optional, read-only
+derived views. The built-in `orchestration` plugin normalizes ordinary
+Main/subagent task packets and assignment/result/decision events while keeping
+Codex and Pi native operation names distinct. Pass
+`feature_plugins=["orchestration"]` to select it or `feature_plugins=[]` to
+disable feature projections. See [Monitor Feature Plugins](feature-plugins.md).
+
 Worker handoffs remain one bounded protocol. `key_results` supplies feature
 ledger entries (artifact, code surface/change, portability/dependencies,
 measured effect, verifier result, and incumbent relation), while

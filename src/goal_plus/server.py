@@ -106,6 +106,7 @@ def create_mcp(
         goal_plus_id: str | None = None,
         run_id: str | None = None,
         stale_after_seconds: int = 600,
+        feature_plugins: list[str] | None = None,
     ) -> dict[str, Any]:
         """返回供轮询 agent 使用的只读 Goal Plus/Search 监控 snapshot。
 
@@ -116,6 +117,7 @@ def create_mcp(
             goal_plus_id=goal_plus_id,
             run_id=run_id,
             stale_after_seconds=stale_after_seconds,
+            feature_plugins=feature_plugins,
         )
 
     @mcp.tool()

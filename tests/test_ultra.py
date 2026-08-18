@@ -510,9 +510,12 @@ def test_ultra_assets_keep_core_host_neutral_and_wire_codex_and_pi() -> None:
     assert 'pi.setThinkingLevel("xhigh")' in pi
     assert 'thinking_level: "xhigh"' in pi
     assert 'name: "pi_goal_plus_run_work_item"' in pi
+    assert 'native_operation: "pi_goal_plus_run_work_item"' in pi
+    assert 'native_operation: "goal-plus-pi-worker"' in pi
     assert 'executionMode: "concurrent"' in pi
     assert 'role: "ordinary"' in pi
     assert "goal_plus_work_item" in pi
     assert "sessionId = String(workItem.agent_id)" in pi
     assert '"bind"' in pi_worker
+    assert '"native_operation":"spawn_agent"' in codex
     assert "deepseek-harness" in docs

@@ -16,6 +16,8 @@ Read only the page that owns the question:
   and shared host-pool contract.
 - [docs/ultra.md](docs/ultra.md): host-neutral `/goal-plus` work DAG, effort,
   delegation, and harness binding contract.
+- [docs/feature-plugins.md](docs/feature-plugins.md): optional read-only monitor
+  projections and host event metadata.
 - [docs/debugging-runtime.md](docs/debugging-runtime.md): state and host logs.
 - [docs/codex.md](docs/codex.md) and [docs/pi.md](docs/pi.md):
   host-specific setup and behavior.

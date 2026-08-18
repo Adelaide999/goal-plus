@@ -304,6 +304,7 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 			goal_plus_id: Type.Optional(Type.String()),
 			run_id: Type.Optional(Type.String()),
 			stale_after_seconds: Type.Optional(Type.Number()),
+			feature_plugins: Type.Optional(Type.Array(Type.String())),
 		},
 		{ additionalProperties: false },
 	),
@@ -1509,6 +1510,12 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 					agent_id: sessionId,
 					attempt_id: attemptId,
 					generation,
+					metadata: {
+						orchestration_monitor: {
+							native_operation: "pi_goal_plus_run_work_item",
+							direction: "main_to_subagent",
+						},
+					},
 				});
 				if (isRecord(resumed.details) && resumed.details.ok === false) {
 					throw new Error(String(resumed.details.error || "Pi work item resume was rejected"));
@@ -1525,6 +1532,13 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 					summary: "Pi host claimed a work item launch attempt.",
 					host: "pi",
 					task_name: input.work_item_id,
+					metadata: {
+						orchestration_monitor: {
+							native_operation: "pi_goal_plus_run_work_item",
+							semantic_event: "assignment",
+							direction: "main_to_subagent",
+						},
+					},
 				});
 				if (isRecord(dispatchResult.details) && dispatchResult.details.ok === false) {
 					throw new Error(String(dispatchResult.details.error || "Pi work item dispatch was rejected"));
@@ -1590,6 +1604,12 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 					agent_id: sessionId,
 					attempt_id: attemptId,
 					generation,
+					metadata: {
+						orchestration_monitor: {
+							native_operation: "goal-plus-pi-worker",
+							direction: "subagent_to_main",
+						},
+					},
 				});
 				return commandFailure("pi_goal_plus_run_work_item", invocation, result);
 			}
@@ -1620,6 +1640,10 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 				metadata: {
 					requested_reasoning_effort: "xhigh",
 					native_reasoning_effort: observedThinking,
+					orchestration_monitor: {
+						native_operation: "goal-plus-pi-worker",
+						direction: "subagent_to_main",
+					},
 				},
 			});
 			if (isRecord(updated.details) && updated.details.ok === false) {
