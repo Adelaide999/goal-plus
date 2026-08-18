@@ -34,7 +34,9 @@ The command maps logical Main `thinking=max` to Pi's native `xhigh` request and
 records the level after Pi clamps it to the selected model. A resulting `off`
 level is rejected. Ordinary `route="subagent"` work runs through
 `pi_goal_plus_run_work_item`, which applies the same rule to an isolated Pi RPC
-child, waits for it, and records its result. Multiple
+child, binds its durable launch attempt after the RPC process starts, waits for
+it, and submits the result with the same attempt generation. It rejects an
+already-active item instead of creating a replacement session. Multiple
 independent tool calls can execute concurrently. Main still owns acceptance,
 rework, integration, and completion. See [Ultra Orchestration](ultra.md).
 

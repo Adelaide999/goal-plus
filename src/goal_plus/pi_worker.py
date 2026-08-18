@@ -725,6 +725,30 @@ def _collect_pi_metrics(
     return metrics
 
 
+def _bind_goal_plus_work_item(
+    launch: dict[str, Any],
+    *,
+    root: Path,
+    session_id: str,
+) -> None:
+    binding = launch.get("goal_plus_work_item")
+    if not isinstance(binding, dict):
+        return
+    from goal_plus.goal_plus import FileGoalPlusRuntime
+
+    FileGoalPlusRuntime(root).record_work_event(
+        str(binding["goal_plus_id"]),
+        str(binding["work_item_id"]),
+        "bind",
+        "Pi host bound the launched worker session.",
+        host=str(binding.get("host") or "pi"),
+        task_name=str(binding.get("task_name") or binding["work_item_id"]),
+        agent_id=session_id,
+        attempt_id=str(binding["attempt_id"]),
+        generation=int(binding["generation"]),
+    )
+
+
 def run_pi_rpc_worker(
     launch: dict[str, Any],
     *,
@@ -851,6 +875,7 @@ def run_pi_rpc_worker(
             pass
 
     try:
+        _bind_goal_plus_work_item(launch, root=root, session_id=session_id)
         if provider and model_id:
             rpc.command(
                 {"type": "set_model", "provider": provider, "modelId": model_id},

@@ -74,6 +74,7 @@ const GoalPlusWorkItem = Type.Object(
 );
 const GoalPlusWorkEvent = Type.Union([
 	Type.Literal("dispatch"),
+	Type.Literal("bind"),
 	Type.Literal("message"),
 	Type.Literal("result"),
 	Type.Literal("rework"),
@@ -336,6 +337,9 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 			host: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
 			task_name: Type.Optional(Type.String()),
 			agent_id: Type.Optional(Type.String()),
+			attempt_id: Type.Optional(Type.String()),
+			generation: Type.Optional(PositiveInteger),
+			launch_ttl_seconds: Type.Optional(Type.Integer({ minimum: 1, maximum: 3600 })),
 			transcript_path: Type.Optional(Type.String()),
 			search_run_id: Type.Optional(Type.String()),
 			evidence: Type.Optional(Type.Array(LooseObject)),
@@ -645,7 +649,7 @@ const RuntimeToolDescriptions: Record<string, string> = {
 	goal_plus_upsert_work_items:
 		"创建或更新当前目标修订版的可审计工作项 DAG。main 保留关键路径，subagent 处理独立工作，search 只用于具备可度量 verifier 的并行探索。",
 	goal_plus_record_work_event:
-		"记录 dispatch、简短消息摘要、结果、返工和主 Agent 验收。只保存编排事实与证据引用，不保存私有推理或完整对话正文。",
+		"记录带 attempt/generation fencing 的 dispatch、bind、消息、结果、返工和主 Agent 验收。只保存编排事实与证据引用，不保存私有推理或完整对话正文。",
 	goal_plus_save_spec_draft:
 		"保存发现的 SearchSpec draft。新的 Pi spec 使用 orchestration_mode=parallel_loops，以 max_parallel 作为初始 candidate/subagent 数。",
 	search_freeze_spec:
@@ -1479,25 +1483,61 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 				throw new Error(`Unknown Pi subagent work item: ${input.work_item_id}`);
 			}
 			const workStatus = String(workItem.status || "");
-			if (!["planned", "active", "blocked", "failed"].includes(workStatus)) {
+			const resumable =
+				workStatus === "active" &&
+				typeof workItem.agent_id === "string" &&
+				typeof workItem.attempt_id === "string" &&
+				typeof workItem.generation === "number" &&
+				typeof workItem.result_digest === "string";
+			if (!resumable && !["planned", "launching", "blocked", "failed"].includes(workStatus)) {
 				throw new Error(`Pi work item ${input.work_item_id} cannot run while ${workStatus}`);
 			}
-			const event = workStatus === "active" ? "message" : "dispatch";
-			const sessionId = `${input.goal_plus_id}_${input.work_item_id}_${Date.now()}`.replace(
-				/[^A-Za-z0-9._-]/g,
-				"_",
-			);
-			const dispatchResult = await runJsonCli(pi, commandCtx, "goal_plus_record_work_event", {
-				goal_plus_id: input.goal_plus_id,
-				work_item_id: input.work_item_id,
-				event,
-				summary: event === "dispatch" ? "Pi host dispatched work item." : "Pi host resumed work item.",
-				host: "pi",
-				task_name: input.work_item_id,
-				agent_id: sessionId,
-			});
-			if (isRecord(dispatchResult.details) && dispatchResult.details.ok === false) {
-				throw new Error(String(dispatchResult.details.error || "Pi work item dispatch was rejected"));
+			let sessionId: string;
+			let attemptId: unknown;
+			let generation: unknown;
+			if (resumable) {
+				sessionId = String(workItem.agent_id);
+				attemptId = workItem.attempt_id;
+				generation = workItem.generation;
+				const resumed = await runJsonCli(pi, commandCtx, "goal_plus_record_work_event", {
+					goal_plus_id: input.goal_plus_id,
+					work_item_id: input.work_item_id,
+					event: "message",
+					summary: "Pi host resumed the bound worker session for rework.",
+					host: "pi",
+					task_name: input.work_item_id,
+					agent_id: sessionId,
+					attempt_id: attemptId,
+					generation,
+				});
+				if (isRecord(resumed.details) && resumed.details.ok === false) {
+					throw new Error(String(resumed.details.error || "Pi work item resume was rejected"));
+				}
+			} else {
+				sessionId = `${input.goal_plus_id}_${input.work_item_id}_${Date.now()}`.replace(
+					/[^A-Za-z0-9._-]/g,
+					"_",
+				);
+				const dispatchResult = await runJsonCli(pi, commandCtx, "goal_plus_record_work_event", {
+					goal_plus_id: input.goal_plus_id,
+					work_item_id: input.work_item_id,
+					event: "dispatch",
+					summary: "Pi host claimed a work item launch attempt.",
+					host: "pi",
+					task_name: input.work_item_id,
+				});
+				if (isRecord(dispatchResult.details) && dispatchResult.details.ok === false) {
+					throw new Error(String(dispatchResult.details.error || "Pi work item dispatch was rejected"));
+				}
+				const dispatched = statusFrom(dispatchResult.details);
+				const dispatchedItem = dispatched?.work_items?.find(
+					(item) => isRecord(item) && item.work_item_id === input.work_item_id,
+				);
+				attemptId = isRecord(dispatchedItem) ? dispatchedItem.attempt_id : undefined;
+				generation = isRecord(dispatchedItem) ? dispatchedItem.generation : undefined;
+			}
+			if (typeof attemptId !== "string" || typeof generation !== "number") {
+				throw new Error(`Pi work item ${input.work_item_id} did not return an attempt identity`);
 			}
 			const scope = Array.isArray(workItem.scope) ? workItem.scope.map(String).join(", ") : "current workspace";
 			const acceptance = Array.isArray(workItem.acceptance)
@@ -1522,6 +1562,16 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 					max_runtime_seconds: input.max_runtime_seconds ?? 600,
 					soft_closeout_seconds: 30,
 				},
+				goal_plus_work_item: resumable
+					? undefined
+					: {
+						goal_plus_id: input.goal_plus_id,
+						work_item_id: input.work_item_id,
+						attempt_id: attemptId,
+						generation,
+						host: "pi",
+						task_name: input.work_item_id,
+					},
 			};
 			const invocation = projectModuleInvocation(commandCtx, "goal-plus-pi-worker", "goal_plus.pi_worker");
 			const result = await pi.exec(invocation.command, [
@@ -1538,6 +1588,8 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 					summary: "Pi subagent process failed before returning a result.",
 					host: "pi",
 					agent_id: sessionId,
+					attempt_id: attemptId,
+					generation,
 				});
 				return commandFailure("pi_goal_plus_run_work_item", invocation, result);
 			}
@@ -1562,6 +1614,8 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 				host: "pi",
 				task_name: input.work_item_id,
 				agent_id: sessionId,
+				attempt_id: attemptId,
+				generation,
 				transcript_path: typeof metadata.session_file === "string" ? metadata.session_file : undefined,
 				metadata: {
 					requested_reasoning_effort: "xhigh",

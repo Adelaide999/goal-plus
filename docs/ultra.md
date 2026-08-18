@@ -21,10 +21,20 @@ After triage, call `goal_plus_upsert_work_items`. Routes mean:
 | `subagent` | bounded independent work dispatched by the current host |
 | `search` | verifier-guided exploration through existing Search Mode |
 
-The transition sequence is `planned -> active -> result_ready -> accepted`.
-`rework` returns `result_ready`, `blocked`, or `failed` work to `active`.
+The subagent transition sequence is
+`planned -> launching(attempt, generation, TTL) -> active(bound handle) -> result_ready -> accepted`.
+`rework` resumes a bound `result_ready` attempt; unbound blocked or failed work
+returns to `planned` for a fresh attempt.
 Dependencies must be accepted before dispatch. Required work that is not
 accepted blocks final review and `complete`.
+
+`dispatch` creates the attempt identity; it never binds a worker handle. The
+host records `bind` only after native launch succeeds and includes the current
+attempt and generation on worker messages, failures, and results. A host may
+re-dispatch an expired `launching` item to reconcile a launch crash. Late
+terminal output from an older generation is retained as `stale_result`
+evidence but cannot mutate the current item. Repeating an identical result for
+the current attempt is idempotent; a conflicting duplicate is rejected.
 
 Use Search only when a work item has a numeric metric, deterministic verifier,
 isolated edit surface, multiple worthwhile hypotheses, and sufficient budget.
