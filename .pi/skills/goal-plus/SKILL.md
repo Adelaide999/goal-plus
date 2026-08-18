@@ -40,9 +40,11 @@ lease、外层剩余时间和收尾预留来确定探索时间，并使用可续
 `route="subagent"`。Goal Mode 下不要创建 SearchSpec。
 
 Pi 普通 subagent 通过 `pi_goal_plus_run_work_item` 在隔离的 Pi RPC 子进程运行；该工具会
-对 child 请求 Pi `xhigh`、等待返回并记录实际档位以及 `result` 或 `failed`。同一模型轮次可
-并发调用多个无依赖工作项。主 Agent 必须检查返回证据并记录 `accepted` 或 `rework`。runtime 不启动或监管
-进程；生命周期属于 Pi extension。不要保存私有推理或完整 transcript。
+创建 launch attempt，在 RPC 进程启动后绑定实际 session，并用同一 generation 提交 `result`
+或 `failed`。它不会为仍 active 的工作项另建 session；过期 launching attempt 才能被下一
+generation 接管。该工具对 child 请求 Pi `xhigh`、等待返回并记录实际档位。同一模型轮次可
+并发调用多个无依赖工作项。主 Agent 必须检查返回证据并记录 `accepted` 或 `rework`。runtime
+不启动或监管进程；生命周期属于 Pi extension。不要保存私有推理或完整 transcript。
 
 如果原始目标明确要求 verifier 引导的 Search Mode，并提供可度量的 verifier 或 metric，
 将其分类为优化/Search；不要仅因请求的 run 较小就将其降级为普通 Goal Mode。

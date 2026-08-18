@@ -416,9 +416,13 @@ def create_mcp(
         search_run_id: str | None = None,
         evidence: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
+        attempt_id: str | None = None,
+        generation: int | None = None,
+        launch_ttl_seconds: Annotated[int, Field(ge=1, le=3600)] = 120,
     ) -> dict[str, Any]:
-        """记录主 Agent 与普通 subagent/Search 的编排摘要和状态迁移。
+        """记录主 Agent 与普通 subagent/Search 的 fenced 编排状态迁移。
 
+        Subagent dispatch 创建 attempt/generation，原生启动后再 bind handle。
         仅保存任务摘要、host handle 和证据引用，不保存私有推理或完整对话正文。
         """
         return goal_tools.goal_plus_record_work_event(
@@ -426,13 +430,16 @@ def create_mcp(
             work_item_id,
             event,
             summary,
-            host,
-            task_name,
-            agent_id,
-            transcript_path,
-            search_run_id,
-            evidence,
-            metadata,
+            host=host,
+            task_name=task_name,
+            agent_id=agent_id,
+            transcript_path=transcript_path,
+            search_run_id=search_run_id,
+            evidence=evidence,
+            metadata=metadata,
+            attempt_id=attempt_id,
+            generation=generation,
+            launch_ttl_seconds=launch_ttl_seconds,
         )
 
     @mcp.tool()

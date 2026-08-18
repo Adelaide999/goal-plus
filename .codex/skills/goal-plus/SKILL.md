@@ -125,11 +125,16 @@ Codex hook 把本次执行绑定到 host-neutral `goal-plus-ultra-v1`，但已�
 effort 不能由 hook 修改；因此需要由 Codex host 在首轮开始前提供真实 max effort，
 不能把 prompt 请求当作已生效证据。
 
-对普通 subagent，先记录 `dispatch`，再调用 Codex `spawn_agent`。任务包必须包含 objective、
-scope、依赖和 acceptance，并使用 `fork_turns="none"`。实际 `spawn_agent`、`wait_agent`、
-`followup_task` 和 `interrupt_agent` 仍归 Codex host 管理；Goal Plus runtime 只维护工作项
-状态。subagent 返回后记录 `result`，主 Agent 验证其 diff 与测试后记录 `accepted`；需要修正时
-记录 `rework` 并向原 worker 发送具体证据。不要记录私有推理或完整 transcript。
+对普通 subagent，先记录 `dispatch` 并保存返回工作项的 `attempt_id`、`generation`，再调用
+Codex `spawn_agent`。任务包必须包含 objective、scope、依赖和 acceptance，并使用
+`fork_turns="none"`。spawn 成功后立即用原 attempt、generation 和实际 handle 记录 `bind`；
+只有 bound attempt 才能记录 `message`、`result` 或 `failed`。恢复时不要重复启动仍在 TTL 内的
+`launching` attempt；TTL 过期后再次 `dispatch` 会创建下一 generation。所有 worker 事件都传回
+attempt、generation，迟到的旧结果只会记录为 `stale_result`，不会覆盖当前 worker。实际
+`spawn_agent`、`wait_agent`、`followup_task` 和 `interrupt_agent` 仍归 Codex host 管理；Goal Plus
+runtime 只维护工作项状态。subagent 返回后记录 `result`，主 Agent 验证其 diff 与测试后记录
+`accepted`；需要修正时记录 `rework` 并向原 worker 发送具体证据。不要记录私有推理或完整
+transcript。
 
 只有工作项同时具备可量化 metric、确定性 verifier、隔离编辑面、多个有价值假设和足够预算时，
 才使用 `route="search"`。创建并链接 run 后记录 `search_routed`；普通检索、代码定位或单一路径

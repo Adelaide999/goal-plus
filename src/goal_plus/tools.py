@@ -346,6 +346,9 @@ class GoalPlusTools:
         search_run_id: str | None = None,
         evidence: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
+        attempt_id: str | None = None,
+        generation: int | None = None,
+        launch_ttl_seconds: int = 120,
     ) -> dict[str, Any]:
         return self.runtime.record_work_event(
             goal_plus_id,
@@ -359,6 +362,9 @@ class GoalPlusTools:
             search_run_id=search_run_id,
             evidence=evidence,
             metadata=metadata,
+            attempt_id=attempt_id,
+            generation=generation,
+            launch_ttl_seconds=launch_ttl_seconds,
         ).model_dump(mode="json")
 
     def goal_plus_save_spec_draft(

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import calendar
-from functools import wraps
+import hashlib
 import json
 import re
 import time
+from functools import wraps
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -36,8 +37,9 @@ from goal_plus.runtime import exclusive_file_lock
 
 TERMINAL_STATUSES: set[GoalPlusStatus] = {"blocked", "complete", "abandoned"}
 DEFAULT_EXECUTION_POLICY = GoalPlusExecutionPolicy().model_dump(mode="json")
+DEFAULT_WORK_LAUNCH_TTL_SECONDS = 120
 WORK_EVENT_STATUS = {
-    "dispatch": "active",
+    "bind": "active",
     "result": "result_ready",
     "rework": "active",
     "accepted": "accepted",
@@ -48,14 +50,22 @@ WORK_EVENT_STATUS = {
 }
 
 WORK_EVENT_ALLOWED_STATUSES = {
-    "dispatch": {"planned", "blocked", "failed"},
+    "dispatch": {"planned", "launching", "blocked", "failed"},
+    "bind": {"launching"},
     "message": {"active"},
     "result": {"active"},
     "rework": {"result_ready", "blocked", "failed"},
     "accepted": {"result_ready"},
-    "blocked": {"planned", "active"},
-    "failed": {"planned", "active"},
-    "cancelled": {"planned", "active", "result_ready", "blocked", "failed"},
+    "blocked": {"planned", "launching", "active"},
+    "failed": {"launching", "active"},
+    "cancelled": {
+        "planned",
+        "launching",
+        "active",
+        "result_ready",
+        "blocked",
+        "failed",
+    },
     "search_routed": {"planned", "blocked", "failed"},
 }
 EXPLORATION_MODES = {"autonomous", "probe"}
@@ -127,6 +137,29 @@ def serialized_goal_mutation(method):
 
 def utc_timestamp() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _work_result_digest(
+    summary: str,
+    *,
+    agent_id: str | None,
+    transcript_path: str | None,
+    evidence: list[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> str:
+    payload = json.dumps(
+        {
+            "summary": summary,
+            "agent_id": agent_id,
+            "transcript_path": transcript_path,
+            "evidence": evidence,
+            "metadata": metadata,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def exploration_mode_from_raw_goal(raw_goal: str) -> str | None:
@@ -624,6 +657,9 @@ class FileGoalPlusRuntime:
         search_run_id: str | None = None,
         evidence: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
+        attempt_id: str | None = None,
+        generation: int | None = None,
+        launch_ttl_seconds: int = DEFAULT_WORK_LAUNCH_TTL_SECONDS,
     ) -> GoalPlusRecord:
         summary = summary.strip()
         if not summary:
@@ -632,6 +668,8 @@ class FileGoalPlusRuntime:
             raise ValueError("work event summary must not exceed 4000 characters")
         if event == "search_routed" and not search_run_id:
             raise ValueError("search_routed requires search_run_id")
+        if generation is not None and generation < 1:
+            raise ValueError("work attempt generation must be positive")
 
         record = self._load_record(goal_plus_id)
         if record.status != "active":
@@ -639,14 +677,12 @@ class FileGoalPlusRuntime:
         index, item = self._current_work_item(record, work_item_id)
         if event not in WORK_EVENT_ALLOWED_STATUSES:
             raise ValueError(f"unknown work event: {event}")
-        if item.status not in WORK_EVENT_ALLOWED_STATUSES[event]:
-            raise RuntimeError(
-                f"cannot record {event} while work item {work_item_id} is {item.status}"
-            )
         if event == "search_routed" and item.route != "search":
             raise RuntimeError("search_routed requires a work item with route='search'")
         if event == "dispatch" and item.route == "subagent" and not host:
             raise ValueError("subagent dispatch requires a host id")
+        if event == "bind" and item.route != "subagent":
+            raise RuntimeError("bind requires a work item with route='subagent'")
         execution = record.policy.get("execution")
         bound_host = execution.get("host") if isinstance(execution, dict) else None
         bound_host_id = (
@@ -655,6 +691,76 @@ class FileGoalPlusRuntime:
         if host and bound_host_id and host != bound_host_id:
             raise RuntimeError(
                 f"work event host {host!r} does not match bound Ultra host {bound_host_id!r}"
+            )
+
+        supplied_evidence = evidence or []
+        supplied_metadata = metadata or {}
+        fenced_event = item.route == "subagent" and event in {
+            "bind",
+            "message",
+            "result",
+            "failed",
+        }
+        if fenced_event:
+            if not attempt_id or generation is None:
+                raise ValueError(
+                    f"subagent {event} requires attempt_id and generation"
+                )
+            if attempt_id != item.attempt_id or generation != item.generation:
+                if event not in {"result", "failed"}:
+                    raise RuntimeError(
+                        f"work attempt mismatch for {work_item_id}: "
+                        f"expected {item.attempt_id}/{item.generation}"
+                    )
+                self._append_event(
+                    goal_plus_id,
+                    "execution_work_event",
+                    {
+                        "goal_revision": record.goal_revision,
+                        "work_item_id": work_item_id,
+                        "event": "stale_result",
+                        "submitted_event": event,
+                        "summary": summary,
+                        "host": host,
+                        "task_name": task_name,
+                        "agent_id": agent_id,
+                        "search_run_id": search_run_id,
+                        "attempt_id": attempt_id,
+                        "generation": generation,
+                        "current_attempt_id": item.attempt_id,
+                        "current_generation": item.generation,
+                        "evidence": supplied_evidence,
+                        "metadata": supplied_metadata,
+                    },
+                )
+                return record
+            if event == "bind" and not agent_id:
+                raise ValueError("subagent bind requires an agent_id")
+            if event != "bind" and agent_id and item.agent_id and agent_id != item.agent_id:
+                raise RuntimeError(
+                    f"work event agent {agent_id!r} does not match bound agent "
+                    f"{item.agent_id!r}"
+                )
+
+        result_digest: str | None = None
+        if event == "result":
+            result_digest = _work_result_digest(
+                summary,
+                agent_id=agent_id or item.agent_id,
+                transcript_path=transcript_path or item.transcript_path,
+                evidence=supplied_evidence,
+                metadata=supplied_metadata,
+            )
+            if item.status in {"result_ready", "accepted"}:
+                if item.result_digest == result_digest:
+                    return record
+                raise RuntimeError(
+                    f"conflicting result for work attempt {item.attempt_id}/{item.generation}"
+                )
+
+        if item.status not in WORK_EVENT_ALLOWED_STATUSES[event]:
+            raise RuntimeError(
+                f"cannot record {event} while work item {work_item_id} is {item.status}"
             )
         if event in {"dispatch", "search_routed"}:
             unresolved_dependencies = [
@@ -672,21 +778,74 @@ class FileGoalPlusRuntime:
         update: dict[str, Any] = {
             "updated_at": now,
             "result_summary": summary if event in {"result", "accepted"} else item.result_summary,
-            "evidence": [*item.evidence, *(evidence or [])],
-            "metadata": {**item.metadata, **(metadata or {})},
+            "evidence": [*item.evidence, *supplied_evidence],
+            "metadata": {**item.metadata, **supplied_metadata},
         }
-        status = WORK_EVENT_STATUS.get(event)
-        if status is not None:
-            update["status"] = status
+        if event == "dispatch" and item.route == "subagent":
+            if attempt_id is not None or generation is not None:
+                raise ValueError("subagent dispatch creates its own attempt identity")
+            if agent_id is not None:
+                raise ValueError("subagent dispatch must bind agent_id after host launch")
+            if not 1 <= launch_ttl_seconds <= 3600:
+                raise ValueError("launch_ttl_seconds must be between 1 and 3600")
+            if item.status == "launching" and item.launch_deadline:
+                deadline = calendar.timegm(
+                    time.strptime(item.launch_deadline, "%Y-%m-%dT%H:%M:%SZ")
+                )
+                if time.time() < deadline:
+                    raise RuntimeError(
+                        f"work attempt {item.attempt_id}/{item.generation} is still launching"
+                    )
+            attempt_id = f"attempt_{uuid4().hex}"
+            generation = item.generation + 1
+            update.update(
+                {
+                    "status": "launching",
+                    "attempt_id": attempt_id,
+                    "generation": generation,
+                    "launch_deadline": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ",
+                        time.gmtime(time.time() + launch_ttl_seconds),
+                    ),
+                    "bound_at": None,
+                    "agent_id": None,
+                    "transcript_path": None,
+                    "result_summary": None,
+                    "result_digest": None,
+                }
+            )
+        elif event == "dispatch":
+            update["status"] = "active"
+        else:
+            status = WORK_EVENT_STATUS.get(event)
+            if status is not None:
+                update["status"] = status
+        if event == "rework" and item.route == "subagent" and item.status != "result_ready":
+            update.update(
+                {
+                    "status": "planned",
+                    "agent_id": None,
+                    "bound_at": None,
+                    "launch_deadline": None,
+                    "result_digest": None,
+                }
+            )
+        if event == "bind":
+            update.update({"agent_id": agent_id, "bound_at": now})
+        if event == "message" and item.route == "subagent":
+            update["result_digest"] = None
+        if result_digest is not None:
+            update["result_digest"] = result_digest
         for key, value in {
             "host": host,
             "task_name": task_name,
-            "agent_id": agent_id,
             "transcript_path": transcript_path,
             "search_run_id": search_run_id,
         }.items():
             if value is not None:
                 update[key] = value
+        if item.route != "subagent" and agent_id is not None:
+            update["agent_id"] = agent_id
 
         all_items = list(record.work_items)
         all_items[index] = item.model_copy(update=update)
@@ -720,8 +879,10 @@ class FileGoalPlusRuntime:
                 "task_name": task_name,
                 "agent_id": agent_id,
                 "search_run_id": search_run_id,
-                "evidence": evidence or [],
-                "metadata": metadata or {},
+                "attempt_id": attempt_id,
+                "generation": generation,
+                "evidence": supplied_evidence,
+                "metadata": supplied_metadata,
             },
         )
         return updated

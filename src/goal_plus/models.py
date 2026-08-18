@@ -626,6 +626,7 @@ GoalPlusSessionState = Literal["attached", "stale", "detached"]
 GoalPlusWorkRoute = Literal["main", "subagent", "search"]
 GoalPlusWorkStatus = Literal[
     "planned",
+    "launching",
     "active",
     "result_ready",
     "accepted",
@@ -636,6 +637,7 @@ GoalPlusWorkStatus = Literal[
 ]
 GoalPlusWorkEventKind = Literal[
     "dispatch",
+    "bind",
     "message",
     "result",
     "rework",
@@ -786,12 +788,22 @@ class GoalPlusWorkItemInput(SearchModel):
 class GoalPlusWorkItem(GoalPlusWorkItemInput):
     goal_revision: int = Field(ge=1)
     status: GoalPlusWorkStatus = "planned"
+    attempt_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=120,
+        pattern=r"^[A-Za-z0-9._-]+$",
+    )
+    generation: int = Field(default=0, ge=0)
+    launch_deadline: str | None = None
+    bound_at: str | None = None
     host: str | None = Field(default=None, min_length=1, max_length=120)
     task_name: str | None = None
     agent_id: str | None = None
     transcript_path: str | None = None
     search_run_id: str | None = None
     result_summary: str | None = None
+    result_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     evidence: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str
