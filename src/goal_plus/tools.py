@@ -262,12 +262,14 @@ class SearchTools:
         goal_plus_id: str | None = None,
         run_id: str | None = None,
         stale_after_seconds: int = 600,
+        feature_plugins: list[str] | None = None,
     ) -> dict[str, Any]:
         return goal_plus_monitor_snapshot(
             root_dir=self.runtime.root_dir,
             goal_plus_id=goal_plus_id,
             run_id=run_id,
             stale_after_seconds=stale_after_seconds,
+            feature_plugins=feature_plugins,
         )
 
 

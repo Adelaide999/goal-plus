@@ -90,6 +90,8 @@ Host changes require proportional evidence:
   the matching real-host ST;
 - hook/extension or `/goal-plus` lifecycle changes: host asset tests plus a
   native lifecycle ST;
+- monitor feature projections: focused plugin tests plus the deterministic
+  host-comparison example and terminal renderer test;
 - planner or round changes: a multi-candidate/multi-round scenario;
 - verifier/workspace changes: runtime integration tests that restore and
   re-verify exact candidate commits.

@@ -184,6 +184,12 @@ the remaining outer/worker time is below observed verifier-submission time.
 It never stops the worker. Evidence is visible through
 `goal_plus_monitor_snapshot`.
 
+For ordinary Ultra work, the optional `orchestration` monitor feature reads
+namespaced work-event metadata and preserves Codex operations such as
+`spawn_agent`, `wait_agent`, and `followup_task`. It is a read-only projection;
+Codex still owns every worker thread and lifecycle action. See
+[Monitor Feature Plugins](feature-plugins.md).
+
 For one worker, call `search_get_agent_observability(agent_session_id)`. Codex
 uses the `SubagentStop.agent_transcript_path` when present and otherwise
 discovers the native `${CODEX_HOME:-~/.codex}/sessions/...` JSONL from the

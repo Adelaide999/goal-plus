@@ -746,6 +746,12 @@ def _bind_goal_plus_work_item(
         agent_id=session_id,
         attempt_id=str(binding["attempt_id"]),
         generation=int(binding["generation"]),
+        metadata={
+            "orchestration_monitor": {
+                "native_operation": "goal-plus-pi-worker",
+                "direction": "subagent_to_main",
+            }
+        },
     )
 
 

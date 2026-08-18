@@ -257,6 +257,7 @@ def test_goal_plus_monitor_snapshot_exposes_read_only_schema(tmp_path: Path) -> 
     assert "goal_plus_id" in schema["properties"]
     assert "run_id" in schema["properties"]
     assert "stale_after_seconds" in schema["properties"]
+    assert "feature_plugins" in schema["properties"]
 
 
 def test_agent_observability_exposes_read_only_schema(tmp_path: Path) -> None:

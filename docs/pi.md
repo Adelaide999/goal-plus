@@ -216,6 +216,12 @@ goal-plus-pi-tool goal_plus_monitor_snapshot \
 starts, waits for, or stops a worker. The complete concise tool index is in
 [API](api.md).
 
+For ordinary Ultra work, Pi's wrapper records
+`pi_goal_plus_run_work_item`/`goal-plus-pi-worker` under namespaced event
+metadata. The optional `orchestration` feature projects those events into the
+same task/result/Main-decision contract used by Codex without changing Pi RPC
+process ownership. See [Monitor Feature Plugins](feature-plugins.md).
+
 Use `search_get_agent_observability(agent_session_id)` for the same normalized
 per-worker schema used by Codex. Pi maps the existing `pi_metrics` model,
 thinking level, duration, usage/cost, context, and log/session paths into that
