@@ -99,7 +99,9 @@ Codex 可能显示带客户端特定前缀的 MCP 工具；按最后的逻辑工
 13. 执行原始目标审计。如果还需要其他有 verifier 支持的 Search，使用相同
     `goal_plus_id` 冻结/创建新 run，并重复步骤 9-12。每个不同的 `run_id`
     都作为另一项 Search 任务追加；不要为新的冻结 spec 复用旧 `run_id`。
-14. 每个工作项结果由主 Agent 检查后调用 `goal_plus_record_work_event` 记录 `accepted`
+14. `route="main"` 工作项必须依次记录 `dispatch`、`result`、`accepted`，对应
+    `planned -> active -> result_ready -> accepted`；不要从 `planned` 直接记录结果或验收。
+    每个工作项结果由主 Agent 检查后调用 `goal_plus_record_work_event` 记录 `accepted`
     或 `rework`。最后执行一次原始目标审计。对于普通 Goal Plus 记录，只有当前目标已满足时
     才调用
     `goal_plus_set_status(status="complete", evidence=[...])`。当
