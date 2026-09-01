@@ -65,6 +65,92 @@ def test_pi_worker_binds_claimed_work_item_after_host_launch(tmp_path: Path) -> 
     assert bound.bound_at is not None
 
 
+def test_pi_worker_does_not_bind_before_rpc_handshake(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    extension = tmp_path / "goal-plus.ts"
+    extension.write_text("// fake extension\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime = FileGoalPlusRuntime(tmp_path / ".gp")
+    goal = runtime.create_goal(
+        "Run a Pi subagent",
+        policy={
+            "execution": {
+                "host": {
+                    "host_id": "pi",
+                    "native_reasoning_effort": "xhigh",
+                    "enforcement": "host",
+                    "operations": ["spawn", "wait", "observe"],
+                }
+            }
+        },
+    )
+    claimed = runtime.record_work_event(
+        goal.goal_plus_id,
+        "worker",
+        "dispatch",
+        "Run the isolated task.",
+        host="pi",
+    ).work_items[0]
+
+    class FakeProc:
+        pid = 4321
+        returncode = None
+
+    class FakeRpcClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def start(self) -> None:
+            return None
+
+        def command(self, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+            if payload["type"] == "get_state":
+                raise pi_worker.PiRpcError("Pi RPC startup failed")
+            if payload["type"] == "get_entries":
+                return {"data": {"entries": []}}
+            if payload["type"] == "get_session_stats":
+                return {"data": {}}
+            raise AssertionError(f"unexpected command {payload['type']}")
+
+    def fake_popen(*_args: Any, **_kwargs: Any) -> FakeProc:
+        return FakeProc()
+
+    def fake_kill_process_group(proc: FakeProc) -> None:
+        proc.returncode = 1
+
+    monkeypatch.setattr(pi_worker.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(pi_worker, "_RpcClient", FakeRpcClient)
+    monkeypatch.setattr(pi_worker, "_kill_process_group", fake_kill_process_group)
+
+    with pytest.raises(pi_worker.PiRpcError, match="startup failed"):
+        pi_worker.run_pi_rpc_worker(
+            {
+                "role": "ordinary",
+                "agent_session_id": "pi-session-1",
+                "session_id": "pi-session-1",
+                "root": str(runtime.root_dir),
+                "cwd": str(workspace),
+                "prompt": "Do the isolated task.",
+                "budget_control": {"max_runtime_seconds": 30},
+                "goal_plus_work_item": {
+                    "goal_plus_id": goal.goal_plus_id,
+                    "work_item_id": "worker",
+                    "attempt_id": claimed.attempt_id,
+                    "generation": claimed.generation,
+                    "host": "pi",
+                },
+            },
+            extension_path=extension,
+        )
+
+    unbound = runtime.status(goal.goal_plus_id).work_items[0]
+    assert unbound.status == "launching"
+    assert unbound.agent_id is None
+
+
 def _assistant_usage(
     *,
     input_tokens: int,
