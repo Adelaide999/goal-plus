@@ -103,7 +103,7 @@ def test_monitor_script_renders_orchestration_feature_plugin(tmp_path: Path) -> 
     )
     assert example.returncode == 0, example.stderr
     comparison = json.loads(example.stdout)
-    assert comparison["task_packet_equal"] is True
+    assert comparison["assignment_equal"] is True
     assert comparison["semantic_flow_equal"] is True
 
     result = subprocess.run(
@@ -121,7 +121,7 @@ def test_monitor_script_renders_orchestration_feature_plugin(tmp_path: Path) -> 
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "orchestration: plugin=v2 host=codex" in result.stdout
+    assert "orchestration: plugin=v3 host=codex" in result.stdout
     assert "native=spawn_agent,wait_agent" in result.stdout
     assert "generation=1 launch=bound stale=0" in result.stdout
     assert "flow=assignment>worker_update>result>decision" in result.stdout

@@ -49,25 +49,12 @@ def run_host(root: Path, host_id: str) -> dict[str, Any]:
             "recommended_phase": "goal",
         },
     )
-    runtime.upsert_work_items(
-        goal.goal_plus_id,
-        [
-            {
-                "work_item_id": "edge_tests",
-                "title": "Cover parser boundaries",
-                "objective": "Add tests for signed and fractional durations.",
-                "route": "subagent",
-                "scope": ["tests/test_duration.py"],
-                "acceptance": ["Focused tests pass", "Production code stays unchanged"],
-            }
-        ],
-    )
     agent_id = f"{host_id}-worker-1"
     dispatched = runtime.record_work_event(
         goal.goal_plus_id,
         "edge_tests",
         "dispatch",
-        f"{host_id} dispatched the test task.",
+        "Add tests for signed and fractional durations.",
         host=host_id,
         task_name="edge_test_worker",
         metadata=orchestration_metadata(
@@ -134,12 +121,12 @@ def compare(output_dir: Path) -> dict[str, Any]:
     output_dir.mkdir(parents=True)
     codex = run_host(output_dir, "codex")
     pi = run_host(output_dir, "pi")
-    [codex_item] = codex["work_items"]
-    [pi_item] = pi["work_items"]
+    [codex_item] = codex["dispatches"]
+    [pi_item] = pi["dispatches"]
     result = {
         "example_kind": "deterministic_protocol_comparison",
         "live_model_execution": False,
-        "task_packet_equal": codex_item["task_packet"] == pi_item["task_packet"],
+        "assignment_equal": codex_item["assignment"] == pi_item["assignment"],
         "semantic_flow_equal": semantic_flow(codex) == semantic_flow(pi),
         "semantic_flow": semantic_flow(codex),
         "codex": {

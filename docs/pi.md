@@ -32,13 +32,13 @@ separate read-only Pi RPC reviewer.
 
 The command maps logical Main `thinking=max` to Pi's native `xhigh` request and
 records the level after Pi clamps it to the selected model. A resulting `off`
-level is rejected. Ordinary `route="subagent"` work runs through
-`pi_goal_plus_run_work_item`, which applies the same rule to an isolated Pi RPC
-child, binds its durable launch attempt after the RPC process starts, waits for
-it, and submits the result with the same attempt generation. It rejects an
-already-active item instead of creating a replacement session. Multiple
-independent tool calls can execute concurrently. Main still owns acceptance,
-rework, integration, and completion. See [Ultra Orchestration](ultra.md).
+level is rejected. Ordinary subagent work runs through
+`pi_goal_plus_run_work_item`, which accepts the task directly, creates its
+lightweight launch record, binds the Pi RPC session after startup, waits for it,
+and submits the result with the same attempt generation. Reusing an id after a
+result resumes the same session for rework. Multiple independent tool calls can
+execute concurrently. Main still owns result review, integration, and
+completion. See [Ultra Orchestration](ultra.md).
 
 Use `/goal-plus mode=autonomous <goal>` for substantial renewable candidate
 exploration (the default), or `/goal-plus mode=probe <goal>` for short

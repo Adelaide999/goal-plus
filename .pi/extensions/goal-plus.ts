@@ -57,21 +57,6 @@ const GoalPlusNextAction = Type.Object(
 	},
 	{ additionalProperties: false },
 );
-const GoalPlusWorkItem = Type.Object(
-	{
-		work_item_id: Type.String({ minLength: 1, maxLength: 120, pattern: "^[A-Za-z0-9._-]+$" }),
-		title: Type.String({ minLength: 1, maxLength: 240 }),
-		objective: Type.String({ minLength: 1, maxLength: 8000 }),
-		route: Type.Optional(
-			Type.Union([Type.Literal("main"), Type.Literal("subagent"), Type.Literal("search")]),
-		),
-		depends_on: Type.Optional(Type.Array(Type.String())),
-		scope: Type.Optional(Type.Array(Type.String())),
-		acceptance: Type.Optional(Type.Array(Type.String())),
-		required: Type.Optional(Type.Boolean()),
-	},
-	{ additionalProperties: false },
-);
 const GoalPlusWorkEvent = Type.Union([
 	Type.Literal("dispatch"),
 	Type.Literal("bind"),
@@ -79,10 +64,8 @@ const GoalPlusWorkEvent = Type.Union([
 	Type.Literal("result"),
 	Type.Literal("rework"),
 	Type.Literal("accepted"),
-	Type.Literal("blocked"),
 	Type.Literal("failed"),
 	Type.Literal("cancelled"),
-	Type.Literal("search_routed"),
 ]);
 const PositiveInteger = Type.Integer({ exclusiveMinimum: 0 });
 const NullableString = Type.Union([Type.String(), Type.Null()]);
@@ -322,13 +305,6 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 		},
 		{ additionalProperties: false },
 	),
-	goal_plus_upsert_work_items: Type.Object(
-		{
-			goal_plus_id: Type.String(),
-			work_items: Type.Array(GoalPlusWorkItem, { minItems: 1 }),
-		},
-		{ additionalProperties: false },
-	),
 	goal_plus_record_work_event: Type.Object(
 		{
 			goal_plus_id: Type.String(),
@@ -342,7 +318,6 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 			generation: Type.Optional(PositiveInteger),
 			launch_ttl_seconds: Type.Optional(Type.Integer({ minimum: 1, maximum: 3600 })),
 			transcript_path: Type.Optional(Type.String()),
-			search_run_id: Type.Optional(Type.String()),
 			evidence: Type.Optional(Type.Array(LooseObject)),
 			metadata: Type.Optional(LooseObject),
 		},
@@ -641,16 +616,15 @@ const RuntimeToolSchemas: Record<string, TSchema> = {
 		{
 			goal_plus_id: Type.String(),
 			work_item_id: Type.String(),
+			task: Type.String({ minLength: 1, maxLength: 4000 }),
 			max_runtime_seconds: Type.Optional(Type.Integer({ minimum: 30, maximum: 3600 })),
 		},
 		{ additionalProperties: false },
 	),
 };
 const RuntimeToolDescriptions: Record<string, string> = {
-	goal_plus_upsert_work_items:
-		"创建或更新当前目标修订版的可审计工作项 DAG。main 保留关键路径，subagent 处理独立工作，search 只用于具备可度量 verifier 的并行探索。",
 	goal_plus_record_work_event:
-		"记录带 attempt/generation fencing 的 dispatch、bind、消息、结果、返工和主 Agent 验收。只保存编排事实与证据引用，不保存私有推理或完整对话正文。",
+		"按实际发生记录带 attempt/generation fencing 的 subagent 派发、绑定、消息、结果和主 Agent 决定；首次 dispatch 自动创建记录。",
 	goal_plus_save_spec_draft:
 		"保存发现的 SearchSpec draft。新的 Pi spec 使用 orchestration_mode=parallel_loops，以 max_parallel 作为初始 candidate/subagent 数。",
 	search_freeze_spec:
@@ -1463,13 +1437,14 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "pi_goal_plus_run_work_item",
 		label: "Pi Goal Plus Work Item",
-		description: "在隔离的 Pi RPC 子进程中执行一个已规划的普通 subagent 工作项。",
+		description: "在隔离的 Pi RPC 子进程中直接执行一个普通 subagent 任务。",
 		parameters: toolParameters("pi_goal_plus_run_work_item"),
 		executionMode: "concurrent",
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const input = params as {
 				goal_plus_id: string;
 				work_item_id: string;
+				task: string;
 				max_runtime_seconds?: number;
 			};
 			const commandCtx = commandContextFrom(ctx);
@@ -1480,36 +1455,23 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 			const workItem = status?.work_items?.find(
 				(item) => isRecord(item) && item.work_item_id === input.work_item_id,
 			);
-			if (!isRecord(workItem) || workItem.route !== "subagent") {
-				throw new Error(`Unknown Pi subagent work item: ${input.work_item_id}`);
-			}
-			const workStatus = String(workItem.status || "");
-			const resumable =
-				workStatus === "active" &&
+			const resumable = isRecord(workItem) && workItem.status === "result_ready" &&
 				typeof workItem.agent_id === "string" &&
 				typeof workItem.attempt_id === "string" &&
-				typeof workItem.generation === "number" &&
-				typeof workItem.result_digest === "string";
-			if (!resumable && !["planned", "launching", "blocked", "failed"].includes(workStatus)) {
-				throw new Error(`Pi work item ${input.work_item_id} cannot run while ${workStatus}`);
-			}
+				typeof workItem.generation === "number";
 			let sessionId: string;
 			let attemptId: unknown;
 			let generation: unknown;
-			if (resumable) {
+			if (resumable && isRecord(workItem)) {
 				sessionId = String(workItem.agent_id);
-				attemptId = workItem.attempt_id;
-				generation = workItem.generation;
 				const resumed = await runJsonCli(pi, commandCtx, "goal_plus_record_work_event", {
 					goal_plus_id: input.goal_plus_id,
 					work_item_id: input.work_item_id,
-					event: "message",
-					summary: "Pi host resumed the bound worker session for rework.",
+					event: "rework",
+					summary: input.task,
 					host: "pi",
 					task_name: input.work_item_id,
 					agent_id: sessionId,
-					attempt_id: attemptId,
-					generation,
 					metadata: {
 						orchestration_monitor: {
 							native_operation: "pi_goal_plus_run_work_item",
@@ -1520,6 +1482,12 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 				if (isRecord(resumed.details) && resumed.details.ok === false) {
 					throw new Error(String(resumed.details.error || "Pi work item resume was rejected"));
 				}
+				const resumedStatus = statusFrom(resumed.details);
+				const resumedItem = resumedStatus?.work_items?.find(
+					(item) => isRecord(item) && item.work_item_id === input.work_item_id,
+				);
+				attemptId = isRecord(resumedItem) ? resumedItem.attempt_id : undefined;
+				generation = isRecord(resumedItem) ? resumedItem.generation : undefined;
 			} else {
 				sessionId = `${input.goal_plus_id}_${input.work_item_id}_${Date.now()}`.replace(
 					/[^A-Za-z0-9._-]/g,
@@ -1529,7 +1497,7 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 					goal_plus_id: input.goal_plus_id,
 					work_item_id: input.work_item_id,
 					event: "dispatch",
-					summary: "Pi host claimed a work item launch attempt.",
+					summary: input.task,
 					host: "pi",
 					task_name: input.work_item_id,
 					metadata: {
@@ -1553,10 +1521,6 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 			if (typeof attemptId !== "string" || typeof generation !== "number") {
 				throw new Error(`Pi work item ${input.work_item_id} did not return an attempt identity`);
 			}
-			const scope = Array.isArray(workItem.scope) ? workItem.scope.map(String).join(", ") : "current workspace";
-			const acceptance = Array.isArray(workItem.acceptance)
-				? workItem.acceptance.map(String).join("\n- ")
-				: "Run focused verification and report concrete evidence.";
 			const launch = {
 				role: "ordinary",
 				root: runtimeRoot,
@@ -1566,10 +1530,7 @@ function registerPiWorkItemTool(pi: ExtensionAPI) {
 				thinking_level: "xhigh",
 				prompt: [
 					"You are an implementation subagent. Work only on the assigned item.",
-					`Title: ${String(workItem.title || input.work_item_id)}`,
-					`Objective: ${String(workItem.objective || "")}`,
-					`Scope: ${scope}`,
-					`Acceptance:\n- ${acceptance}`,
+					`Task: ${input.task}`,
 					"Do not coordinate other agents or use Goal Plus/Search tools. Return a concise result and verification evidence.",
 				].join("\n\n"),
 				budget_control: {
@@ -1763,7 +1724,6 @@ export default function (pi: ExtensionAPI) {
 		"goal_plus_monitor_snapshot",
 		"goal_plus_list_models",
 		"goal_plus_record_triage",
-		"goal_plus_upsert_work_items",
 		"goal_plus_record_work_event",
 		"goal_plus_save_spec_draft",
 		"goal_plus_link_search_run",

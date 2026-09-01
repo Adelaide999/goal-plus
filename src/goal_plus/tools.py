@@ -12,7 +12,6 @@ from goal_plus.models import (
     GoalPlusSpecDraftInput,
     GoalPlusTriage,
     GoalPlusWorkEventKind,
-    GoalPlusWorkItemInput,
     SearchSpec,
     ToolizationDecision,
     VerifierInvalidationReason,
@@ -325,16 +324,6 @@ class GoalPlusTools:
             GoalPlusTriage.model_validate(triage),
         ).model_dump(mode="json")
 
-    def goal_plus_upsert_work_items(
-        self,
-        goal_plus_id: str,
-        work_items: list[dict[str, Any] | GoalPlusWorkItemInput],
-    ) -> dict[str, Any]:
-        return self.runtime.upsert_work_items(
-            goal_plus_id,
-            work_items,
-        ).model_dump(mode="json")
-
     def goal_plus_record_work_event(
         self,
         goal_plus_id: str,
@@ -345,7 +334,6 @@ class GoalPlusTools:
         task_name: str | None = None,
         agent_id: str | None = None,
         transcript_path: str | None = None,
-        search_run_id: str | None = None,
         evidence: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
         attempt_id: str | None = None,
@@ -361,7 +349,6 @@ class GoalPlusTools:
             task_name=task_name,
             agent_id=agent_id,
             transcript_path=transcript_path,
-            search_run_id=search_run_id,
             evidence=evidence,
             metadata=metadata,
             attempt_id=attempt_id,

@@ -39,25 +39,12 @@ def _snapshot(
             "recommended_phase": "goal",
         },
     )
-    runtime.upsert_work_items(
-        goal.goal_plus_id,
-        [
-            {
-                "work_item_id": "edge_tests",
-                "title": "Cover parser boundaries",
-                "objective": "Add signed and fractional duration tests.",
-                "route": "subagent",
-                "scope": ["tests/test_duration.py"],
-                "acceptance": ["Focused tests pass"],
-            }
-        ],
-    )
     agent_id = f"{host_id}-worker-1"
     dispatched = runtime.record_work_event(
         goal.goal_plus_id,
         "edge_tests",
         "dispatch",
-        "Main dispatched the focused test task.",
+        "Add signed and fractional duration tests.",
         host=host_id,
         task_name="edge_test_worker",
         metadata=dispatch_metadata or orchestration_metadata(dispatch_operation),
@@ -117,9 +104,9 @@ def test_orchestration_plugin_normalizes_codex_and_pi(tmp_path: Path) -> None:
         result_operation="goal-plus-pi-worker",
     )["feature_plugins"]["orchestration"]
 
-    [codex_item] = codex["work_items"]
-    [pi_item] = pi["work_items"]
-    assert codex_item["task_packet"] == pi_item["task_packet"]
+    [codex_item] = codex["dispatches"]
+    [pi_item] = pi["dispatches"]
+    assert codex_item["assignment"] == pi_item["assignment"]
     assert _normalized(codex) == _normalized(pi) == [
         ("assignment", "main_to_subagent", "dispatch"),
         ("worker_update", "subagent_to_main", "bind"),
@@ -151,17 +138,6 @@ def test_orchestration_plugin_shows_launching_and_stale_generation(tmp_path: Pat
             "recommended_phase": "goal",
         },
     )
-    runtime.upsert_work_items(
-        goal.goal_plus_id,
-        [
-            {
-                "work_item_id": "worker",
-                "title": "Worker",
-                "objective": "Run the bounded task",
-                "route": "subagent",
-            }
-        ],
-    )
     first = runtime.record_work_event(
         goal.goal_plus_id,
         "worker",
@@ -172,7 +148,7 @@ def test_orchestration_plugin_shows_launching_and_stale_generation(tmp_path: Pat
     launching = goal_plus_monitor_snapshot(root, goal_plus_id=goal.goal_plus_id)[
         "feature_plugins"
     ]["orchestration"]
-    assert launching["work_items"][0]["attempt"]["launch_state"] == "launching"
+    assert launching["dispatches"][0]["attempt"]["launch_state"] == "launching"
 
     runtime.record_work_event(
         goal.goal_plus_id,
@@ -181,12 +157,6 @@ def test_orchestration_plugin_shows_launching_and_stale_generation(tmp_path: Pat
         "Host launch failed.",
         attempt_id=first.attempt_id,
         generation=first.generation,
-    )
-    runtime.record_work_event(
-        goal.goal_plus_id,
-        "worker",
-        "rework",
-        "Retry the failed launch.",
     )
     second = runtime.record_work_event(
         goal.goal_plus_id,
@@ -217,7 +187,7 @@ def test_orchestration_plugin_shows_launching_and_stale_generation(tmp_path: Pat
     payload = goal_plus_monitor_snapshot(root, goal_plus_id=goal.goal_plus_id)[
         "feature_plugins"
     ]["orchestration"]
-    [item] = payload["work_items"]
+    [item] = payload["dispatches"]
     assert item["attempt"]["generation"] == 2
     assert item["attempt"]["launch_state"] == "bound"
     assert item["attempt"]["stale_results"] == 1

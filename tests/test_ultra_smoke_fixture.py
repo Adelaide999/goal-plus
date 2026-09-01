@@ -52,7 +52,7 @@ class UltraSmokeFixtureTest(unittest.TestCase):
         self.assertEqual(goal["search_tasks_total"], 0)
         self.assertTrue(all(item["status"] == "accepted" for item in goal["work_items"]))
 
-    def test_dag_acceptance_and_pytest_evidence_precede_completion(self) -> None:
+    def test_result_review_and_pytest_evidence_precede_completion(self) -> None:
         events = self.evidence["event_sequence"]
 
         def index(work_item_id: str | None, event: str) -> int:
@@ -70,7 +70,6 @@ class UltraSmokeFixtureTest(unittest.TestCase):
 
         self.assertLess(index("edge_case_review", "dispatch"), edge_accepted)
         self.assertLess(index("parser_implementation", "dispatch"), parser_accepted)
-        self.assertLess(max(edge_accepted, parser_accepted), integration_dispatched)
         self.assertLess(integration_dispatched, integration_accepted)
         self.assertLess(integration_accepted, completed)
         self.assertEqual(events[integration_accepted]["pytest_passed"], 31)

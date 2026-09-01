@@ -27,7 +27,6 @@ _EVENT_SEMANTICS = {
     "stale_result": "stale_result",
     "accepted": "decision",
     "rework": "decision",
-    "blocked": "worker_update",
     "failed": "worker_update",
     "cancelled": "decision",
 }
@@ -101,20 +100,15 @@ class OrchestrationMonitorFeature:
         items = [
             item
             for item in context.goal.work_items
-            if item.goal_revision == context.goal.goal_revision and item.route == "subagent"
+            if item.goal_revision == context.goal.goal_revision
         ]
         by_id = {item.work_item_id: item for item in items}
         item_payloads = {
             item.work_item_id: {
                 "work_item_id": item.work_item_id,
                 "status": item.status,
-                "required": item.required,
-                "task_packet": {
-                    "title": item.title,
+                "assignment": {
                     "objective": item.objective,
-                    "scope": list(item.scope),
-                    "depends_on": list(item.depends_on),
-                    "acceptance": list(item.acceptance),
                 },
                 "worker": {
                     "host": item.host,
@@ -201,7 +195,7 @@ class OrchestrationMonitorFeature:
             )
         )
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "protocol": host.get("protocol"),
             "host": {
                 key: host[key]
@@ -214,13 +208,7 @@ class OrchestrationMonitorFeature:
                 if key in host
             },
             "semantic_contract": {
-                "task_packet_fields": [
-                    "title",
-                    "objective",
-                    "scope",
-                    "depends_on",
-                    "acceptance",
-                ],
+                "assignment_fields": ["objective"],
                 "event_flow": [
                     "assignment",
                     "worker_update",
@@ -228,10 +216,10 @@ class OrchestrationMonitorFeature:
                     "stale_result",
                     "decision",
                 ],
-                "acceptance_owner": "main",
+                "result_review_owner": "main",
             },
             "summary": {
-                "subagent_items_total": len(items),
+                "subagent_dispatches_total": len(items),
                 "subagent_statuses": dict(sorted(statuses.items())),
                 "interaction_events_total": len(interactions),
                 "interaction_event_counts": dict(sorted(semantics.items())),
@@ -240,6 +228,6 @@ class OrchestrationMonitorFeature:
                     item["attempt"]["stale_results"] for item in item_payloads.values()
                 ),
             },
-            "work_items": list(item_payloads.values()),
+            "dispatches": list(item_payloads.values()),
             "interactions": interactions,
         }

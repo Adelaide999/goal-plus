@@ -754,7 +754,7 @@ def render_orchestration(primary: dict[str, Any], *, verbose: bool) -> None:
     if not isinstance(payload, dict):
         return
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-    if not summary.get("subagent_items_total"):
+    if not summary.get("subagent_dispatches_total"):
         return
     host = payload.get("host") if isinstance(payload.get("host"), dict) else {}
     statuses = summary.get("subagent_statuses") or {}
@@ -762,17 +762,17 @@ def render_orchestration(primary: dict[str, Any], *, verbose: bool) -> None:
     print(
         f"  orchestration: plugin=v{payload.get('schema_version', '-')} "
         f"host={host.get('host_id') or '-'} "
-        f"subagents={summary.get('subagent_items_total', 0)} [{status_text}] "
+        f"subagents={summary.get('subagent_dispatches_total', 0)} [{status_text}] "
         f"events={summary.get('interaction_events_total', 0)}"
     )
-    for item in payload.get("work_items") or []:
+    for item in payload.get("dispatches") or []:
         if not isinstance(item, dict):
             continue
-        packet = item.get("task_packet") if isinstance(item.get("task_packet"), dict) else {}
+        assignment = item.get("assignment") if isinstance(item.get("assignment"), dict) else {}
         worker = item.get("worker") if isinstance(item.get("worker"), dict) else {}
         attempt = item.get("attempt") if isinstance(item.get("attempt"), dict) else {}
         events = [event for event in item.get("events") or [] if isinstance(event, dict)]
-        flow = ">".join(str(event.get("semantic_event") or "-") for event in events) or "planned"
+        flow = ">".join(str(event.get("semantic_event") or "-") for event in events) or "none"
         operations = list(
             dict.fromkeys(
                 str(event["native_operation"])
@@ -790,7 +790,7 @@ def render_orchestration(primary: dict[str, Any], *, verbose: bool) -> None:
         )
         if not verbose:
             continue
-        print(f"      objective: {short(packet.get('objective'), 170)}")
+        print(f"      objective: {short(assignment.get('objective'), 170)}")
         for event in events:
             print(
                 f"      [{event.get('sequence')}] {event.get('semantic_event')} "

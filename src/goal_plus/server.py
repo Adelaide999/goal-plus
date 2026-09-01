@@ -11,7 +11,6 @@ from goal_plus.models import (
     AgentHostKind,
     GoalPlusSpecDraftInput,
     GoalPlusWorkEventKind,
-    GoalPlusWorkItemInput,
     SearchSpec,
     ToolizationDecision,
 )
@@ -398,14 +397,6 @@ def create_mcp(
         return goal_tools.goal_plus_record_triage(goal_plus_id, triage)
 
     @mcp.tool()
-    def goal_plus_upsert_work_items(
-        goal_plus_id: str,
-        work_items: list[GoalPlusWorkItemInput],
-    ) -> dict[str, Any]:
-        """创建或更新当前目标修订版的编排工作项 DAG。"""
-        return goal_tools.goal_plus_upsert_work_items(goal_plus_id, work_items)
-
-    @mcp.tool()
     def goal_plus_record_work_event(
         goal_plus_id: str,
         work_item_id: str,
@@ -415,16 +406,15 @@ def create_mcp(
         task_name: str | None = None,
         agent_id: str | None = None,
         transcript_path: str | None = None,
-        search_run_id: str | None = None,
         evidence: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
         attempt_id: str | None = None,
         generation: int | None = None,
         launch_ttl_seconds: Annotated[int, Field(ge=1, le=3600)] = 120,
     ) -> dict[str, Any]:
-        """记录主 Agent 与普通 subagent/Search 的 fenced 编排状态迁移。
+        """记录主 Agent 与普通 subagent 的 fenced 派发生命周期。
 
-        Subagent dispatch 创建 attempt/generation，原生启动后再 bind handle。
+        首次 dispatch 会创建轻量记录和 attempt/generation，原生启动后再 bind handle。
         仅保存任务摘要、host handle 和证据引用，不保存私有推理或完整对话正文。
         """
         return goal_tools.goal_plus_record_work_event(
@@ -436,7 +426,6 @@ def create_mcp(
             task_name=task_name,
             agent_id=agent_id,
             transcript_path=transcript_path,
-            search_run_id=search_run_id,
             evidence=evidence,
             metadata=metadata,
             attempt_id=attempt_id,
