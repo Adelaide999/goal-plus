@@ -37,17 +37,6 @@ def test_pi_worker_binds_claimed_work_item_after_host_launch(tmp_path: Path) -> 
             "recommended_phase": "goal",
         },
     )
-    runtime.upsert_work_items(
-        goal.goal_plus_id,
-        [
-            {
-                "work_item_id": "worker",
-                "title": "Worker",
-                "objective": "Run the bounded task",
-                "route": "subagent",
-            }
-        ],
-    )
     claimed = runtime.record_work_event(
         goal.goal_plus_id,
         "worker",

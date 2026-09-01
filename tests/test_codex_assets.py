@@ -53,7 +53,7 @@ def test_codex_goal_plus_skill_records_modes_and_mcp_tools() -> None:
         "goal_plus_submit_final_check",
         "spawn_agent",
         'fork_turns="none"',
-        "`work_item_id`、`title`、`objective`",
+        "首次使用该 `work_item_id`",
         "绝不能代表审查员提交结论",
         "软 rubric 或预设评价维度",
         "开放式补充评价发生在每次 Evidence 结算之后",

@@ -6,74 +6,60 @@
 main reasoning=max + proactive delegation + automatic Search routing + until terminal
 ```
 
-The runtime owns the work DAG, evidence-backed transitions, Search links, and
-completion gate. The host owns process/thread launch, wait, messaging,
-interruption, and native logs. Core code never calls Codex, Pi, or a model
-provider directly.
+The Main agent owns task decomposition, delegation, waiting, follow-up, retry,
+Search decisions, result review, and final integration. The host owns native
+worker launch, wait, messaging, interruption, and logs. Goal Plus only records
+the subagent operations that actually happen and protects their attempt
+identity; it does not require an execution plan or work DAG.
 
-## Work Items
+## Subagent Records
 
-After triage, call `goal_plus_upsert_work_items`. Routes mean:
+The Main agent records `dispatch` immediately before using the host's native
+spawn operation. The first dispatch for a `work_item_id` creates a lightweight
+record from its summary:
 
-| Route | Owner |
-|---|---|
-| `main` | shared state, architecture, integration, final verification |
-| `subagent` | bounded independent work dispatched by the current host |
-| `search` | verifier-guided exploration through existing Search Mode |
+```text
+dispatch -> launching -> bind -> active -> result -> result_ready
+```
 
-The subagent transition sequence is
-`planned -> launching(attempt, generation, TTL) -> active(bound handle) -> result_ready -> accepted`.
-`rework` resumes a bound `result_ready` attempt; unbound blocked or failed work
-returns to `planned` for a fresh attempt.
-Dependencies must be accepted before dispatch. Required work that is not
-accepted blocks final review and `complete`.
+`accepted` records that Main checked and used a result. `rework` records a
+follow-up on the same bound worker and creates a new attempt/generation.
+Neither decision is a global execution plan or a prerequisite for unrelated
+work. A new dispatch may reuse an id after a terminal result, failure, or
+cancellation.
 
-`dispatch` creates the attempt identity; it never binds a worker handle. The
-host records `bind` only after native launch succeeds and includes the current
-attempt and generation on worker messages, failures, and results. A host may
-re-dispatch an expired `launching` item to reconcile a launch crash. Late
-terminal output from an older generation is retained as `stale_result`
-evidence but cannot mutate the current item. Repeating an identical result for
-the current attempt is idempotent; a conflicting duplicate is rejected.
+`dispatch` creates the attempt identity and launch TTL; it never claims that a
+worker started. Record `bind` only after native launch succeeds. `bind`,
+`message`, `result`, and `failed` include the current `attempt_id` and
+`generation`. An expired `launching` record may be dispatched again. Late
+terminal output from an older generation is retained as `stale_result` evidence
+and cannot mutate the current attempt.
 
-Use Search only when a work item has a numeric metric, deterministic verifier,
-isolated edit surface, multiple worthwhile hypotheses, and sufficient budget.
-After creating and linking the run, record `search_routed`; a selected Search
-result still requires main-agent acceptance.
+Goal Plus allows Main-only tasks with no subagent records. Final check and
+`complete` are blocked only while a current dispatch is `launching` or `active`;
+Main remains responsible for reviewing returned work and running whole-task
+verification.
+
+## Search Routing
+
+Search keeps its existing SearchSpec, run, candidate, verifier, and promotion
+state. It is not represented as a subagent record. Main enters Search only when
+the task has a numeric metric, deterministic verifier, isolated edit surface,
+multiple worthwhile hypotheses, and sufficient budget.
 
 ## Host Contract
 
 An Ultra host binding uses protocol `goal-plus-ultra-v1`. `spawn`, `wait`, and
-`observe` are required; `send` and `interrupt` are optional native
-capabilities. `main_reasoning_effort="max"` is logical. Each host records the
-native value and who enforces it.
+`observe` are required; `send` and `interrupt` are optional native capabilities.
+`main_reasoning_effort="max"` is logical. Each host records the native value and
+who enforces it.
 
-Codex binds `native_reasoning_effort="max"`. Project hooks cannot change an
-already-started first turn, so the host must select max before starting it.
-Codex uses native collaboration tools for ordinary subagents.
+Codex uses native collaboration tools such as `spawn_agent`, `wait_agent`, and
+`followup_task`. Pi maps logical `max` to its native `xhigh` request and exposes
+`pi_goal_plus_run_work_item`, which accepts the task directly and runs an
+isolated Pi RPC child. A DeepSeek or other harness binds the same host profile,
+uses its own worker API, and reports the same lightweight lifecycle events.
 
-Pi maps logical `max` to its native `xhigh` request for Main and ordinary
-children, records the model-clamped level, and rejects a resulting `off` level.
-Its `pi_goal_plus_run_work_item` tool runs an isolated Pi RPC child and returns
-its result to Main; concurrent tool calls provide independent parallel lanes.
-
-A DeepSeek or other harness supplies the same profile at creation time:
-
-```json
-{
-  "execution": {
-    "host": {
-      "protocol": "goal-plus-ultra-v1",
-      "host_id": "deepseek-harness",
-      "native_reasoning_effort": "highest",
-      "enforcement": "harness",
-      "operations": ["spawn", "wait", "observe"]
-    }
-  }
-}
-```
-
-The harness must set its highest supported reasoning budget before the first
-main turn, dispatch work items through its worker API, and report lifecycle
-transitions through `goal_plus_record_work_event`. Provider names and command
-schemas remain outside the core state machine.
+The optional `orchestration` monitor is a read-only projection of these records
+and events. It never launches, waits for, messages, retries, or supervises a
+worker. See [Monitor Feature Plugins](feature-plugins.md).

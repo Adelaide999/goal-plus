@@ -61,7 +61,8 @@ durable evidence.
 Use the `goal-plus` skill as the user entry. The `search` skill is internal.
 
 For ordinary Goal Mode work, `/goal-plus` uses the host-neutral
-[`goal-plus-ultra-v1`](ultra.md) work DAG and Codex collaboration tools. Run the
+[`goal-plus-ultra-v1`](ultra.md) lightweight dispatch record and Codex
+collaboration tools. Run the
 main thread with Codex reasoning effort `max`: hooks record
 `native_reasoning_effort=max`
 but cannot change an already-started first turn. Search candidate lifecycle

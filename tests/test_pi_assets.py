@@ -439,6 +439,8 @@ def test_pi_extension_has_precise_tool_schemas_and_error_classification() -> Non
     ].split("const ModelSpec = Type.Object", 1)[0]
     assert "pi_provider: Type.Optional(NullableString)" in annotator_schema
     assert "goal_plus_monitor_snapshot: Type.Object" in text
+    assert "goal_plus_upsert_work_items" not in text
+    assert "task: Type.String({ minLength: 1, maxLength: 4000 })" in text
     assert 'Type.Literal("bind")' in text
     assert "goal_plus_work_item" in text
     assert "sessionId = String(workItem.agent_id)" in text

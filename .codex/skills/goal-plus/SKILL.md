@@ -36,11 +36,8 @@ Codex 可能显示带客户端特定前缀的 MCP 工具；按最后的逻辑工
      在修订或恢复前先澄清。不要仅因 Goal Plus 记录处于 active 就恢复工作。
 2. 检查足够的上下文以分类任务。
 3. 调用 `goal_plus_record_triage`。
-4. triage 后调用 `goal_plus_upsert_work_items` 创建当前修订版的工作项 DAG。每个工作项至少
-   包含 `work_item_id`、`title`、`objective`、`route`、`scope`、`acceptance` 和
-   `depends_on`。主 Agent 保留
-   架构决策、共享可变状态与最终集成；边界清楚、可独立验证且写入范围不重叠的工作项使用
-   `route="subagent"`。Goal Mode 下不要创建 SearchSpec。
+4. triage 后直接执行原始目标。主 Agent 自己决定拆分、并行、等待、追加消息和重试；
+   只有实际派发普通 subagent 时才记录该派发。Goal Mode 下不要创建 SearchSpec。
 5. 如果 triage 选择 Spec Discovery Mode，确定 baseline、metric、正确性门禁、编辑范围、
    verifier 产物、预算和提升规则。ranking verifier 必须输出一个最终 JSON 对象，
    其中包含有限数值类型的 `spec.metric_name`；其文件应放在源码拥有的路径，
@@ -99,10 +96,9 @@ Codex 可能显示带客户端特定前缀的 MCP 工具；按最后的逻辑工
 13. 执行原始目标审计。如果还需要其他有 verifier 支持的 Search，使用相同
     `goal_plus_id` 冻结/创建新 run，并重复步骤 9-12。每个不同的 `run_id`
     都作为另一项 Search 任务追加；不要为新的冻结 spec 复用旧 `run_id`。
-14. `route="main"` 工作项必须依次记录 `dispatch`、`result`、`accepted`，对应
-    `planned -> active -> result_ready -> accepted`；不要从 `planned` 直接记录结果或验收。
-    每个工作项结果由主 Agent 检查后调用 `goal_plus_record_work_event` 记录 `accepted`
-    或 `rework`。最后执行一次原始目标审计。对于普通 Goal Plus 记录，只有当前目标已满足时
+14. 主 Agent 必须检查普通 subagent 返回的代码、证据和测试；采用时可记录 `accepted`，
+    需要原 worker 补充时记录 `rework`，不采用时记录 `cancelled`。这些决定用于监控，
+    不替代整体测试。最后执行一次原始目标审计。对于普通 Goal Plus 记录，只有当前目标已满足时
     才调用
     `goal_plus_set_status(status="complete", evidence=[...])`。当
     `policy.final_check.mode="required"` 时：
@@ -127,21 +123,27 @@ Codex hook 把本次执行绑定到 host-neutral `goal-plus-ultra-v1`，但已�
 effort 不能由 hook 修改；因此需要由 Codex host 在首轮开始前提供真实 max effort，
 不能把 prompt 请求当作已生效证据。
 
-对普通 subagent，先记录 `dispatch` 并保存返回工作项的 `attempt_id`、`generation`，再调用
-Codex `spawn_agent`。任务包必须包含 objective、scope、依赖和 acceptance，并使用
-`fork_turns="none"`。spawn 成功后立即用原 attempt、generation 和实际 handle 记录 `bind`；
+对普通 subagent，在实际派发前记录 `dispatch`；首次使用该 `work_item_id` 时 runtime 会按
+summary 自动创建轻量记录并返回 `attempt_id`、`generation`，随后调用
+Codex `spawn_agent`；dispatch 使用
+`metadata={"orchestration_monitor":{"native_operation":"spawn_agent"}}`。把清楚、完整的
+任务直接放入 summary 和 worker message，并使用 `fork_turns="none"`。spawn 成功后立即用原 attempt、generation、实际 handle 和相同的
+`orchestration_monitor` operation 记录 `bind`；
 只有 bound attempt 才能记录 `message`、`result` 或 `failed`。恢复时不要重复启动仍在 TTL 内的
 `launching` attempt；TTL 过期后再次 `dispatch` 会创建下一 generation。所有 worker 事件都传回
 attempt、generation，迟到的旧结果只会记录为 `stale_result`，不会覆盖当前 worker。实际
 `spawn_agent`、`wait_agent`、`followup_task` 和 `interrupt_agent` 仍归 Codex host 管理；Goal Plus
 runtime 只维护工作项状态。subagent 返回后记录 `result`，主 Agent 验证其 diff 与测试后记录
-`accepted`；需要修正时记录 `rework` 并向原 worker 发送具体证据。不要记录私有推理或完整
-transcript。
+`accepted`；需要修正时记录 `rework`，保存返回的新 attempt/generation，再向原 worker 发送
+具体证据。不要记录私有推理或完整
+transcript。`result` 使用
+`metadata={"orchestration_monitor":{"native_operation":"wait_agent"}}`；`rework` 使用相同
+namespace 记录 `followup_task`。
 
-只有工作项同时具备可量化 metric、确定性 verifier、隔离编辑面、多个有价值假设和足够预算时，
-才使用 `route="search"`。创建并链接 run 后记录 `search_routed`；普通检索、代码定位或单一路径
-修复使用普通工具或普通 subagent。当前修订版的必需工作项未全部 `accepted` 时，运行时会拒绝
-最终检查与 `complete`。
+只有任务同时具备可量化 metric、确定性 verifier、隔离编辑面、多个有价值假设和足够预算时，
+才进入现有 Search Mode。Search 使用自己的 run/candidate 状态，不创建普通 subagent 记录；
+普通检索、代码定位或单一路径修复使用普通工具或普通 subagent。运行时只在仍有
+`launching`/`active` 派发时拒绝最终检查与 `complete`。
 
 顶层 Stop gate 会阻止每条仍处于 active 的记录，并返回完整的当前原始目标、创建/检查
 时间戳、已用时间、phase、next action 和最终检查 policy。根据该 prompt 审计全部目标要求
