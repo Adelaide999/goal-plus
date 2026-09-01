@@ -47,5 +47,9 @@ verifier 必须保持候选工作区只读，并使用唯一的 `GOAL_PLUS_VERIF
 再使用 `source_run_id` 创建后继 run。绝不能选择或提升已经失效的 run。
 
 在 Search 执行、提升、结果记录或最终原始目标审计期间，绝不能调用 `search_report`。
+`search_promote` 成功后，调用 `goal_plus_record_search_result` 登记“搜索完成并验收”，其中
+`promotion_artifact_path` 是已经生成的提升补丁。随后在原始工作区检查实际应用后的 diff 和测试；
+只有检查通过，才在 `goal_plus_set_status(status="complete")` 的 evidence 中登记
+“补丁应用完成并验收”。这两项是轻量证据，不创建 DAG 或额外运行时阶段。
 Goal Plus 记录达到终态后，对每个成功记录的 `run_id` 调用且只调用一次 `search_report`，
 并返回最终 Markdown 和 HTML 路径。

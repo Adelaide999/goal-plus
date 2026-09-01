@@ -229,12 +229,16 @@ subagent 负责其候选工作区内的瓶颈分析、假设选择、特性迁�
    `search_select` 对 verifier 记录的 iteration 排名并 checkout 最佳已提交候选的
    `git_head`。准确 worker Evidence 已经覆盖该产物时直接用于选择；没有这种证据的旧记录才
    使用父级 process verifier。配置的 promotion verifier 仍是选中 revision 的最终 gate。
-10. 调用 `goal_plus_record_search_result`。此时不要调用 `search_report`；结果记录只预留
-    规范报告路径，不生成 Markdown 或 HTML。
-11. 执行原始目标审计。评估/编辑契约仍充分时保留同一个 run。新 incumbent 或低性能路线
+10. 调用 `goal_plus_record_search_result`，用 summary 登记“搜索完成并验收”，并保留
+    runtime 返回的提升补丁路径。该调用只接受已经 `search_promote` 且提升补丁真实存在的 run。
+    此时不要调用 `search_report`；结果记录只预留规范报告路径，不生成 Markdown 或 HTML。
+11. 在原始工作区检查提升后实际应用的 diff，并运行整体所需测试；通过后把
+    “补丁应用完成并验收”和具体测试证据留给最终状态 evidence。评估/编辑契约仍充分时保留
+    同一个 run。新 incumbent 或低性能路线
     绝不会开启替代 run。只有具体 spec/契约修订或不同的可度量子问题才能创建后继项，
     并使用 `source_run_id`；继承分数在重新验证前仍只是历史。
-12. 执行最终原始目标审计。普通记录使用 `goal_plus_set_status` 完成。如果
+12. 执行最终原始目标审计。普通记录只有在第 10、11 步均通过后，才使用
+    `goal_plus_set_status(status="complete", evidence=[...])` 完成。如果
     `policy.final_check.mode="required"`，则：
     - 调用 `goal_plus_prepare_final_check(checker_host="pi")`
     - 把准确返回的 `launch` 对象传给 `pi_goal_plus_run_final_check`

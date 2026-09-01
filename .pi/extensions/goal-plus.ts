@@ -1163,6 +1163,7 @@ function buildGoalStartPrompt(
 		"- 除了加载 goal-plus skill 之外，在 goal_plus_record_triage 前不要读取或审计目标文件。",
 		"- 首先使用 goal_plus_record_triage 记录 triage。",
 		"- 如果原始目标明确要求 verifier 引导的 Search Mode，并提供可度量的 verifier 或 metric，不要将其降级为普通 Goal Mode。",
+		"- 对适合独立执行的普通工作，直接调用 pi_goal_plus_run_work_item 并传入完整 task；这是 Pi RPC subagent，不要调用 Codex spawn_agent，也不要预建工作 DAG。",
 		"- 如果任务已准备好进入 Search，通过 frozen-spec 和 Search Mode gate 自主进入 Search Mode；不要要求用户批准该转换。",
 		"- 绝不能编造 frozen_spec_id、run_id、plan_id、candidate_id 或 agent_session_id。只使用紧邻的前序运行时工具返回的准确 id；在 goal_plus_link_search_run 前调用 search_create。",
 		"- 如果尚未准备好进入 Search，在 Goal Mode 中继续，并在停止前更新 goal-plus 状态。",
