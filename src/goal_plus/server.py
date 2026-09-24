@@ -249,7 +249,7 @@ def create_mcp(
         """返回当前 run 的窄 Global Evidence 视图。
 
         每项只包含 candidate_id、iteration、score、disposition、verifier attempt commit、
-        可能延迟的客观 View，以及启用时由 ViewAgent 后验生成的开放式
+        可能延迟的客观 View，以及启用时由 annotator 后验生成的开放式
         supplemental_evaluation 和动态 peer 比较。任何 View 为 null 都不影响 verifier
         Evidence；worker 不需要等待，可先依据 Evidence 独立探索，必要时再通过 commit
         做只读 Git 比较。

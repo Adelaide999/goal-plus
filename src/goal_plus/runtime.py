@@ -110,6 +110,8 @@ EVIDENCE_ANNOTATOR_PROVIDER_NAME_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_PROVIDER_NA
 EVIDENCE_ANNOTATOR_API_KEY_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_API_KEY_ENV"
 EVIDENCE_ANNOTATOR_WIRE_API_ENV = "GOAL_PLUS_EVIDENCE_ANNOTATOR_WIRE_API"
 OUTER_DEADLINE_ENV = "GOAL_PLUS_OUTER_DEADLINE_AT"
+GLOBAL_EVIDENCE_MODE_ENV = "GOAL_PLUS_GLOBAL_EVIDENCE_MODE"
+GLOBAL_EVIDENCE_MODES = frozenset({"manual", "auto", "independent"})
 SUPPLEMENTAL_EVALUATION_ENABLED_ENV = (
     "GOAL_PLUS_SUPPLEMENTAL_EVALUATION_ENABLED"
 )
@@ -154,6 +156,8 @@ def supplemental_evaluation_required(
         default=False,
         environment=environment,
     )
+EXTERNAL_EVIDENCE_DIR_ENV = "GOAL_PLUS_EXTERNAL_EVIDENCE_DIR"
+MAX_EXTERNAL_EVIDENCE_BYTES = 256 * 1024
 
 
 @dataclass(frozen=True)
@@ -626,7 +630,7 @@ class FileSearchRuntime:
         if spec.acceptance_view is not None:
             raise ValueError(
                 "SearchSpec.acceptance_view is retired for new runs; "
-                "ViewAgent now performs open-ended supplemental evaluation "
+                "The annotator now performs open-ended supplemental evaluation "
                 "after Evidence settlement"
             )
         spec = _normalize_verifier_cwds_for_candidate_workspace(spec)
@@ -3637,7 +3641,7 @@ class FileSearchRuntime:
             "search_run_verifier 会在运行 verifier 前自动提交已修改的候选产物文件；使用 git status、git diff 和 git log 检查 iteration provenance。",
             "process verifier 对新 run 返回 keep/retain/discard/failure disposition；严格硬分改善为 keep，同分为 retain 并成为 candidate-local 最新基线，只有退化或验证失败才恢复此前硬分最佳。开放式补充评价和 peer 比较不改变结算、硬分或最终验收。下一轮直接从返回后的已结算工作区继续。",
             "规划另一个变体前，检查 workspace/results.tsv 中继承的 iteration 日志。运行时拥有并提交这份仅追加账本，会验证已有记录未被修改，并为每份返回的 verifier 报告添加且只添加一条记录；绝不能重写、截断、删除或手动追加它。",
-            "Global Evidence 展示 peer 的 verifier commit、硬分、disposition、可能延迟的客观 View，以及 ViewAgent 基于实际 Evidence 生成的开放式 supplemental_evaluation。它会动态比较 annotation task 创建时其他已结算候选，但不使用 FrozenSpec 软标准、不参与结算或最终验收。将它视为第三方观察而非推荐；任一 View 为 null 都不要求等待。只有代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
+            "Global Evidence 展示 peer 的 verifier commit、硬分、disposition、可能延迟的客观 View，以及 annotator 基于实际 Evidence 生成的开放式 supplemental_evaluation。它会动态比较 annotation task 创建时其他已结算候选，但不使用 FrozenSpec 软标准、不参与结算或最终验收。将它视为第三方观察而非推荐；任一 View 为 null 都不要求等待。只有代码级证据确有必要且当前 Git 能解析该 commit 时，才在当前 workspace 使用 git diff HEAD <commit> -- <allowed-file> 做只读比较；解析不了时依赖 Evidence/View，不要访问或 fetch peer workspace，也不要 checkout/reset peer commit。",
         ]
         share_out_dir = None
         if frozen.spec.shared_dir.enabled:
@@ -6250,6 +6254,14 @@ class FileSearchRuntime:
             "disposition": iteration.disposition,
             "view": view.description if view is not None else None,
             "view_created_at": view.created_at if view is not None else None,
+            "shared_tools": [
+                {
+                    **tool.model_dump(mode="json", exclude={"read_only_path"}),
+                    "tool_view": tool_views[tool.tool_id].model_dump(mode="json"),
+                }
+                for tool in iteration.shared_tools
+                if tool.tool_id in tool_views
+            ],
             "supplemental_evaluation": (
                 view.supplemental_evaluation.model_dump(mode="json")
                 if view is not None and view.supplemental_evaluation is not None
@@ -6508,6 +6520,41 @@ class FileSearchRuntime:
                 )
             task_context = resolved_context
             task_context_source = resolved_source
+        published_tools = []
+        remaining_tool_bytes = TOOL_VIEW_MAX_CONTENT_BYTES
+        if iteration.shared_tools:
+            manager = SharedDirManager(self._run_dir(run_id))
+            prior = next(
+                (
+                    item
+                    for item in reversed(record.iterations)
+                    if item.iteration < iteration.iteration and item.score is not None
+                ),
+                None,
+            )
+            for tool in iteration.shared_tools:
+                tool_input, used = manager.tool_view_input(
+                    tool, max_content_bytes=remaining_tool_bytes
+                )
+                tool_input["goal_evidence"] = {
+                    "score": iteration.score,
+                    "baseline_score": prior.score if prior is not None else None,
+                    "goal_delta": (
+                        iteration.score - prior.score
+                        if iteration.score is not None and prior is not None
+                        else None
+                    ),
+                    "goal_effect": (
+                        "unknown" if prior is None
+                        else "improved" if iteration.disposition == "keep"
+                        else "unchanged" if iteration.disposition == "retain"
+                        else "degraded" if iteration.disposition == "discard"
+                        else "failed"
+                    ),
+                    "disposition": iteration.disposition,
+                }
+                published_tools.append(tool_input)
+                remaining_tool_bytes = max(0, remaining_tool_bytes - used)
         return {
             "run_id": run_id,
             "candidate_id": candidate_id,
@@ -6549,6 +6596,15 @@ class FileSearchRuntime:
             "peer_evidence": peer_evidence,
             "comparison_basis": [
                 item.model_dump(mode="json") for item in task.comparison_basis
+            ],
+            "published_tools": published_tools,
+            "tool_adoptions": [
+                {
+                    **item.model_dump(mode="json"),
+                    "disposition": iteration.disposition,
+                    "confounded": iteration.adoption_confounded,
+                }
+                for item in iteration.adopted_tools
             ],
             "acceptance_contract": (
                 frozen.spec.acceptance_view.model_dump(mode="json")

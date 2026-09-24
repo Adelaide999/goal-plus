@@ -59,6 +59,30 @@ class Budget(SearchModel):
 
 WorkspaceBackend = Literal["copy", "git_worktree"]
 IterationDisposition = Literal["keep", "retain", "discard", "failure"]
+SharedToolPublishStatus = Literal[
+    "legacy_unknown", "not_staged",
+    "skipped_unattributed_verifier", "skipped_failed_verifier", "published",
+    "partially_published", "consumed_unchanged", "snapshot_rejected",
+    "snapshot_error",
+]
+ToolizationSignal = Literal[
+    "repeated_sequence",
+    "domain_probe",
+    "parser_or_trace",
+    "peer_setup_reduction",
+]
+ToolizationExclusion = Literal[
+    "single_common_command",
+    "logic_free_wrapper",
+    "restricted_artifact",
+    "candidate_private_state",
+    "duplicate_snapshot",
+]
+ToolizationAdvisory = Literal[
+    "toolization_review_missing",
+    "toolization_stage_missing",
+    "toolization_decision_mismatch",
+]
 VerifierInvalidationReason = Literal[
     "verifier_contract_invalid",
     "verifier_coverage_inadequate",
@@ -230,12 +254,9 @@ class ResolvedEvidenceAnnotatorProfile(SearchModel):
     provider: ResolvedCodexProvider | None = None
 
 
+EvaluationConfidence = Literal["high", "medium", "low"]
 AcceptanceCriterionStatus = Literal[
-    "covered",
-    "partial",
-    "missing",
-    "unknown",
-    "not_applicable",
+    "covered", "partial", "missing", "unknown", "not_applicable"
 ]
 AcceptanceConfidence = Literal["high", "medium", "low"]
 
@@ -322,7 +343,7 @@ ComparisonRelation = Literal[
 class SupplementalDimension(SearchModel):
     name: str = Field(min_length=1, max_length=120)
     finding: str = Field(min_length=1, max_length=1000)
-    confidence: AcceptanceConfidence
+    confidence: EvaluationConfidence
     evidence: list[str] = Field(default_factory=list, max_length=8)
 
     @field_validator("name", "finding", mode="before")
@@ -387,6 +408,70 @@ class SupplementalEvaluation(SearchModel):
         return normalized
 
 
+class ToolViewRef(SearchModel):
+    tool_id: str = Field(min_length=1)
+    summary: str = Field(min_length=1, max_length=1000)
+    capabilities: list[str] = Field(max_length=16)
+    when_to_use: str = Field(min_length=1, max_length=1000)
+    entrypoint: str | None = Field(max_length=500)
+    inputs: list[str] = Field(max_length=16)
+    outputs: list[str] = Field(max_length=16)
+    dependencies: list[str] = Field(max_length=16)
+    adoption_steps: list[str] = Field(max_length=16)
+    limitations: list[str] = Field(max_length=16)
+
+    @field_validator(
+        "capabilities", "inputs", "outputs", "dependencies",
+        "adoption_steps", "limitations", mode="before"
+    )
+    @classmethod
+    def normalize_items(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        normalized = []
+        for item in value:
+            if not isinstance(item, str):
+                normalized.append(item)
+                continue
+            text = " ".join(item.strip().split())
+            if not text or len(text) > 500:
+                raise ValueError("tool view list items must be non-empty and at most 500 characters")
+            normalized.append(text)
+        return normalized
+
+
+class ToolViewRecord(ToolViewRef):
+    snapshot_hash: str = Field(min_length=1)
+    source_commit: str = Field(min_length=1)
+    evidence_scope: str = Field(min_length=1, max_length=1000)
+
+
+class ToolAdoptionRecord(SearchModel):
+    tool_id: str = Field(min_length=1)
+    snapshot_hash: str = Field(min_length=1)
+    receipt_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_declaration(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "mode" not in value:
+            return value
+        payload = dict(value)
+        payload.pop("mode", None)
+        return payload
+
+
+class ToolCopyReceipt(SearchModel):
+    receipt_id: str = Field(min_length=1)
+    tool_id: str = Field(min_length=1)
+    snapshot_hash: str = Field(min_length=1)
+    source_commit: str | None = None
+    agent_session_id: str = Field(min_length=1)
+    candidate_base_git_head: str = Field(min_length=1)
+    inbox_path: Path
+    copied_at: str
+
+
 class EvidenceViewRecord(SearchModel):
     run_id: str = Field(min_length=1)
     candidate_id: str = Field(min_length=1)
@@ -398,7 +483,7 @@ class EvidenceViewRecord(SearchModel):
         default_factory=list,
         max_length=8,
     )
-    # Legacy field retained so completed pre-migration runs remain readable.
+    tool_views: list[ToolViewRecord] = Field(default_factory=list)
     acceptance_view: AcceptanceViewAssessment | None = None
     created_at: str
 

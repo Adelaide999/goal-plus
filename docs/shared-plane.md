@@ -78,7 +78,7 @@ Benchmark 机制消融由 controller 设置
 补充评价，不向 FrozenSpec 注入 criterion。ON/OFF 都不改变硬分、同分保留、selection、
 promotion gate 或最终验收。
 
-Evidence annotator 默认继承 Search 的 `worker_host`。需要把 ViewAgent 作为独立机制控制
+Evidence annotator 默认继承 Search 的 `worker_host`。需要把 annotator 作为独立机制控制
 变量时，可以冻结 `strategy.evidence_annotator.host=codex` 或 `pi-rpc`；模型、provider、
 home 和调用进程都按该 host 解析，不改变候选 worker 的 host。未设置该字段时继续使用
 host-native 默认路径。
@@ -90,7 +90,7 @@ candidate 最多一个，固定其 candidate、iteration 和 commit，后续推�
 比较基线。
 
 为判断代码变化与原始请求是否相关，annotation task 记录与当前 Search run 绑定的准确
-Goal revision 引用和 SHA-256，而不复制 `raw_goal`。ViewAgent 启动时临时解析该 revision
+Goal revision 引用和 SHA-256，而不复制 `raw_goal`。annotator 启动时临时解析该 revision
 并校验 hash；没有绑定 Goal 时才退回 FrozenSpec objective。原始上下文只进入隔离的
 annotation prompt，不进入 Global Evidence、candidate task 或报告正文；报告只可保留来源、
 引用和 hash。benchmark adapter 只能提供公开任务字段，不能把 hidden judge、答案 patch
@@ -239,7 +239,7 @@ View 只用一句中文客观描述实际做了什么，不评价好坏、不推
 步。事实来源是 actual diff，而不是 candidate 的自述。Changed files、verifier command
 和 metrics 只提供验证上下文；命令名称本身或失败的测试不能证明目标行为已经实现。
 
-`supplemental_evaluation` 不读取 FrozenSpec 软标准。ViewAgent 只依据当前候选累计 diff、
+`supplemental_evaluation` 不读取 FrozenSpec 软标准。annotator 只依据当前候选累计 diff、
 公开 verifier Evidence 和 annotation task 创建时固定的 peer 快照，自行提出 1–8 个与当前
 任务实际相关的观察维度。它逐项给出 finding、证据与置信度，并对比较基线中的每个 peer
 返回非定向的 `similar`、`different`、`tradeoff`、`complementary` 或 `unknown`，不能借此
@@ -250,7 +250,7 @@ View 只用一句中文客观描述实际做了什么，不评价好坏、不推
 观察作为下一轮假设来源，但必须独立核对；评价不产生总分或最终推荐，不能改变硬 score、
 PASS/FAIL、candidate-local 基线、run-wide 排名或 promotion gate。
 
-ViewAgent 收到的累计 diff 使用 Git 函数级上下文和至少 10 行普通上下文，并继续受字节
+annotator 收到的累计 diff 使用 Git 函数级上下文和至少 10 行普通上下文，并继续受字节
 上限约束。上下文中未出现某个定义，不代表该定义不存在；这类判断必须降低置信度并写入
 `limitations`。每次 worker 调用 `search_get_global_evidence`，runtime 都会在对应
 `agent_sessions/*.json` 的 `global_evidence_reads` 中记录读取时间、当时 Evidence 数量、

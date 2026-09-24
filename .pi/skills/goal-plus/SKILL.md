@@ -58,10 +58,10 @@ ranking verifier 必须输出一个最终 JSON 对象，其中包含有限数值
 不要在 SearchSpec 中生成 `acceptance_view`、软 rubric 或预设评价维度。Spec Discovery
 只能冻结硬 metric、verifier、编辑范围、预算和 promotion 合同；新 run 若包含旧式
 `acceptance_view` 会被 runtime 拒绝。开放式补充评价发生在每次 Evidence 结算之后：
-独立 ViewAgent 根据当前候选累计 diff 和当时其他已结算候选的快照，自行提出与任务实际
+独立 annotator 根据当前候选累计 diff 和当时其他已结算候选的快照，自行提出与任务实际
 相关的观察维度并动态比较。它不读取 hidden 数据，不产生总分或最终推荐，也不改变硬
 PASS/FAIL、数值排名、candidate-local 同分保留、selection 或 promotion。MainAgent
-不负责定义这些维度，也不要根据 benchmark 类型向 ViewAgent 预埋固定清单。
+不负责定义这些维度，也不要根据 benchmark 类型向 annotator 预埋固定清单。
 
 如果原始命令包含 `models=...`，先调用 `goal_plus_list_models(host="pi-rpc")`，将用户
 填写的名称解析为唯一可用模型并冻结到 `strategy.models`；不存在或不唯一时，在创建
@@ -326,7 +326,7 @@ candidate-local history 由运行时拥有，不是本地 plan 文件。worker �
 `context.results` 和继承的 `context.results_tsv` 作为恢复来源。每轮修改前读取
 `search_get_global_evidence`。其他 candidate 的尝试只通过这个窄视图披露；`view=null`
 只表示 annotator 尚未更新，worker 不等待或轮询，先依据 commit、score、disposition 和
-自己的推理独立探索。启用开放式补充评价时，每行包含 ViewAgent 根据实际 Evidence 后验
+自己的推理独立探索。启用开放式补充评价时，每行包含 annotator 根据实际 Evidence 后验
 提出的观察维度，以及 annotation task 创建时对其他已结算候选的动态比较。它不来自
 FrozenSpec，不作为硬分、推荐或 promotion gate；worker 可据此形成假设，但应独立核对。仅在
 worker 独立判断确有必要时，才在当前 workspace 使用
