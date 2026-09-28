@@ -2152,7 +2152,8 @@ class FileSearchRuntime:
                     ],
                 ) != 0:
                     raise RuntimeError(
-                        "candidate Git history diverged from the settled results ledger"
+                        "ResultsLedgerMutation: candidate Git history diverged from "
+                        "the settled results ledger"
                     )
                 attempt_changed_files = self._git_changed_files(
                     record.task.workspace,
